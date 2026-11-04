@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#0f1720" />
+    <title>도면3D</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <input id="name" class="name" aria-label="부품 이름" />
+      <button id="menuBtn" class="icon-btn" aria-label="메뉴">⋯</button>
+      <div id="menu" class="menu" hidden>
+        <button data-act="new">새 부품</button>
+        <div class="menu-label">예제 불러오기</div>
+        <div id="samples"></div>
+        <hr />
+        <button data-act="saveJson">프로젝트 파일 저장 (.json)</button>
+        <button data-act="openJson">프로젝트 파일 열기</button>
+      </div>
+    </header>
+
+    <main>
+      <!-- 스케치 -->
+      <section id="pane-sketch" class="pane active">
+        <div class="row views" role="tablist" id="viewTabs"></div>
+        <div class="canvas-wrap">
+          <canvas id="sketch"></canvas>
+          <div class="toolbar" id="tools">
+            <button data-tool="select" title="선택/이동">↖<span>선택</span></button>
+            <button data-tool="rect" title="사각형">▭<span>사각형</span></button>
+            <button data-tool="circle" title="원">◯<span>원</span></button>
+            <button data-tool="poly" title="다각형">⬠<span>다각형</span></button>
+          </div>
+          <div class="toolbar right">
+            <button id="undo" title="실행 취소">↶</button>
+            <button id="redo" title="다시 실행">↷</button>
+            <button id="fit" title="화면 맞춤">⤢</button>
+          </div>
+          <div id="polyBar" class="floating-bar" hidden>
+            <span id="polyCount"></span>
+            <button id="polyUndo">점 취소</button>
+            <button id="polyCancel">취소</button>
+            <button id="polyDone" class="primary">닫기</button>
+          </div>
+          <div id="buildChip" class="chip"></div>
+        </div>
+        <div id="props" class="sheet-panel" hidden></div>
+        <div class="row settings">
+          <label>방식
+            <select id="mode">
+              <option value="auto">자동 (돌출/교집합)</option>
+              <option value="revolve">회전체</option>
+            </select>
+          </label>
+          <label id="thicknessWrap">두께 <input id="thickness" type="number" inputmode="decimal" min="0.1" step="0.5" /> mm</label>
+          <label>격자
+            <select id="grid">
+              <option value="0">끔</option><option value="0.5">0.5</option><option value="1">1</option>
+              <option value="5">5</option><option value="10">10</option>
+            </select>
+          </label>
+        </div>
+        <p id="hint" class="hint"></p>
+      </section>
+
+      <!-- 3D -->
+      <section id="pane-3d" class="pane">
+        <div id="viewer" class="viewer"></div>
+        <div class="viewer-overlay">
+          <div id="status" class="status"></div>
+          <div class="cam-btns">
+            <button data-cam="iso">등각</button>
+            <button data-cam="front">정면</button>
+            <button data-cam="top">평면</button>
+            <button data-cam="side">측면</button>
+          </div>
+        </div>
+        <div class="row actions">
+          <button id="expStl">STL 저장</button>
+          <button id="expStep">STEP 저장</button>
+        </div>
+      </section>
+
+      <!-- 2D 도면 -->
+      <section id="pane-sheet" class="pane">
+        <div id="sheetHost" class="sheet-host"></div>
+        <div class="row actions">
+          <button id="expSvg">SVG 저장</button>
+          <button id="expDxf">DXF 저장</button>
+        </div>
+      </section>
+    </main>
+
+    <nav class="tabbar">
+      <button data-pane="sketch" class="active"><b>✎</b>2D 그리기</button>
+      <button data-pane="3d"><b>◈</b>3D 모델</button>
+      <button data-pane="sheet"><b>▤</b>2D 도면</button>
+    </nav>
+
+    <div id="toast" class="toast" hidden></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

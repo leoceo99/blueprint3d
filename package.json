@@ -1,0 +1,31 @@
+{
+  "name": "blueprint3d",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "2D 기계 도면을 그리면 3D 모델로, 3D 모델은 다시 2D 3면도로 변환하는 모바일 앱",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "cap:sync": "npm run build && npx cap sync"
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/share": "^8.0.3",
+    "replicad": "^1.2.0",
+    "replicad-opencascadejs": "^1.1.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@types/three": "^0.187.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.1.0"
+  }
+}
