@@ -1,14 +1,20 @@
-import { Capacitor } from "@capacitor/core";
-import { Directory, Filesystem } from "@capacitor/filesystem";
-import { Share } from "@capacitor/share";
-
-/** 파일 저장: 앱에서는 공유 시트, 브라우저에서는 다운로드 */
-export async function saveFile(name: string, data: ArrayBuffer | string, mime: string) {
-  if (Capacitor.isNativePlatform()) {
-    const base64 = typeof data === "string" ? utf8ToBase64(data) : bufToBase64(data);
-    const res = await Filesystem.writeFile({ path: name, data: base64, directory: Directory.Cache });
-    await Share.share({ title: name, url: res.uri, dialogTitle: "파일 저장/공유" });
-    return;
+/** 파일 저장: 지원하는 브라우저(Chrome/Edge)에서는 저장 위치 선택 창, 아니면 다운로드 */
+export async function saveFile(name: string, data: ArrayBuffer | string, mime: string, ext: string) {
+  const w = window as any;
+  if (typeof w.showSaveFilePicker === "function") {
+    try {
+      const handle = await w.showSaveFilePicker({
+        suggestedName: name,
+        types: [{ description: ext.toUpperCase(), accept: { [mime]: [`.${ext}`] } }],
+      });
+      const stream = await handle.createWritable();
+      await stream.write(data);
+      await stream.close();
+      return true;
+    } catch (e: any) {
+      if (e?.name === "AbortError") return false;
+      // 그 외 오류면 일반 다운로드로
+    }
   }
   const blob = new Blob([data], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -19,17 +25,7 @@ export async function saveFile(name: string, data: ArrayBuffer | string, mime: s
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
-function bufToBase64(buf: ArrayBuffer) {
-  const bytes = new Uint8Array(buf);
-  let s = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(s);
-}
-
-function utf8ToBase64(str: string) {
-  return bufToBase64(new TextEncoder().encode(str).buffer as ArrayBuffer);
+  return true;
 }
 
 /** 파일 선택 → 텍스트 */

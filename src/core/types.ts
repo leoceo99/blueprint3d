@@ -50,10 +50,21 @@ export type Shape2D = RectShape | CircleShape | PolyShape;
  */
 export type BuildMode = "auto" | "revolve";
 
+/** 제조 방식: 설계 검사 기준이 달라진다 */
+export type Process = "cnc" | "print3d" | "laser";
+
+export const PROCESS_LABEL: Record<Process, string> = {
+  cnc: "기계 가공 (CNC 밀링·드릴)",
+  print3d: "3D 프린팅 (FDM)",
+  laser: "판금 · 레이저 절단",
+};
+
 export interface Project {
   version: 1;
   name: string;
   mode: BuildMode;
+  /** 없으면 cnc */
+  process?: Process;
   /** 뷰를 하나만 그렸을 때의 돌출 두께 */
   thickness: number;
   views: Record<ViewId, Shape2D[]>;
@@ -64,9 +75,32 @@ export function emptyProject(): Project {
     version: 1,
     name: "새 부품",
     mode: "auto",
+    process: "cnc",
     thickness: 10,
     views: { front: [], top: [], side: [] },
   };
+}
+
+export type Severity = "error" | "warning" | "info";
+
+/** 도면 위의 위치 (어느 뷰의 어느 도형, 어느 좌표) */
+export interface FindingRef {
+  view: ViewId;
+  shapeId?: string;
+  u?: number;
+  v?: number;
+}
+
+/** 설계 검사 결과 한 건 (규칙 검사와 AI 검토가 같은 형식을 쓴다) */
+export interface Finding {
+  id: string;
+  source: "rule" | "ai";
+  severity: Severity;
+  category: string;
+  title: string;
+  detail: string;
+  suggestion?: string;
+  refs: FindingRef[];
 }
 
 export interface MeshData {
@@ -88,6 +122,8 @@ export interface BuildResult {
   projections: Record<ViewId, ProjectedView>;
   bbox: [[number, number, number], [number, number, number]];
   volume: number;
+  /** 결과 솔리드 개수 (1이 아니면 서로 떨어진 덩어리가 있음) */
+  solidCount: number;
   /** 사용자에게 알려줄 참고 메시지 (예: 어떤 방식으로 만들었는지) */
   notes: string[];
 }

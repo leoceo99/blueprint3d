@@ -2,102 +2,178 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-    <meta name="theme-color" content="#0f1720" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>도면3D</title>
+    <meta name="description" content="2D 기계 도면을 그리면 3D 모델이 자동으로 만들어지고, AI가 설계 오류를 찾아 주는 CAD 앱" />
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <header class="topbar">
-      <input id="name" class="name" aria-label="부품 이름" />
-      <button id="menuBtn" class="icon-btn" aria-label="메뉴">⋯</button>
-      <div id="menu" class="menu" hidden>
-        <button data-act="new">새 부품</button>
-        <div class="menu-label">예제 불러오기</div>
-        <div id="samples"></div>
-        <hr />
-        <button data-act="saveJson">프로젝트 파일 저장 (.json)</button>
-        <button data-act="openJson">프로젝트 파일 열기</button>
+    <header class="appbar">
+      <div class="brand"><span class="logo">◧</span> 도면3D</div>
+      <div class="menu-wrap">
+        <button class="ghost" data-menu="file">파일 ▾</button>
+        <div class="dropdown" id="menu-file" hidden>
+          <button data-act="new">새 부품 <kbd>Ctrl+Alt+N</kbd></button>
+          <button data-act="open">열기… <kbd>Ctrl+O</kbd></button>
+          <button data-act="save">저장… <kbd>Ctrl+S</kbd></button>
+          <hr />
+          <div class="dd-label">예제 불러오기</div>
+          <div id="samples"></div>
+        </div>
       </div>
+      <input id="name" class="name" aria-label="부품 이름" spellcheck="false" />
+      <nav class="ws-tabs" role="tablist">
+        <button data-ws="model" class="active" role="tab">모델링</button>
+        <button data-ws="sheet" role="tab">2D 도면</button>
+      </nav>
+      <div class="spacer"></div>
+      <button id="aiBtn" class="primary">✦ AI 설계 검토</button>
+      <button id="settingsBtn" class="ghost icon" title="설정" aria-label="설정">⚙</button>
     </header>
 
-    <main>
-      <!-- 스케치 -->
-      <section id="pane-sketch" class="pane active">
-        <div class="row views" role="tablist" id="viewTabs"></div>
-        <div class="canvas-wrap">
-          <canvas id="sketch"></canvas>
-          <div class="toolbar" id="tools">
-            <button data-tool="select" title="선택/이동">↖<span>선택</span></button>
-            <button data-tool="rect" title="사각형">▭<span>사각형</span></button>
-            <button data-tool="circle" title="원">◯<span>원</span></button>
-            <button data-tool="poly" title="다각형">⬠<span>다각형</span></button>
-          </div>
-          <div class="toolbar right">
-            <button id="undo" title="실행 취소">↶</button>
-            <button id="redo" title="다시 실행">↷</button>
-            <button id="fit" title="화면 맞춤">⤢</button>
-          </div>
-          <div id="polyBar" class="floating-bar" hidden>
-            <span id="polyCount"></span>
-            <button id="polyUndo">점 취소</button>
-            <button id="polyCancel">취소</button>
-            <button id="polyDone" class="primary">닫기</button>
-          </div>
-          <div id="buildChip" class="chip"></div>
+    <div class="ribbon" id="ribbon">
+      <div class="group">
+        <div class="tools">
+          <button data-tool="select" title="선택·이동 (V)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3l10 6-4.5 1.2L13 16l-2 1-2.4-5.6L5 14z"/></svg>선택<kbd>V</kbd></button>
+          <button data-tool="rect" title="사각형 (R)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="14" height="10" rx="0.5"/></svg>사각형<kbd>R</kbd></button>
+          <button data-tool="circle" title="원 (C)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/></svg>원<kbd>C</kbd></button>
+          <button data-tool="poly" title="다각형 (L)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3l7 5-2.7 8.5H5.7L3 8z"/></svg>다각형<kbd>L</kbd></button>
         </div>
-        <div id="props" class="sheet-panel" hidden></div>
-        <div class="row settings">
+        <div class="glabel">그리기</div>
+      </div>
+      <div class="group">
+        <div class="tools">
+          <button id="holeBtn" title="몸체 ↔ 구멍 (H)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="0.5"/><circle cx="10" cy="10" r="3" stroke-dasharray="2 1.5"/></svg>구멍 전환<kbd>H</kbd></button>
+          <button id="dupBtn" title="복제 (Ctrl+D)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1"/><rect x="7" y="7" width="10" height="10" rx="1"/></svg>복제<kbd>⌃D</kbd></button>
+          <button id="delBtn" title="삭제 (Delete)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h12M8 6V4h4v2M6 6l1 11h6l1-11"/></svg>삭제<kbd>Del</kbd></button>
+          <button id="undoBtn" title="실행 취소 (Ctrl+Z)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 5L3 9l4 4"/><path d="M3 9h9a5 5 0 010 10h-2"/></svg>취소<kbd>⌃Z</kbd></button>
+          <button id="redoBtn" title="다시 실행 (Ctrl+Shift+Z)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 5l4 4-4 4"/><path d="M17 9H8a5 5 0 000 10h2"/></svg>다시<kbd>⌃⇧Z</kbd></button>
+        </div>
+        <div class="glabel">편집</div>
+      </div>
+      <div class="group">
+        <div class="fields">
           <label>방식
             <select id="mode">
-              <option value="auto">자동 (돌출/교집합)</option>
-              <option value="revolve">회전체</option>
+              <option value="auto">자동 (돌출 / 3면 교집합)</option>
+              <option value="revolve">회전체 (정면도 단면)</option>
             </select>
           </label>
-          <label id="thicknessWrap">두께 <input id="thickness" type="number" inputmode="decimal" min="0.1" step="0.5" /> mm</label>
+          <label id="thicknessWrap">두께 (뷰 1개일 때) <span class="unit"><input id="thickness" type="number" min="0.1" step="0.5" />mm</span></label>
+        </div>
+        <div class="glabel">3D 생성</div>
+      </div>
+      <div class="group">
+        <div class="fields">
+          <label>제조 방식
+            <select id="process">
+              <option value="cnc">기계 가공 (CNC)</option>
+              <option value="print3d">3D 프린팅 (FDM)</option>
+              <option value="laser">판금 · 레이저</option>
+            </select>
+          </label>
+        </div>
+        <div class="glabel">검사 기준</div>
+      </div>
+      <div class="group">
+        <div class="fields">
           <label>격자
             <select id="grid">
-              <option value="0">끔</option><option value="0.5">0.5</option><option value="1">1</option>
-              <option value="5">5</option><option value="10">10</option>
+              <option value="0.1">0.1 mm</option><option value="0.5">0.5 mm</option><option value="1">1 mm</option>
+              <option value="5">5 mm</option><option value="10">10 mm</option>
             </select>
           </label>
+          <button id="fitBtn" class="small">전체 보기 <kbd>F</kbd></button>
         </div>
-        <p id="hint" class="hint"></p>
-      </section>
+        <div class="glabel">보기</div>
+      </div>
+    </div>
 
-      <!-- 3D -->
-      <section id="pane-3d" class="pane">
-        <div id="viewer" class="viewer"></div>
-        <div class="viewer-overlay">
-          <div id="status" class="status"></div>
-          <div class="cam-btns">
-            <button data-cam="iso">등각</button>
-            <button data-cam="front">정면</button>
-            <button data-cam="top">평면</button>
-            <button data-cam="side">측면</button>
+    <main id="ws-model" class="workspace">
+      <aside class="panel left">
+        <div class="panel-head">모델 트리</div>
+        <div id="tree" class="tree"></div>
+      </aside>
+
+      <section class="viewports" id="viewports">
+        <div class="vp" data-vp="top">
+          <div class="vp-head"><span class="vp-title"></span><button class="vp-max" title="크게 보기">⤢</button></div>
+          <div class="vp-body"><canvas tabindex="0"></canvas></div>
+        </div>
+        <div class="vp" data-vp="3d">
+          <div class="vp-head">
+            <span class="vp-title">3D 모델</span>
+            <span class="cam-btns">
+              <button data-cam="iso">등각</button><button data-cam="front">정면</button><button data-cam="top">평면</button><button data-cam="side">우측</button>
+            </span>
+            <button class="vp-max" title="크게 보기">⤢</button>
           </div>
+          <div class="vp-body" id="viewer3d"><div id="buildOverlay" class="build-overlay" hidden></div></div>
         </div>
-        <div class="row actions">
-          <button id="expStl">STL 저장</button>
-          <button id="expStep">STEP 저장</button>
+        <div class="vp" data-vp="front">
+          <div class="vp-head"><span class="vp-title"></span><button class="vp-max" title="크게 보기">⤢</button></div>
+          <div class="vp-body"><canvas tabindex="0"></canvas></div>
+        </div>
+        <div class="vp" data-vp="side">
+          <div class="vp-head"><span class="vp-title"></span><button class="vp-max" title="크게 보기">⤢</button></div>
+          <div class="vp-body"><canvas tabindex="0"></canvas></div>
         </div>
       </section>
 
-      <!-- 2D 도면 -->
-      <section id="pane-sheet" class="pane">
-        <div id="sheetHost" class="sheet-host"></div>
-        <div class="row actions">
-          <button id="expSvg">SVG 저장</button>
-          <button id="expDxf">DXF 저장</button>
-        </div>
-      </section>
+      <aside class="panel right">
+        <section class="props">
+          <div class="panel-head">속성</div>
+          <div id="props" class="props-body"></div>
+        </section>
+        <section class="checks">
+          <div class="panel-head">
+            설계 검사
+            <span id="checkCounts" class="counts"></span>
+          </div>
+          <div id="aiSummary" class="ai-summary" hidden></div>
+          <div id="findings" class="findings"></div>
+        </section>
+      </aside>
     </main>
 
-    <nav class="tabbar">
-      <button data-pane="sketch" class="active"><b>✎</b>2D 그리기</button>
-      <button data-pane="3d"><b>◈</b>3D 모델</button>
-      <button data-pane="sheet"><b>▤</b>2D 도면</button>
-    </nav>
+    <main id="ws-sheet" class="workspace sheet-ws" hidden>
+      <div class="sheet-toolbar">
+        <span class="muted">3D 모델에서 자동 생성된 3각법 3면도</span>
+        <div class="spacer"></div>
+        <button id="expSvg">SVG 저장</button>
+        <button id="expDxf">DXF 저장 (AutoCAD)</button>
+        <button id="expStl">STL 저장 (3D 프린팅)</button>
+        <button id="expStep">STEP 저장 (CAD)</button>
+        <button id="printBtn">인쇄 / PDF</button>
+      </div>
+      <div id="sheetHost" class="sheet-host"></div>
+    </main>
+
+    <footer class="statusbar">
+      <span id="coords" class="coords">X — · Y — · Z —</span>
+      <span id="toolHint" class="hint"></span>
+      <div class="spacer"></div>
+      <button id="snapGridBtn" class="toggle" title="격자에 붙기 (G)">격자 스냅</button>
+      <button id="snapAlignBtn" class="toggle" title="다른 도형·뷰에 정렬 (A)">정렬 스냅</button>
+      <span id="buildStatus" class="build-status"></span>
+    </footer>
+
+    <dialog id="settings">
+      <form method="dialog">
+        <h2>설정</h2>
+        <label class="block">Anthropic API 키
+          <input id="apiKey" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="note">
+          AI 설계 검토는 Claude(<code id="aiModel"></code>)를 사용합니다. 키는 <b>이 컴퓨터의 브라우저에만</b> 저장되고,
+          검토를 요청할 때 Anthropic API로만 전송됩니다. 키는 <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Anthropic Console</a>에서 만들 수 있어요.
+        </p>
+        <div class="dialog-actions">
+          <button value="cancel" class="ghost">취소</button>
+          <button id="saveSettings" value="ok" class="primary">저장</button>
+        </div>
+      </form>
+    </dialog>
 
     <div id="toast" class="toast" hidden></div>
     <script type="module" src="/src/main.ts"></script>

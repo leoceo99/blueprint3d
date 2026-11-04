@@ -167,9 +167,18 @@ export function buildAll(p: Project): { shape: Shape3D; result: BuildResult } {
       projections,
       bbox: bbox.bounds as BuildResult["bbox"],
       volume,
+      solidCount: countSolids(shape),
       notes,
     },
   };
+}
+
+function countSolids(shape: Shape3D): number {
+  try {
+    return (shape as any).solids?.length ?? 1;
+  } catch {
+    return 1;
+  }
 }
 
 /** 메쉬 기반 부피 (발산 정리) */

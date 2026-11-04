@@ -7,6 +7,8 @@ type Listener = () => void;
 /** 프로젝트 상태 + 실행 취소/다시 실행 + 자동 저장 */
 class Store {
   project: Project = load() ?? emptyProject();
+  /** 바뀔 때마다 1씩 증가 (화면 갱신 판단용) */
+  version = 0;
   private undoStack: string[] = [];
   private redoStack: string[] = [];
   private listeners = new Set<Listener>();
@@ -38,6 +40,7 @@ class Store {
 
   /** 변경 후 호출: 저장하고 화면들에 알린다. */
   changed() {
+    this.version++;
     save(this.project);
     this.listeners.forEach((l) => l());
   }

@@ -1,96 +1,294 @@
-import { buildSheet, sheetToDXF, type Sheet } from "./core/sheet";
+import { getApiKey, requestReview, setApiKey, AI_MODEL } from "./ai";
+import { runChecks } from "./core/checks";
+import { boundsOf, normRect } from "./core/geometry2d";
 import { SAMPLES } from "./core/samples";
-import { emptyProject, VIEW_IDS, VIEW_LABEL, type BuildResult, type Shape2D, type ViewId } from "./core/types";
+import { buildSheet, sheetToDXF, type Sheet } from "./core/sheet";
+import {
+  emptyProject,
+  VIEW_AXES,
+  VIEW_IDS,
+  VIEW_LABEL,
+  type BuildResult,
+  type Finding,
+  type Process,
+  type Project,
+  type Shape2D,
+  type ViewId,
+} from "./core/types";
 import { engine } from "./engine";
 import { pickTextFile, safeName, saveFile } from "./files";
-import { store } from "./store";
-import { fmt, SketchEditor, type Tool } from "./ui/sketch";
+import { newId, store } from "./store";
+import { fmt, refreshColors, shapeLabel, SketchPane } from "./ui/sketch";
+import { ui, type Tool } from "./ui/state";
 import { Viewer3D } from "./ui/viewer";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-const editor = new SketchEditor($<HTMLCanvasElement>("#sketch"));
-const viewer = new Viewer3D($("#viewer"));
-let lastResult: BuildResult | null = null;
-let lastSheet: Sheet | null = null;
-
-const darkQuery = matchMedia("(prefers-color-scheme: dark)");
-viewer.setDark(darkQuery.matches);
-darkQuery.addEventListener("change", () => viewer.setDark(darkQuery.matches));
-
-// ---------------- 탭 ----------------
-type Pane = "sketch" | "3d" | "sheet";
-function showPane(p: Pane) {
-  $$(".tabbar button").forEach((b) => b.classList.toggle("active", b.dataset.pane === p));
-  $$(".pane").forEach((el) => el.classList.toggle("active", el.id === `pane-${p}`));
-  viewer.setActive(p === "3d");
-  closeMenu();
-}
-$$(".tabbar button").forEach((b) => (b.onclick = () => showPane(b.dataset.pane as Pane)));
-
-// ---------------- 뷰 선택 ----------------
-const viewTabs = $("#viewTabs");
+// ---------------- 창 만들기 ----------------
+const panes = {} as Record<ViewId, SketchPane>;
 for (const v of VIEW_IDS) {
-  const b = document.createElement("button");
-  b.dataset.view = v;
-  b.setAttribute("role", "tab");
-  b.innerHTML = `${VIEW_LABEL[v]}<i class="dot" hidden></i>`;
-  b.onclick = () => {
-    editor.setView(v);
-    syncUI();
-  };
-  viewTabs.appendChild(b);
+  const vp = $(`.vp[data-vp="${v}"]`);
+  panes[v] = new SketchPane(vp.querySelector("canvas")!, v);
+  vp.querySelector(".vp-title")!.textContent = panes[v].title;
+  panes[v].onPolyDraft = () => renderStatus();
 }
+const viewer = new Viewer3D($("#viewer3d"));
+viewer.setActive(true);
+const dark = matchMedia("(prefers-color-scheme: dark)");
+viewer.setDark(dark.matches);
+dark.addEventListener("change", () => {
+  viewer.setDark(dark.matches);
+  refreshColors();
+  requestRender();
+});
 
-// ---------------- 도구 ----------------
-$$("#tools button").forEach(
-  (b) =>
-    (b.onclick = () => {
-      editor.setTool(b.dataset.tool as Tool);
-      syncUI();
-    }),
-);
-$("#undo").onclick = () => store.undo();
-$("#redo").onclick = () => store.redo();
-$("#fit").onclick = () => editor.fit();
-$("#polyDone").onclick = () => editor.finishPoly();
-$("#polyCancel").onclick = () => editor.cancelPoly();
-$("#polyUndo").onclick = () => editor.undoPolyPoint();
-editor.onPolyDraft = (n) => {
-  $("#polyBar").hidden = n === 0;
-  $("#polyCount").textContent = `점 ${n}개`;
-  $<HTMLButtonElement>("#polyDone").disabled = n < 3;
-};
+let lastBuild: BuildResult | null = null;
+let buildError: string | undefined;
+let lastSheet: Sheet | null = null;
+let ruleFindings: Finding[] = [];
+let ai: { summary: string; findings: Finding[]; version: number; loading: boolean; error?: string } | null = null;
 
-// ---------------- 설정 ----------------
+// ---------------- 화면 갱신 (프레임당 한 번) ----------------
+let rafPending = false;
+let panelKey = "";
+function requestRender() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => {
+    rafPending = false;
+    for (const v of VIEW_IDS) panes[v].render();
+    $$(".vp").forEach((el) => el.classList.toggle("active", el.dataset.vp === ui.activeView));
+    renderStatus();
+    const key = `${store.version}|${ui.sel?.view}:${ui.sel?.id}|${ui.findings.length}:${ui.findings.map((f) => f.id).join(",")}|${ui.activeView}|${ai?.loading}|${ai?.version}|${buildStamp}`;
+    if (key !== panelKey) {
+      panelKey = key;
+      renderTree();
+      renderProps();
+      renderFindings();
+      renderRibbon();
+    }
+  });
+}
+ui.subscribe(requestRender);
+store.subscribe(() => {
+  // 지워진 도형을 선택하고 있으면 해제
+  if (ui.sel && !store.project.views[ui.sel.view].some((s) => s.id === ui.sel!.id)) ui.sel = null;
+  scheduleBuild();
+  updateFindings();
+  requestRender();
+});
+
+// ---------------- 작업 공간 (모델링 / 도면) ----------------
+function showWorkspace(ws: "model" | "sheet") {
+  $$(".ws-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.ws === ws));
+  $("#ws-model").hidden = ws !== "model";
+  $("#ws-sheet").hidden = ws !== "sheet";
+  $("#ribbon").hidden = ws !== "model";
+  if (ws === "sheet") renderSheet();
+  else requestRender();
+}
+$$(".ws-tabs button").forEach((b) => (b.onclick = () => showWorkspace(b.dataset.ws as "model" | "sheet")));
+
+// 창 크게 보기
+$$(".vp").forEach((vp) => {
+  const toggle = () => {
+    const vps = $("#viewports");
+    const on = !vp.classList.contains("maxed");
+    $$(".vp").forEach((x) => x.classList.remove("maxed"));
+    vps.classList.toggle("max", on);
+    if (on) vp.classList.add("maxed");
+    requestRender();
+  };
+  vp.querySelector<HTMLButtonElement>(".vp-max")!.onclick = toggle;
+  vp.querySelector<HTMLElement>(".vp-head")!.ondblclick = toggle;
+});
+
+// ---------------- 리본 ----------------
+function setTool(t: Tool) {
+  for (const v of VIEW_IDS) panes[v].cancel();
+  ui.tool = t;
+  ui.emit();
+  panelKey = "";
+}
+$$<HTMLButtonElement>("[data-tool]").forEach((b) => (b.onclick = () => setTool(b.dataset.tool as Tool)));
+
+function selectedShape(): Shape2D | null {
+  if (!ui.sel) return null;
+  return store.project.views[ui.sel.view].find((s) => s.id === ui.sel!.id) ?? null;
+}
+function toggleHole() {
+  const s = selectedShape();
+  if (s) store.update(() => (s.hole = !s.hole));
+}
+function deleteSelected() {
+  const sel = ui.sel;
+  if (!sel) return;
+  store.update((p) => (p.views[sel.view] = p.views[sel.view].filter((s) => s.id !== sel.id)));
+  ui.sel = null;
+  ui.emit();
+}
+function duplicateSelected() {
+  const s = selectedShape();
+  if (!s || !ui.sel) return;
+  const view = ui.sel.view;
+  const d = structuredClone(s);
+  d.id = newId();
+  const off = Math.max(ui.grid * 5, 5);
+  if (d.kind === "rect") (d.x += off), (d.y -= off);
+  else if (d.kind === "circle") (d.cx += off), (d.cy -= off);
+  else d.pts = d.pts.map(([u, v]) => [u + off, v - off]);
+  store.update((p) => p.views[view].push(d));
+  ui.sel = { view, id: d.id };
+  ui.emit();
+}
+$("#holeBtn").onclick = toggleHole;
+$("#delBtn").onclick = deleteSelected;
+$("#dupBtn").onclick = duplicateSelected;
+$("#undoBtn").onclick = () => store.undo();
+$("#redoBtn").onclick = () => store.redo();
+$("#fitBtn").onclick = () => fitAll();
+
 const modeSel = $<HTMLSelectElement>("#mode");
 const thick = $<HTMLInputElement>("#thickness");
+const procSel = $<HTMLSelectElement>("#process");
 const gridSel = $<HTMLSelectElement>("#grid");
 const nameInput = $<HTMLInputElement>("#name");
-modeSel.onchange = () => store.update((p) => (p.mode = modeSel.value as any));
+modeSel.onchange = () => store.update((p) => (p.mode = modeSel.value as Project["mode"]));
+procSel.onchange = () => store.update((p) => (p.process = procSel.value as Process));
 thick.onchange = () => {
   const t = parseFloat(thick.value);
   if (t > 0) store.update((p) => (p.thickness = t));
   else thick.value = String(store.project.thickness);
 };
-gridSel.value = "5";
+gridSel.value = String(ui.grid);
 gridSel.onchange = () => {
-  editor.grid = parseFloat(gridSel.value);
-  editor.render();
+  ui.grid = parseFloat(gridSel.value);
+  ui.emit();
 };
 nameInput.onchange = () => store.update((p) => (p.name = nameInput.value.trim() || "새 부품"));
 
-// ---------------- 선택한 도형 속성 ----------------
-const props = $("#props");
-editor.onSelect = (s) => renderProps(s);
+function renderRibbon() {
+  const p = store.project;
+  $$<HTMLButtonElement>("[data-tool]").forEach((b) => b.classList.toggle("active", b.dataset.tool === ui.tool));
+  const has = !!selectedShape();
+  $<HTMLButtonElement>("#holeBtn").disabled = !has;
+  $<HTMLButtonElement>("#delBtn").disabled = !has;
+  $<HTMLButtonElement>("#dupBtn").disabled = !has;
+  $<HTMLButtonElement>("#undoBtn").disabled = !store.canUndo;
+  $<HTMLButtonElement>("#redoBtn").disabled = !store.canRedo;
+  modeSel.value = p.mode;
+  procSel.value = p.process ?? "cnc";
+  if (document.activeElement !== thick) thick.value = String(p.thickness);
+  if (document.activeElement !== nameInput) nameInput.value = p.name;
+  $("#thicknessWrap").hidden = p.mode !== "auto";
+}
 
-function numField(label: string, value: number, onSet: (n: number) => void, min?: number) {
-  const l = document.createElement("label");
-  l.textContent = label;
+// ---------------- 상태 표시줄 ----------------
+const snapGridBtn = $("#snapGridBtn");
+const snapAlignBtn = $("#snapAlignBtn");
+snapGridBtn.onclick = () => {
+  ui.snapGrid = !ui.snapGrid;
+  ui.emit();
+};
+snapAlignBtn.onclick = () => {
+  ui.snapAlign = !ui.snapAlign;
+  ui.emit();
+};
+const HINTS: Record<Tool, string> = {
+  select: "클릭: 선택 · 끌기: 이동 · 꼭짓점 끌기: 크기 · 빈 곳 끌기/휠 클릭/스페이스+끌기: 화면 이동 · 휠: 확대",
+  rect: "끌거나 두 번 클릭해서 사각형 · 그리는 중 숫자 입력 → 정확한 치수 (예: 40,20) · Shift: 정사각형",
+  circle: "중심에서 끌어서 원 · 그리는 중 숫자 입력 → 지름 · 몸체 안에 그리면 자동으로 구멍",
+  poly: "클릭으로 점 추가 · 첫 점 클릭/더블클릭/Enter: 닫기 · Shift: 수평·수직·45° · 숫자 입력: 30<90 또는 Δx,Δy · Backspace: 점 취소",
+};
+function renderStatus() {
+  const c = ui.cursor;
+  const f = (n: number | null) => (n === null ? "—" : fmt(n).padStart(7));
+  $("#coords").textContent = c ? `X ${f(c[0])}  Y ${f(c[1])}  Z ${f(c[2])} mm` : "X —  Y —  Z —";
+  $("#toolHint").textContent = HINTS[ui.tool];
+  snapGridBtn.classList.toggle("on", ui.snapGrid);
+  snapAlignBtn.classList.toggle("on", ui.snapAlign);
+}
+
+// ---------------- 모델 트리 ----------------
+const ico = (body: string) =>
+  `<svg class="ic" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">${body}</svg>`;
+const SHAPE_ICON = {
+  rect: ico('<rect x="3" y="5" width="14" height="10"/>'),
+  circle: ico('<circle cx="10" cy="10" r="6.5"/>'),
+  poly: ico('<path d="M10 3l7 5-2.7 8.5H5.7L3 8z"/>'),
+};
+const SEV_COLOR = { error: "var(--sev-error)", warning: "var(--sev-warning)", info: "var(--sev-info)" };
+function renderTree() {
+  const p = store.project;
+  const tree = $("#tree");
+  tree.innerHTML = "";
+  for (const v of VIEW_IDS) {
+    const disabled = p.mode === "revolve" && v !== "front";
+    const box = document.createElement("div");
+    box.className = "tree-view" + (disabled ? " disabled" : "");
+    const head = document.createElement("div");
+    head.className = "tv-head" + (ui.activeView === v ? " active" : "");
+    const [ua, va] = VIEW_AXES[v];
+    head.innerHTML = `<span>▾</span>${VIEW_LABEL[v]} <span class="muted">(${ua}–${va})</span><span class="cnt">${p.views[v].length}</span>`;
+    head.onclick = () => {
+      ui.activeView = v;
+      ui.emit();
+    };
+    box.appendChild(head);
+    if (!p.views[v].length) {
+      const e = document.createElement("div");
+      e.className = "tree-empty";
+      e.textContent = disabled ? "회전체 모드에서는 사용 안 함" : "비어 있음";
+      box.appendChild(e);
+    }
+    for (const s of p.views[v]) {
+      const it = document.createElement("div");
+      const sel = ui.sel?.view === v && ui.sel.id === s.id;
+      it.className = "tree-item" + (s.hole ? " hole" : "") + (sel ? " sel" : "");
+      const ic = SHAPE_ICON[s.kind];
+      const sev = worstSeverity(v, s.id);
+      it.innerHTML =
+        `${ic}<span>${esc(shapeLabel(s))}</span>` +
+        (sev ? `<span class="dot" style="background:${SEV_COLOR[sev]}"></span>` : "") +
+        `<span class="badge">${s.hole ? "구멍" : "몸체"}</span>`;
+      it.onclick = () => {
+        ui.sel = { view: v, id: s.id };
+        ui.activeView = v;
+        ui.emit();
+      };
+      box.appendChild(it);
+    }
+    tree.appendChild(box);
+  }
+  const r = document.createElement("div");
+  r.className = "tree-result";
+  if (lastBuild) {
+    const [[x0, y0, z0], [x1, y1, z1]] = lastBuild.bbox;
+    r.innerHTML =
+      `<b>3D 결과</b><br/>크기 <span class="stat">${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)}</span> mm<br/>` +
+      `부피 <span class="stat">${fmt(lastBuild.volume / 1000)}</span> cm³ · 덩어리 ${lastBuild.solidCount}개<br/>` +
+      lastBuild.notes.map((n) => `<span>${esc(n)}</span>`).join("<br/>");
+  } else r.innerHTML = `<b>3D 결과</b><br/>${esc(buildError ?? "도형을 그리면 자동으로 만들어집니다.")}`;
+  tree.appendChild(r);
+}
+
+function worstSeverity(view: ViewId, id: string) {
+  let best: Finding["severity"] | null = null;
+  const rank = { error: 0, warning: 1, info: 2 };
+  for (const f of ui.findings)
+    if (f.refs.some((r) => r.view === view && r.shapeId === id) && (!best || rank[f.severity] < rank[best])) best = f.severity;
+  return best;
+}
+
+// ---------------- 속성 ----------------
+function numRow(label: string, value: number, onSet: (n: number) => void, min?: number) {
+  const k = document.createElement("span");
+  k.className = "k";
+  k.textContent = label;
   const i = document.createElement("input");
   i.type = "number";
-  i.inputMode = "decimal";
   i.step = "any";
   i.value = fmt(value);
   i.onchange = () => {
@@ -101,95 +299,348 @@ function numField(label: string, value: number, onSet: (n: number) => void, min?
     }
     store.update(() => onSet(n));
   };
-  l.appendChild(i);
-  return l;
+  i.onkeydown = (e) => e.key === "Enter" && i.blur();
+  return [k, i];
 }
 
-function renderProps(s: Shape2D | null) {
-  // 입력 중에는 다시 그리지 않음 (포커스 유지)
-  if (props.contains(document.activeElement) && document.activeElement?.tagName !== "BUTTON") return;
-  props.hidden = !s;
-  props.innerHTML = "";
-  if (!s) return;
-  const kind = document.createElement("div");
-  kind.className = "toggle";
+function renderProps() {
+  const box = $("#props");
+  if (box.contains(document.activeElement) && document.activeElement !== box) return;
+  box.innerHTML = "";
+  const s = selectedShape();
+  if (!s || !ui.sel) {
+    box.innerHTML = `<div class="props-empty">도형을 선택하면 치수를 숫자로 고칠 수 있어요.<br/>단축키: <kbd>V</kbd> 선택 <kbd>R</kbd> 사각형 <kbd>C</kbd> 원 <kbd>L</kbd> 다각형 <kbd>H</kbd> 구멍 전환 <kbd>F</kbd> 전체 보기</div>`;
+    return;
+  }
+  const [ua, va] = VIEW_AXES[ui.sel.view];
+  const head = document.createElement("div");
+  head.className = "full";
+  head.innerHTML = `<b>${esc(shapeLabel(s))}</b> <span class="muted">· ${VIEW_LABEL[ui.sel.view]}</span>`;
+  const seg = document.createElement("div");
+  seg.className = "seg full";
   for (const [hole, label] of [
-    [false, "몸체"],
-    [true, "구멍"],
+    [false, "몸체 (더하기)"],
+    [true, "구멍 (빼기)"],
   ] as const) {
     const b = document.createElement("button");
     b.textContent = label;
     b.className = s.hole === hole ? "on" : "";
     b.onclick = () => store.update(() => (s.hole = hole));
-    kind.appendChild(b);
+    seg.appendChild(b);
   }
-  props.appendChild(kind);
+  box.append(head, seg);
   if (s.kind === "rect") {
-    props.append(
-      numField("X", s.x, (n) => (s.x = n)),
-      numField("Y", s.y, (n) => (s.y = n)),
-      numField("가로", s.w, (n) => (s.w = n), 0.01),
-      numField("세로", s.h, (n) => (s.h = n), 0.01),
+    const r = normRect(s);
+    box.append(
+      ...numRow(`${ua} (왼쪽)`, r.x, (n) => (s.x = n)),
+      ...numRow(`${va} (아래)`, r.y, (n) => (s.y = n)),
+      ...numRow("가로", r.w, (n) => Object.assign(s, { x: r.x, w: n }), 0.01),
+      ...numRow("세로", r.h, (n) => Object.assign(s, { y: r.y, h: n }), 0.01),
     );
   } else if (s.kind === "circle") {
-    props.append(
-      numField("중심 X", s.cx, (n) => (s.cx = n)),
-      numField("중심 Y", s.cy, (n) => (s.cy = n)),
-      numField("지름 Ø", s.r * 2, (n) => (s.r = n / 2), 0.01),
+    box.append(
+      ...numRow(`중심 ${ua}`, s.cx, (n) => (s.cx = n)),
+      ...numRow(`중심 ${va}`, s.cy, (n) => (s.cy = n)),
+      ...numRow("지름 Ø", s.r * 2, (n) => (s.r = n / 2), 0.01),
     );
   } else {
-    const l = document.createElement("label");
-    l.className = "grow";
-    l.style.flexDirection = "column";
-    l.style.alignItems = "stretch";
-    l.textContent = "꼭짓점 좌표 (한 줄에 x, y)";
+    const k = document.createElement("span");
+    k.className = "k full";
+    k.textContent = `꼭짓점 (한 줄에 ${ua}, ${va})`;
     const ta = document.createElement("textarea");
+    ta.className = "full";
     ta.value = s.pts.map(([x, y]) => `${fmt(x)}, ${fmt(y)}`).join("\n");
     ta.onchange = () => {
       const pts = ta.value
         .split(/[\n;]+/)
-        .map((line) => line.split(/[,\s]+/).filter(Boolean).map(Number))
+        .map((l) => l.split(/[,\s]+/).filter(Boolean).map(Number))
         .filter((a) => a.length >= 2 && a.every(Number.isFinite))
         .map((a) => [a[0], a[1]] as [number, number]);
       if (pts.length >= 3) store.update(() => (s.pts = pts));
-      else toast("점이 3개 이상 필요합니다.");
+      else toast("꼭짓점이 3개 이상 필요합니다.");
     };
-    l.appendChild(ta);
-    props.appendChild(l);
+    box.append(k, ta);
   }
-  const del = document.createElement("button");
-  del.textContent = "삭제";
-  del.className = "danger";
-  del.onclick = () => editor.deleteSelected();
-  props.appendChild(del);
 }
 
-// ---------------- 메뉴 ----------------
-const menu = $("#menu");
-function closeMenu() {
-  menu.hidden = true;
+// ---------------- 설계 검사 ----------------
+function updateFindings() {
+  ruleFindings = runChecks(store.project, lastBuild, buildError);
+  const aiList = ai && !ai.loading ? ai.findings.filter((f) => refsStillValid(f)) : [];
+  const order = { error: 0, warning: 1, info: 2 };
+  ui.findings = [...ruleFindings, ...aiList].sort((a, b) => order[a.severity] - order[b.severity]);
 }
-$("#menuBtn").onclick = (e) => {
+
+function refsStillValid(f: Finding) {
+  return f.refs.every((r) => !r.shapeId || store.project.views[r.view].some((s) => s.id === r.shapeId));
+}
+
+function renderFindings() {
+  const list = $("#findings");
+  list.innerHTML = "";
+  const n = { error: 0, warning: 0, info: 0 };
+  ui.findings.forEach((f) => n[f.severity]++);
+  $("#checkCounts").innerHTML =
+    `<span><i class="sev error">!</i>${n.error}</span><span><i class="sev warning">!</i>${n.warning}</span><span><i class="sev info">i</i>${n.info}</span>`;
+
+  const sum = $("#aiSummary");
+  if (ai) {
+    sum.hidden = false;
+    if (ai.loading)
+      sum.innerHTML = `<div class="loading"><div class="spinner"></div>AI가 도면을 검토하고 있어요… (보통 20초~1분)</div>`;
+    else if (ai.error) sum.innerHTML = `<b>AI 검토 실패</b><br/>${esc(ai.error)}`;
+    else
+      sum.innerHTML =
+        `<b>✦ AI 총평</b> ${esc(ai.summary)}` +
+        (ai.version !== store.version ? `<br/><span class="stale">도면이 바뀌었어요. 다시 검토하면 최신 결과를 볼 수 있습니다.</span>` : "");
+  } else sum.hidden = true;
+
+  if (!ui.findings.length) {
+    list.innerHTML = `<div class="all-good">✓ 규칙 검사에서 문제가 없습니다.${ai ? "" : " 더 깊은 검토는 ‘AI 설계 검토’를 눌러 보세요."}</div>`;
+    return;
+  }
+  for (const f of ui.findings) {
+    const el = document.createElement("div");
+    el.className = `finding ${f.severity}`;
+    el.innerHTML =
+      `<div class="f-head"><i class="sev ${f.severity}">${f.severity === "info" ? "i" : "!"}</i><span>${esc(f.title)}</span></div>` +
+      `<div class="f-tags"><span class="tag ${f.source === "ai" ? "ai" : ""}">${f.source === "ai" ? "✦ AI" : "규칙"}</span><span class="tag">${esc(f.category)}</span></div>` +
+      `<div class="f-detail">${esc(f.detail)}</div>` +
+      (f.suggestion ? `<div class="f-fix"><b>고치는 법</b> · ${esc(f.suggestion)}</div>` : "");
+    el.onmouseenter = () => {
+      ui.hoverFindingId = f.id;
+      ui.emit();
+    };
+    el.onmouseleave = () => {
+      ui.hoverFindingId = null;
+      ui.emit();
+    };
+    el.onclick = () => focusFinding(f);
+    list.appendChild(el);
+  }
+}
+
+function focusFinding(f: Finding) {
+  const r = f.refs.find((x) => x.shapeId) ?? f.refs[0];
+  if (!r) return;
+  ui.activeView = r.view;
+  if (r.shapeId) ui.sel = { view: r.view, id: r.shapeId };
+  let u = r.u;
+  let v = r.v;
+  if ((u === undefined || v === undefined) && r.shapeId) {
+    const s = store.project.views[r.view].find((x) => x.id === r.shapeId);
+    if (s) {
+      const b = boundsOf([{ ...s, hole: false }])!;
+      u = (b[0] + b[2]) / 2;
+      v = (b[1] + b[3]) / 2;
+    }
+  }
+  if (u !== undefined && v !== undefined) ui.flash = { view: r.view, u, v, until: performance.now() + 1800 };
+  ui.emit();
+}
+
+// ---------------- AI 설계 검토 ----------------
+const settings = $<HTMLDialogElement>("#settings");
+$("#aiModel").textContent = AI_MODEL;
+function openSettings() {
+  $<HTMLInputElement>("#apiKey").value = getApiKey();
+  settings.showModal();
+}
+$("#settingsBtn").onclick = openSettings;
+settings.addEventListener("close", () => {
+  if (settings.returnValue === "ok") {
+    setApiKey($<HTMLInputElement>("#apiKey").value.trim());
+    toast(getApiKey() ? "API 키를 저장했습니다." : "API 키를 지웠습니다.");
+  }
+});
+
+let aiAbort: AbortController | null = null;
+$("#aiBtn").onclick = async () => {
+  if (!getApiKey()) {
+    toast("먼저 Anthropic API 키를 입력하세요.");
+    openSettings();
+    return;
+  }
+  if (ai?.loading) {
+    aiAbort?.abort();
+    return;
+  }
+  showWorkspace("model");
+  aiAbort = new AbortController();
+  const version = store.version;
+  ai = { summary: "", findings: [], version, loading: true };
+  $("#aiBtn").textContent = "■ 검토 중지";
+  updateFindings();
+  requestRender();
+  try {
+    await waitForBuild();
+    const sheet = lastBuild ? buildSheet(lastBuild, store.project.name) : null;
+    const [imageSheet, image3d] = await Promise.all([sheet ? svgToPng(sheet.svg) : null, Promise.resolve(viewer.capture())]);
+    const res = await requestReview(
+      {
+        project: store.project,
+        build: lastBuild,
+        ruleFindings,
+        imageSheet: imageSheet ?? undefined,
+        image3d: image3d ?? undefined,
+      },
+      aiAbort.signal,
+    );
+    ai = { summary: res.summary, findings: res.findings, version, loading: false };
+    toast(`AI 검토 완료: ${res.findings.length}건`);
+  } catch (e: any) {
+    ai = { summary: "", findings: [], version, loading: false, error: e?.message ?? String(e) };
+  } finally {
+    aiAbort = null;
+    $("#aiBtn").textContent = "✦ AI 설계 검토";
+    updateFindings();
+    panelKey = "";
+    requestRender();
+  }
+};
+
+async function svgToPng(svg: string): Promise<string | null> {
+  const img = new Image();
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  try {
+    await new Promise((res, rej) => {
+      img.onload = res;
+      img.onerror = rej;
+      img.src = url;
+    });
+    const w = 1400;
+    const h = Math.round((img.naturalHeight / img.naturalWidth) * w) || 1000;
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext("2d")!;
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return c.toDataURL("image/png").split(",")[1];
+  } catch {
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// ---------------- 3D 자동 생성 ----------------
+let buildTimer = 0;
+let buildSeq = 0;
+let building: Promise<void> | null = null;
+let buildStamp = 0;
+function scheduleBuild() {
+  clearTimeout(buildTimer);
+  setBuildStatus("3D 갱신 중…", "");
+  buildTimer = window.setTimeout(() => (building = runBuild()), 250);
+}
+async function waitForBuild() {
+  clearTimeout(buildTimer);
+  building = runBuild();
+  await building;
+}
+
+async function runBuild() {
+  const seq = ++buildSeq;
+  const hasAny = VIEW_IDS.some((v) => store.project.views[v].some((s) => !s.hole));
+  if (!hasAny) {
+    lastBuild = null;
+    buildError = undefined;
+    viewer.setMesh(null);
+    setBuildStatus("도형을 그리면 3D가 자동으로 만들어져요", "");
+    finishBuild();
+    return;
+  }
+  try {
+    const res = await engine.build(structuredClone(store.project));
+    if (seq !== buildSeq) return;
+    lastBuild = res;
+    buildError = undefined;
+    viewer.setMesh(res.mesh);
+    const [[x0, y0, z0], [x1, y1, z1]] = res.bbox;
+    setBuildStatus(`✓ 3D ${fmt(x1 - x0)}×${fmt(y1 - y0)}×${fmt(z1 - z0)} mm`, "ok");
+  } catch (e: any) {
+    if (seq !== buildSeq) return;
+    lastBuild = null;
+    buildError = e.message;
+    setBuildStatus("⚠ 3D 생성 실패", "err");
+  }
+  finishBuild();
+}
+
+function finishBuild() {
+  buildStamp++;
+  const ov = $("#buildOverlay");
+  ov.hidden = !buildError;
+  ov.textContent = buildError ?? "";
+  updateFindings();
+  if (!$("#ws-sheet").hidden) renderSheet();
+  requestRender();
+}
+
+function setBuildStatus(text: string, cls: string) {
+  const el = $("#buildStatus");
+  el.textContent = text;
+  el.className = "build-status " + cls;
+}
+
+// ---------------- 도면 / 내보내기 ----------------
+function renderSheet() {
+  const host = $("#sheetHost");
+  if (!lastBuild) {
+    lastSheet = null;
+    host.innerHTML = `<p class="empty">3D 모델이 만들어지면 정면도·평면도·우측면도가 자동으로 그려집니다.</p>`;
+    return;
+  }
+  lastSheet = buildSheet(lastBuild, store.project.name);
+  host.innerHTML = lastSheet.svg;
+}
+const base = () => safeName(store.project.name);
+$("#expSvg").onclick = () => lastSheet && saveFile(`${base()}_도면.svg`, lastSheet.svg, "image/svg+xml", "svg");
+$("#expDxf").onclick = () => lastSheet && saveFile(`${base()}_도면.dxf`, sheetToDXF(lastSheet), "application/dxf", "dxf");
+$("#printBtn").onclick = () => lastSheet && window.print();
+async function export3D(f: "stl" | "step") {
+  if (!lastBuild) return toast("먼저 3D 모델을 만들어 주세요.");
+  try {
+    const data = await engine.export(f);
+    await saveFile(`${base()}.${f}`, data, f === "stl" ? "model/stl" : "model/step", f);
+  } catch (e: any) {
+    toast(e.message);
+  }
+}
+$("#expStl").onclick = () => export3D("stl");
+$("#expStep").onclick = () => export3D("step");
+
+const camDirs: Record<string, [number, number, number]> = {
+  iso: [1, -1.4, 0.9],
+  front: [0, -1, 0.0001],
+  top: [0, -0.0001, 1],
+  side: [1, 0, 0.0001],
+};
+$$<HTMLButtonElement>("[data-cam]").forEach((b) => (b.onclick = () => viewer.resetView(camDirs[b.dataset.cam!])));
+
+// ---------------- 파일 메뉴 ----------------
+const fileMenu = $("#menu-file");
+$('[data-menu="file"]').onclick = (e) => {
   e.stopPropagation();
-  menu.hidden = !menu.hidden;
+  fileMenu.hidden = !fileMenu.hidden;
 };
 document.addEventListener("click", (e) => {
-  if (!menu.contains(e.target as Node)) closeMenu();
+  if (!fileMenu.contains(e.target as Node)) fileMenu.hidden = true;
 });
-const samplesEl = $("#samples");
 for (const s of SAMPLES) {
   const b = document.createElement("button");
   b.textContent = s.name;
   b.onclick = () => loadProject(structuredClone(s));
-  samplesEl.appendChild(b);
+  $("#samples").appendChild(b);
 }
-menu.querySelector<HTMLButtonElement>('[data-act="new"]')!.onclick = () => loadProject(emptyProject());
-menu.querySelector<HTMLButtonElement>('[data-act="saveJson"]')!.onclick = () => {
-  closeMenu();
-  saveFile(`${safeName(store.project.name)}.blueprint3d.json`, JSON.stringify(store.project, null, 2), "application/json");
-};
-menu.querySelector<HTMLButtonElement>('[data-act="openJson"]')!.onclick = async () => {
-  closeMenu();
+fileMenu.querySelector<HTMLButtonElement>('[data-act="new"]')!.onclick = () => loadProject(emptyProject());
+fileMenu.querySelector<HTMLButtonElement>('[data-act="open"]')!.onclick = openProject;
+fileMenu.querySelector<HTMLButtonElement>('[data-act="save"]')!.onclick = saveProject;
+
+async function openProject() {
+  fileMenu.hidden = true;
   const text = await pickTextFile(".json,application/json");
   if (!text) return;
   try {
@@ -199,102 +650,141 @@ menu.querySelector<HTMLButtonElement>('[data-act="openJson"]')!.onclick = async 
   } catch {
     toast("프로젝트 파일을 읽을 수 없습니다.");
   }
-};
-
-function loadProject(p: typeof store.project) {
-  closeMenu();
+}
+function saveProject() {
+  fileMenu.hidden = true;
+  saveFile(`${base()}.blueprint3d.json`, JSON.stringify(store.project, null, 2), "application/json", "json");
+}
+function loadProject(p: Project) {
+  fileMenu.hidden = true;
+  ai = null;
+  ui.sel = null;
   store.replace(p);
-  const first = VIEW_IDS.find((v) => p.views[v].length) ?? "front";
-  editor.setView(first);
-  syncUI();
+  fitAll();
 }
 
-// ---------------- 3D 생성 (자동) ----------------
-let buildTimer = 0;
-let buildSeq = 0;
-const chip = $("#buildChip");
-const status = $("#status");
-
-function scheduleBuild() {
-  clearTimeout(buildTimer);
-  chip.className = "chip";
-  chip.textContent = "3D 갱신 중…";
-  buildTimer = window.setTimeout(runBuild, 350);
+/** 세 뷰가 모두 화면에 들어오게 공유 카메라 맞춤 */
+function fitAll() {
+  const ranges: ([number, number] | null)[] = [null, null, null];
+  const AX = { X: 0, Y: 1, Z: 2 } as const;
+  const merge = (i: number, a: number, b: number) => {
+    const r = ranges[i];
+    ranges[i] = r ? [Math.min(r[0], a), Math.max(r[1], b)] : [a, b];
+  };
+  for (const v of VIEW_IDS) {
+    const b = boundsOf(store.project.views[v]);
+    if (!b) continue;
+    const [u, w] = VIEW_AXES[v];
+    merge(AX[u], b[0], b[2]);
+    merge(AX[w], b[1], b[3]);
+  }
+  if (lastBuild) for (let i = 0; i < 3; i++) merge(i, lastBuild.bbox[0][i], lastBuild.bbox[1][i]);
+  const r = ranges.map((x) => x ?? [0, 40]);
+  let scale = Infinity;
+  for (const v of VIEW_IDS) {
+    const canvas = $(`.vp[data-vp="${v}"] canvas`);
+    if (!canvas.clientWidth) continue;
+    const [u, w] = VIEW_AXES[v];
+    const du = Math.max(r[AX[u]][1] - r[AX[u]][0], 10);
+    const dw = Math.max(r[AX[w]][1] - r[AX[w]][0], 10);
+    scale = Math.min(scale, (canvas.clientWidth * 0.72) / du, (canvas.clientHeight * 0.72) / dw);
+  }
+  ui.camera.scale = Number.isFinite(scale) ? Math.min(Math.max(scale, 0.05), 400) : 4;
+  ui.camera.c = [0, 1, 2].map((i) => (r[i][0] + r[i][1]) / 2) as [number, number, number];
+  ui.emit();
 }
 
-async function runBuild() {
-  const seq = ++buildSeq;
-  const hasAny = VIEW_IDS.some((v) => store.project.views[v].some((s) => !s.hole));
-  if (!hasAny) {
-    lastResult = null;
-    viewer.setMesh(null);
-    chip.textContent = "도형을 그리면 3D가 자동으로 만들어져요";
-    status.className = "status";
-    status.textContent = "아직 3D 모델이 없습니다. ‘2D 그리기’에서 도형을 그려 보세요.";
-    renderSheet();
+// ---------------- 단축키 ----------------
+function isTyping() {
+  const a = document.activeElement;
+  return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
+}
+window.addEventListener("keydown", (e) => {
+  if (settings.open) return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    saveProject();
     return;
   }
-  try {
-    const res = await engine.build(structuredClone(store.project));
-    if (seq !== buildSeq) return;
-    lastResult = res;
-    viewer.setMesh(res.mesh);
-    const [[x0, y0, z0], [x1, y1, z1]] = res.bbox;
-    chip.className = "chip ok";
-    chip.textContent = `✓ 3D ${fmt(x1 - x0)}×${fmt(y1 - y0)}×${fmt(z1 - z0)}`;
-    status.className = "status";
-    status.innerHTML =
-      `<b>크기</b> ${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)} mm · <b>부피</b> ${fmt(res.volume / 1000)} cm³` +
-      `<ul>${res.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`;
-    renderSheet();
-  } catch (e: any) {
-    if (seq !== buildSeq) return;
-    chip.className = "chip err";
-    chip.textContent = "⚠ 3D 생성 실패";
-    status.className = "status err";
-    status.textContent = e.message;
-  }
-}
-
-function renderSheet() {
-  const host = $("#sheetHost");
-  if (!lastResult) {
-    lastSheet = null;
-    host.innerHTML = `<p class="empty">3D 모델이 만들어지면<br/>정면도·평면도·우측면도가 자동으로 그려집니다.</p>`;
+  if (mod && e.key.toLowerCase() === "o") {
+    e.preventDefault();
+    openProject();
     return;
   }
-  lastSheet = buildSheet(lastResult, store.project.name);
-  host.innerHTML = lastSheet.svg;
-}
-
-// ---------------- 카메라/내보내기 ----------------
-const camDirs: Record<string, [number, number, number]> = {
-  iso: [1, -1.4, 0.9],
-  front: [0, -1, 0.0001],
-  top: [0, -0.0001, 1],
-  side: [1, 0, 0.0001],
-};
-$$(".cam-btns button").forEach((b) => (b.onclick = () => viewer.resetView(camDirs[b.dataset.cam!])));
-
-async function export3D(fmtName: "stl" | "step") {
-  if (!lastResult) return toast("먼저 3D 모델을 만들어 주세요.");
-  try {
-    const data = await engine.export(fmtName);
-    await saveFile(`${safeName(store.project.name)}.${fmtName}`, data, fmtName === "stl" ? "model/stl" : "model/step");
-  } catch (e: any) {
-    toast(e.message);
+  if (isTyping()) return;
+  const pane = panes[ui.activeView];
+  if (!mod && pane.handleKey(e)) {
+    e.preventDefault();
+    return;
   }
-}
-$("#expStl").onclick = () => export3D("stl");
-$("#expStep").onclick = () => export3D("step");
-$("#expSvg").onclick = () => {
-  if (!lastSheet) return toast("먼저 3D 모델을 만들어 주세요.");
-  saveFile(`${safeName(store.project.name)}_도면.svg`, lastSheet.svg, "image/svg+xml");
-};
-$("#expDxf").onclick = () => {
-  if (!lastSheet) return toast("먼저 3D 모델을 만들어 주세요.");
-  saveFile(`${safeName(store.project.name)}_도면.dxf`, sheetToDXF(lastSheet), "application/dxf");
-};
+  if (mod && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    if (e.shiftKey) store.redo();
+    else store.undo();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === "y") {
+    e.preventDefault();
+    store.redo();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === "d") {
+    e.preventDefault();
+    duplicateSelected();
+    return;
+  }
+  if (mod && e.altKey && e.key.toLowerCase() === "n") {
+    e.preventDefault();
+    loadProject(emptyProject());
+    return;
+  }
+  if (mod || e.altKey) return;
+  switch (e.key.toLowerCase()) {
+    case "v":
+      setTool("select");
+      break;
+    case "r":
+      setTool("rect");
+      break;
+    case "c":
+      setTool("circle");
+      break;
+    case "l":
+      setTool("poly");
+      break;
+    case "h":
+      toggleHole();
+      break;
+    case "f":
+      fitAll();
+      break;
+    case "g":
+      ui.snapGrid = !ui.snapGrid;
+      ui.emit();
+      break;
+    case "a":
+      ui.snapAlign = !ui.snapAlign;
+      ui.emit();
+      break;
+    case "delete":
+    case "backspace":
+      deleteSelected();
+      break;
+    case "escape":
+      if (!pane.cancel()) {
+        if (ui.tool !== "select") setTool("select");
+        else if (ui.sel) {
+          ui.sel = null;
+          ui.emit();
+        }
+      }
+      break;
+    default:
+      return;
+  }
+  e.preventDefault();
+});
 
 // ---------------- 공통 ----------------
 let toastTimer = 0;
@@ -303,55 +793,21 @@ function toast(msg: string) {
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (t.hidden = true), 2600);
+  toastTimer = window.setTimeout(() => (t.hidden = true), 2800);
 }
 
-function escapeHtml(s: string) {
-  return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!);
-}
-
-const HINTS: Record<Tool, string> = {
-  select: "도형을 눌러 선택·이동, 꼭짓점을 끌어 크기 조절. 빈 곳을 끌면 화면 이동, 두 손가락으로 확대.",
-  rect: "끌어서 사각형을 그립니다. 몸체 안에 그리면 자동으로 ‘구멍’이 됩니다.",
-  circle: "중심에서 끌어서 원을 그립니다. 몸체 안에 그리면 자동으로 ‘구멍’이 됩니다.",
-  poly: "눌러서 꼭짓점을 찍고, 첫 점을 다시 누르거나 ‘닫기’로 완성합니다.",
-};
-
-function syncUI() {
-  const p = store.project;
-  if (document.activeElement !== nameInput) nameInput.value = p.name;
-  modeSel.value = p.mode;
-  thick.value = String(p.thickness);
-  $("#thicknessWrap").hidden = p.mode !== "auto";
-  $$<HTMLButtonElement>("#viewTabs button").forEach((b) => {
-    const v = b.dataset.view as ViewId;
-    b.classList.toggle("active", v === editor.view);
-    const has = p.views[v].some((s) => !s.hole);
-    (b.querySelector(".dot") as HTMLElement).hidden = !has;
-    b.disabled = p.mode === "revolve" && v !== "front";
-  });
-  $$("#tools button").forEach((b) => b.classList.toggle("active", b.dataset.tool === editor.tool));
-  $<HTMLButtonElement>("#undo").disabled = !store.canUndo;
-  $<HTMLButtonElement>("#redo").disabled = !store.canRedo;
-  $("#hint").textContent =
-    p.mode === "revolve"
-      ? "회전체: 정면도에서 회전축(세로선) 오른쪽에 단면 절반을 그리면 축을 중심으로 돌린 3D가 됩니다."
-      : HINTS[editor.tool] +
-        " 뷰를 1개만 그리면 두께만큼 돌출, 2~3개를 그리면 겹치는 부분으로 3D를 만듭니다.";
-  renderProps(editor.selected());
-}
-
-store.subscribe(() => {
-  if (store.project.mode === "revolve" && editor.view !== "front") editor.setView("front");
-  syncUI();
+// ---------------- 시작 ----------------
+if (!VIEW_IDS.some((v) => store.project.views[v].length)) store.project = structuredClone(SAMPLES[0]);
+ui.activeView = VIEW_IDS.find((v) => store.project.views[v].length) ?? "front";
+updateFindings();
+requestAnimationFrame(() => {
+  fitAll();
   scheduleBuild();
 });
-
-// 시작
-if (!VIEW_IDS.some((v) => store.project.views[v].length)) {
-  // 처음 실행이면 예제를 보여 준다
-  store.project = structuredClone(SAMPLES[0]);
-}
-editor.setView(VIEW_IDS.find((v) => store.project.views[v].length) ?? "front");
-syncUI();
-scheduleBuild();
+// 처음 빌드가 끝나면 3D 크기까지 포함해 다시 맞춤
+const firstFit = setInterval(() => {
+  if (lastBuild || buildError) {
+    clearInterval(firstFit);
+    fitAll();
+  }
+}, 200);

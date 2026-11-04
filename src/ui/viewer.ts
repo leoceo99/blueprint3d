@@ -121,6 +121,23 @@ export class Viewer3D {
     this.camera.updateProjectionMatrix();
   }
 
+  /** AI 검토용 등각 시점 PNG (base64, 접두어 없이) */
+  capture(): string | null {
+    if (!this.group.children.length) return null;
+    const pos = this.camera.position.clone();
+    const target = this.controls.target.clone();
+    const wasActive = this.active;
+    this.active = true;
+    this.resetView();
+    this.renderer.render(this.scene, this.camera);
+    const url = this.renderer.domElement.toDataURL("image/png");
+    this.camera.position.copy(pos);
+    this.controls.target.copy(target);
+    this.controls.update();
+    this.active = wasActive;
+    return url.split(",")[1] ?? null;
+  }
+
   private loop = () => {
     requestAnimationFrame(this.loop);
     if (!this.active) return;
