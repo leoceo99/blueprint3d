@@ -20,7 +20,8 @@ import {
 import { engine } from "./engine";
 import { pickTextFile, safeName, saveFile } from "./files";
 import { newId, store } from "./store";
-import { fmt, refreshColors, shapeLabel, SketchPane } from "./ui/sketch";
+import { DraftBoard } from "./ui/board";
+import { fmt, refreshColors, shapeLabel } from "./ui/sketch";
 import { ui, type HoleSettings, type Tool } from "./ui/state";
 import { Viewer3D } from "./ui/viewer";
 
@@ -28,16 +29,12 @@ const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySe
 const $$ = <T extends HTMLElement = HTMLElement>(sel: string) => [...document.querySelectorAll(sel)] as T[];
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-// ---------------- 창 만들기 ----------------
-const panes = {} as Record<ViewId, SketchPane>;
-for (const v of VIEW_IDS) {
-  const vp = $(`.vp[data-vp="${v}"]`);
-  panes[v] = new SketchPane(vp.querySelector("canvas")!, v);
-  vp.querySelector(".vp-title")!.textContent = panes[v].title;
-  panes[v].onPolyDraft = () => renderStatus();
-}
+// ---------------- 화면 만들기 ----------------
+// 2D 설계: 세 뷰를 한 장의 제도판에 / 3D 보기: 전체 화면 3D / 도면 출력: 자동 3면도
+const board = new DraftBoard($<HTMLCanvasElement>("#board"));
+const panes = board.panes;
+for (const v of VIEW_IDS) panes[v].onPolyDraft = () => renderStatus();
 const viewer = new Viewer3D($("#viewer3d"));
-viewer.setActive(true);
 const dark = matchMedia("(prefers-color-scheme: dark)");
 viewer.setDark(dark.matches);
 dark.addEventListener("change", () => {
@@ -60,10 +57,9 @@ function requestRender() {
   rafPending = true;
   requestAnimationFrame(() => {
     rafPending = false;
-    for (const v of VIEW_IDS) panes[v].render();
-    $$(".vp").forEach((el) => el.classList.toggle("active", el.dataset.vp === ui.activeView));
+    if (workspace === "design") board.render();
     renderStatus();
-    const key = `${store.version}|${ui.sel?.view}:${ui.sel?.id}|${ui.findings.length}:${ui.findings.map((f) => f.id).join(",")}|${ui.activeView}|${ai?.loading}|${ai?.version}|${buildStamp}`;
+    const key = `${workspace}|${store.version}|${ui.sel?.view}:${ui.sel?.id}|${ui.findings.length}:${ui.findings.map((f) => f.id).join(",")}|${ui.activeView}|${ai?.loading}|${ai?.version}|${buildStamp}`;
     if (key !== panelKey) {
       panelKey = key;
       renderTree();
@@ -82,30 +78,41 @@ store.subscribe(() => {
   requestRender();
 });
 
-// ---------------- 작업 공간 (모델링 / 도면) ----------------
-function showWorkspace(ws: "model" | "sheet") {
+// ---------------- 작업 공간: 2D 설계 / 3D 보기 / 도면 출력 ----------------
+type Workspace = "design" | "3d" | "sheet";
+let workspace: Workspace = "design";
+function showWorkspace(ws: Workspace) {
+  workspace = ws;
   $$(".ws-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.ws === ws));
-  $("#ws-model").hidden = ws !== "model";
+  $("#ws-main").hidden = ws === "sheet";
   $("#ws-sheet").hidden = ws !== "sheet";
-  $("#ribbon").hidden = ws !== "model";
+  $("#ribbon").hidden = ws !== "design";
+  $("#stage-design").hidden = ws !== "design";
+  $("#stage-3d").hidden = ws !== "3d";
+  viewer.setActive(ws === "3d");
+  for (const id of ["#toolHint", "#coords", "#snapGridBtn", "#snapAlignBtn", "#resultBtn"]) $(id).hidden = ws !== "design";
   if (ws === "sheet") renderSheet();
-  else requestRender();
+  for (const v of VIEW_IDS) panes[v].cancel();
+  requestRender();
 }
-$$(".ws-tabs button").forEach((b) => (b.onclick = () => showWorkspace(b.dataset.ws as "model" | "sheet")));
+$$(".ws-tabs button").forEach((b) => (b.onclick = () => showWorkspace(b.dataset.ws as Workspace)));
+$("#buildStatus").onclick = () => lastBuild && showWorkspace("3d");
+$("#back2d").onclick = () => showWorkspace("design");
 
-// 창 크게 보기
-$$(".vp").forEach((vp) => {
-  const toggle = () => {
-    const vps = $("#viewports");
-    const on = !vp.classList.contains("maxed");
-    $$(".vp").forEach((x) => x.classList.remove("maxed"));
-    vps.classList.toggle("max", on);
-    if (on) vp.classList.add("maxed");
-    requestRender();
-  };
-  vp.querySelector<HTMLButtonElement>(".vp-max")!.onclick = toggle;
-  vp.querySelector<HTMLElement>(".vp-head")!.ondblclick = toggle;
-});
+// 제도판: 전체 보기 / 한 뷰만 크게
+$$<HTMLButtonElement>("[data-focus]").forEach(
+  (b) =>
+    (b.onclick = () => {
+      const f = b.dataset.focus!;
+      if (f === "all") board.fitAll();
+      else board.focus(f as ViewId);
+      $$("[data-focus]").forEach((x) => x.classList.toggle("on", x === b));
+    }),
+);
+function fitAll() {
+  board.fitAll();
+  $$("[data-focus]").forEach((x) => x.classList.toggle("on", x.getAttribute("data-focus") === "all"));
+}
 
 // ---------------- 리본 ----------------
 function setTool(t: Tool) {
@@ -351,6 +358,16 @@ function renderProps() {
   if (box.contains(document.activeElement) && document.activeElement !== box) return;
   box.innerHTML = "";
   const s = selectedShape();
+  if (workspace === "3d") {
+    const info = lastBuild
+      ? (() => {
+          const [[x0, y0, z0], [x1, y1, z1]] = lastBuild.bbox;
+          return `<b>3D 모델</b><br/>크기 ${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)} mm<br/>부피 ${fmt(lastBuild.volume / 1000)} cm³ · 덩어리 ${lastBuild.solidCount}개`;
+        })()
+      : `<b>3D 모델 없음</b><br/>${esc(buildError ?? "2D 설계에서 도형을 그리면 만들어집니다.")}`;
+    box.innerHTML = `<div class="props-empty">${info}<br/><br/>마우스 왼쪽 끌기: 돌리기 · 오른쪽 끌기: 이동 · 휠: 확대<br/>수정은 <kbd>1</kbd> 2D 설계에서 합니다.</div>`;
+    return;
+  }
   if ((!s || !ui.sel) && ui.tool === "hole") {
     const title = document.createElement("div");
     title.className = "full";
@@ -767,7 +784,7 @@ $("#aiBtn").onclick = async () => {
     aiAbort?.abort();
     return;
   }
-  showWorkspace("model");
+  showWorkspace("design");
   aiAbort = new AbortController();
   const version = store.version;
   ai = { summary: "", findings: [], version, loading: true };
@@ -873,6 +890,7 @@ async function runBuild() {
     ) as typeof ui.result;
     const [[x0, y0, z0], [x1, y1, z1]] = res.bbox;
     setBuildStatus(`✓ 3D ${fmt(x1 - x0)}×${fmt(y1 - y0)}×${fmt(z1 - z0)} mm`, "ok");
+    $("#info3d").textContent = `${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)} mm · 부피 ${fmt(res.volume / 1000)} cm³`;
   } catch (e: any) {
     if (seq !== buildSeq) return;
     lastBuild = null;
@@ -924,6 +942,8 @@ async function export3D(f: "stl" | "step") {
 }
 $("#expStl").onclick = () => export3D("stl");
 $("#expStep").onclick = () => export3D("step");
+$("#expStl3d").onclick = () => export3D("stl");
+$("#expStep3d").onclick = () => export3D("step");
 
 const camDirs: Record<string, [number, number, number]> = {
   iso: [1, -1.4, 0.9],
@@ -976,37 +996,6 @@ function loadProject(p: Project) {
   fitAll();
 }
 
-/** 세 뷰가 모두 화면에 들어오게 공유 카메라 맞춤 */
-function fitAll() {
-  const ranges: ([number, number] | null)[] = [null, null, null];
-  const AX = { X: 0, Y: 1, Z: 2 } as const;
-  const merge = (i: number, a: number, b: number) => {
-    const r = ranges[i];
-    ranges[i] = r ? [Math.min(r[0], a), Math.max(r[1], b)] : [a, b];
-  };
-  for (const v of VIEW_IDS) {
-    const b = boundsOf(store.project.views[v]);
-    if (!b) continue;
-    const [u, w] = VIEW_AXES[v];
-    merge(AX[u], b[0], b[2]);
-    merge(AX[w], b[1], b[3]);
-  }
-  if (lastBuild) for (let i = 0; i < 3; i++) merge(i, lastBuild.bbox[0][i], lastBuild.bbox[1][i]);
-  const r = ranges.map((x) => x ?? [0, 40]);
-  let scale = Infinity;
-  for (const v of VIEW_IDS) {
-    const canvas = $(`.vp[data-vp="${v}"] canvas`);
-    if (!canvas.clientWidth) continue;
-    const [u, w] = VIEW_AXES[v];
-    const du = Math.max(r[AX[u]][1] - r[AX[u]][0], 10);
-    const dw = Math.max(r[AX[w]][1] - r[AX[w]][0], 10);
-    scale = Math.min(scale, (canvas.clientWidth * 0.72) / du, (canvas.clientHeight * 0.72) / dw);
-  }
-  ui.camera.scale = Number.isFinite(scale) ? Math.min(Math.max(scale, 0.05), 400) : 4;
-  ui.camera.c = [0, 1, 2].map((i) => (r[i][0] + r[i][1]) / 2) as [number, number, number];
-  ui.emit();
-}
-
 // ---------------- 단축키 ----------------
 function isTyping() {
   const a = document.activeElement;
@@ -1053,6 +1042,12 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (mod || e.altKey) return;
+  if (e.key === "1" || e.key === "2" || e.key === "3") {
+    showWorkspace(e.key === "1" ? "design" : e.key === "2" ? "3d" : "sheet");
+    e.preventDefault();
+    return;
+  }
+  if (workspace !== "design" && e.key !== "Escape") return;
   switch (e.key.toLowerCase()) {
     case "v":
       setTool("select");

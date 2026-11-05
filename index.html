@@ -23,8 +23,9 @@
       </div>
       <input id="name" class="name" aria-label="부품 이름" spellcheck="false" />
       <nav class="ws-tabs" role="tablist">
-        <button data-ws="model" class="active" role="tab">모델링</button>
-        <button data-ws="sheet" role="tab">2D 도면</button>
+        <button data-ws="design" class="active" role="tab" title="2D 설계 (1)">✎ 2D 설계</button>
+        <button data-ws="3d" role="tab" title="3D 보기 (2)">◈ 3D 보기</button>
+        <button data-ws="sheet" role="tab" title="도면 출력 (3)">▤ 도면 출력</button>
       </nav>
       <div class="spacer"></div>
       <button id="aiBtn" class="primary">✦ AI 설계 검토</button>
@@ -105,34 +106,40 @@
       </div>
     </div>
 
-    <main id="ws-model" class="workspace">
+    <main id="ws-main" class="workspace">
       <aside class="panel left">
         <div class="panel-head">모델 트리</div>
         <div id="tree" class="tree"></div>
       </aside>
 
-      <section class="viewports" id="viewports">
-        <div class="vp" data-vp="top">
-          <div class="vp-head"><span class="vp-title"></span><button class="vp-max" title="크게 보기">⤢</button></div>
-          <div class="vp-body"><canvas tabindex="0"></canvas></div>
-        </div>
-        <div class="vp" data-vp="3d">
-          <div class="vp-head">
-            <span class="vp-title">3D 모델</span>
-            <span class="cam-btns">
-              <button data-cam="iso">등각</button><button data-cam="front">정면</button><button data-cam="top">평면</button><button data-cam="side">우측</button>
-            </span>
-            <button class="vp-max" title="크게 보기">⤢</button>
+      <section class="stage">
+        <!-- 2D 설계: 세 뷰를 한 장의 제도판에 (3각법 배치) -->
+        <div id="stage-design" class="stage-pane">
+          <canvas id="board" tabindex="0"></canvas>
+          <div class="board-tools">
+            <div class="seg" role="group" aria-label="보기">
+              <button data-focus="all" class="on" title="세 뷰 모두 (F)">전체</button>
+              <button data-focus="front" title="정면도만 크게">정면</button>
+              <button data-focus="top" title="평면도만 크게">평면</button>
+              <button data-focus="side" title="우측면도만 크게">우측</button>
+            </div>
           </div>
-          <div class="vp-body" id="viewer3d"><div id="buildOverlay" class="build-overlay" hidden></div></div>
+          <div id="buildOverlay" class="build-overlay" hidden></div>
         </div>
-        <div class="vp" data-vp="front">
-          <div class="vp-head"><span class="vp-title"></span><button class="vp-max" title="크게 보기">⤢</button></div>
-          <div class="vp-body"><canvas tabindex="0"></canvas></div>
-        </div>
-        <div class="vp" data-vp="side">
-          <div class="vp-head"><span class="vp-title"></span><button class="vp-max" title="크게 보기">⤢</button></div>
-          <div class="vp-body"><canvas tabindex="0"></canvas></div>
+
+        <!-- 3D 보기: 전체 화면 -->
+        <div id="stage-3d" class="stage-pane stage-3d" hidden>
+          <div class="stage-toolbar">
+            <div class="seg" role="group" aria-label="시점">
+              <button data-cam="iso">등각</button><button data-cam="front">정면</button><button data-cam="top">평면</button><button data-cam="side">우측</button>
+            </div>
+            <span id="info3d" class="muted"></span>
+            <div class="spacer"></div>
+            <button id="expStl3d" title="3D 프린팅용">STL 저장</button>
+            <button id="expStep3d" title="다른 CAD용">STEP 저장</button>
+            <button id="back2d" class="primary">✎ 2D 설계로 <kbd>1</kbd></button>
+          </div>
+          <div id="viewer3d" class="viewer3d"></div>
         </div>
       </section>
 

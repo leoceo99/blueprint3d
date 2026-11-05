@@ -80,8 +80,12 @@ export class Viewer3D {
     this.center.copy(bs.center);
 
     if (this.grid) this.scene.remove(this.grid);
-    const size = Math.pow(10, Math.ceil(Math.log10(this.radius * 4)));
-    this.grid = new THREE.GridHelper(size, 20, 0x8899aa, 0xc5ced8);
+    // 모델 크기의 약 3배, 10mm 칸 (너무 넓으면 지평선 쪽 선이 지저분해 보임)
+    const step = this.radius > 200 ? 50 : 10;
+    const size = Math.max(step * 4, Math.ceil((this.radius * 3) / step) * step * 2);
+    this.grid = new THREE.GridHelper(size, Math.min(200, size / step), 0x8899aa, 0xc5ced8);
+    this.grid.position.x = this.center.x;
+    this.grid.position.y = this.center.y;
     this.grid.rotation.x = Math.PI / 2;
     this.grid.position.z = g.boundingBox!.min.z - 0.01;
     (this.grid.material as THREE.Material).transparent = true;
@@ -127,14 +131,22 @@ export class Viewer3D {
     const pos = this.camera.position.clone();
     const target = this.controls.target.clone();
     const wasActive = this.active;
+    const aspect = this.camera.aspect;
+    // 3D 화면이 숨겨져 있어도 찍을 수 있게 정해진 크기로 그린다
+    this.renderer.setSize(960, 720, false);
+    this.camera.aspect = 960 / 720;
+    this.camera.updateProjectionMatrix();
     this.active = true;
     this.resetView();
     this.renderer.render(this.scene, this.camera);
     const url = this.renderer.domElement.toDataURL("image/png");
     this.camera.position.copy(pos);
     this.controls.target.copy(target);
+    this.camera.aspect = aspect;
+    this.camera.updateProjectionMatrix();
     this.controls.update();
     this.active = wasActive;
+    this.resize();
     return url.split(",")[1] ?? null;
   }
 

@@ -16,6 +16,7 @@ import {
 import { holeLabel, specDiameter, threadRow } from "../core/standards";
 import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Severity, type Shape2D, type ViewId } from "../core/types";
 import { newId, store } from "../store";
+import type { DraftBoard } from "./board";
 import { ui } from "./state";
 
 type Pt = [number, number];
@@ -27,7 +28,6 @@ interface Guide {
 }
 
 type Drag =
-  | { kind: "pan"; sx: number; sy: number; c: [number, number, number] }
   | { kind: "move"; shape: Shape2D; orig: Shape2D; anchor: Pt; grab: Pt; moved: boolean }
   | { kind: "vertex"; shape: Shape2D; index: number; moved: boolean }
   /** 변 가운데 손잡이를 끌어 변을 원호로 휘게 */
@@ -65,6 +65,10 @@ interface Colors {
   info: string;
   blindFill: string;
   result: string;
+  boardBg: string;
+  frame: string;
+  frameLabelBg: string;
+  cornerBg: string;
 }
 
 function readColors(): Colors {
@@ -87,6 +91,10 @@ function readColors(): Colors {
     info: v("--sev-info"),
     blindFill: v("--blind-fill"),
     result: v("--result-line"),
+    boardBg: v("--board-bg"),
+    frame: v("--frame"),
+    frameLabelBg: v("--frame-label-bg"),
+    cornerBg: v("--corner-bg"),
   };
 }
 
@@ -94,10 +102,15 @@ let colors: Colors | null = null;
 export function refreshColors() {
   colors = readColors();
 }
+export function palette(): Colors {
+  if (!colors) colors = readColors();
+  return colors;
+}
 
 /**
- * 2D 도면 창 하나 (정면도/평면도/우측면도).
+ * 제도판 위의 뷰 하나 (정면도/평면도/우측면도): 그 뷰의 도형 그리기·편집·표시.
  * 화면(px, y 아래) ↔ 뷰 좌표(mm, u 오른쪽, v 위) ↔ 3D 좌표(X, Y, Z)
+ * 화면 배치·이동·확대·입력 분배는 DraftBoard가 맡는다.
  */
 export class SketchPane {
   polyDraft: Pt[] = [];
@@ -114,48 +127,23 @@ export class SketchPane {
   /** 측정 도구: 첫 점과 (있으면) 두 번째 점 */
   private measure: { a: Pt; b: Pt | null } | null = null;
   private guides: Guide[] = [];
-  private dpr = 1;
-  private spaceDown = false;
+  private canvas: HTMLCanvasElement;
   private dyn: HTMLInputElement;
   private dynHint: HTMLDivElement;
   readonly ua: number;
   readonly va: number;
 
   constructor(
-    private canvas: HTMLCanvasElement,
+    private board: DraftBoard,
     readonly view: ViewId,
   ) {
-    this.ctx = canvas.getContext("2d")!;
+    this.canvas = board.canvas;
+    this.ctx = board.ctx;
+    const canvas = this.canvas;
     const [u, v] = VIEW_AXES[view];
     this.ua = AX[u];
     this.va = AX[v];
     if (!colors) refreshColors();
-
-    canvas.addEventListener("pointerdown", (e) => this.down(e));
-    canvas.addEventListener("pointermove", (e) => this.move(e));
-    canvas.addEventListener("pointerup", (e) => this.up(e));
-    canvas.addEventListener("pointercancel", (e) => this.up(e));
-    canvas.addEventListener("pointerleave", () => {
-      this.hover = null;
-      this.hoverRaw = null;
-      this.hoverShapeId = null;
-      if (ui.cursor && ui.activeView === this.view) {
-        ui.cursor = null;
-        ui.emit();
-      }
-    });
-    canvas.addEventListener("dblclick", () => {
-      if (ui.tool === "poly" && this.polyDraft.length >= 3) this.finishPoly();
-    });
-    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
-    canvas.addEventListener("wheel", (e) => this.wheel(e), { passive: false });
-    new ResizeObserver(() => this.resize()).observe(canvas);
-    window.addEventListener("keydown", (e) => {
-      if (e.code === "Space" && !isTyping()) this.spaceDown = true;
-    });
-    window.addEventListener("keyup", (e) => {
-      if (e.code === "Space") this.spaceDown = false;
-    });
 
     // 치수 직접 입력 (AutoCAD의 동적 입력처럼)
     const host = canvas.parentElement!;
@@ -184,27 +172,22 @@ export class SketchPane {
   private get h() {
     return this.canvas.clientHeight;
   }
+  private get dpr() {
+    return this.board.dpr;
+  }
+  /** 뷰 좌표 → 화면 (제도판에서 이 뷰의 원점 위치를 더한다) */
   toScreen(u: number, v: number): [number, number] {
-    const { scale, c } = ui.camera;
-    return [this.w / 2 + (u - c[this.ua]) * scale, this.h / 2 - (v - c[this.va]) * scale];
+    const [ox, oy] = this.board.offset(this.view);
+    return this.board.sheetToScreen(u + ox, v + oy);
   }
   toWorld(x: number, y: number): Pt {
-    const { scale, c } = ui.camera;
-    return [(x - this.w / 2) / scale + c[this.ua], -(y - this.h / 2) / scale + c[this.va]];
+    const [ox, oy] = this.board.offset(this.view);
+    const [gx, gy] = this.board.screenToSheet(x, y);
+    return [gx - ox, gy - oy];
   }
   private local(e: { clientX: number; clientY: number }): [number, number] {
     const r = this.canvas.getBoundingClientRect();
     return [e.clientX - r.left, e.clientY - r.top];
-  }
-
-  /** 이 뷰가 화면에 꽉 차도록 (공유 카메라를 이 뷰 기준으로) */
-  fitTo(bounds: [number, number, number, number] | null) {
-    const b = bounds ?? [0, 0, 60, 40];
-    const bw = Math.max(b[2] - b[0], 10);
-    const bh = Math.max(b[3] - b[1], 10);
-    ui.camera.scale = clampScale(Math.min((this.w * 0.7) / bw, (this.h * 0.7) / bh));
-    ui.camera.c[this.ua] = (b[0] + b[2]) / 2;
-    ui.camera.c[this.va] = (b[1] + b[3]) / 2;
   }
 
   // ---------------- 스냅 ----------------
@@ -229,8 +212,10 @@ export class SketchPane {
     // 3D 결과의 이 뷰 투영 범위와 가운데 (구멍만 그리는 뷰에서 위치 잡기용)
     const rb = ui.result?.[this.view]?.bounds;
     if (rb) {
-      byAxis[this.ua].push(rb[0][0], rb[1][0], (rb[0][0] + rb[1][0]) / 2);
-      byAxis[this.va].push(rb[0][1], rb[1][1], (rb[0][1] + rb[1][1]) / 2);
+      // 3D 엔진 결과에는 1e-6 정도 오차가 있어 0.0001mm로 반올림
+      const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
+      byAxis[this.ua].push(r4(rb[0][0]), r4(rb[1][0]), r4((rb[0][0] + rb[1][0]) / 2));
+      byAxis[this.va].push(r4(rb[0][1]), r4(rb[1][1]), r4((rb[0][1] + rb[1][1]) / 2));
     }
     byAxis[this.ua].push(0);
     byAxis[this.va].push(0);
@@ -315,6 +300,19 @@ export class SketchPane {
     return this.polyDraft.length > 0 || this.creating !== null;
   }
 
+  /** 다른 뷰로 커서가 나가도 이 뷰가 계속 입력을 받아야 하는 상태 */
+  get pending() {
+    return this.busy || (this.measure !== null && this.measure.b === null);
+  }
+
+  /** 커서가 이 뷰 영역을 떠남 */
+  leave() {
+    this.hover = null;
+    this.hoverRaw = null;
+    this.hoverShapeId = null;
+    this.hoverCorner = null;
+  }
+
   /** 그리는 중에 숫자를 누르면 치수 입력창을 연다 */
   handleKey(e: KeyboardEvent): boolean {
     if (!this.busy) return false;
@@ -335,20 +333,12 @@ export class SketchPane {
 
   // ---------------- 입력 ----------------
 
-  private down(e: PointerEvent) {
-    this.canvas.setPointerCapture(e.pointerId);
-    this.canvas.focus();
+  down(e: PointerEvent) {
     if (ui.activeView !== this.view) {
       ui.activeView = this.view;
       ui.emit();
     }
     const [x, y] = this.local(e);
-
-    if (e.button === 1 || e.button === 2 || this.spaceDown) {
-      this.drag = { kind: "pan", sx: x, sy: y, c: [...ui.camera.c] };
-      return;
-    }
-    if (e.button !== 0) return;
 
     const raw = this.toWorld(x, y);
     let sp = this.snap(raw).pt;
@@ -430,22 +420,14 @@ export class SketchPane {
       ui.sel = null;
       ui.emit();
     }
-    this.drag = { kind: "pan", sx: x, sy: y, c: [...ui.camera.c] };
+    this.board.startPan(x, y);
   }
 
-  private move(e: PointerEvent) {
+  move(e: PointerEvent) {
     const [x, y] = this.local(e);
     this.hoverRaw = [x, y];
     const raw = this.toWorld(x, y);
     const d = this.drag;
-
-    if (d?.kind === "pan") {
-      const { scale } = ui.camera;
-      ui.camera.c[this.ua] = d.c[this.ua] - (x - d.sx) / scale;
-      ui.camera.c[this.va] = d.c[this.va] + (y - d.sy) / scale;
-      ui.emit();
-      return;
-    }
 
     const excl = d?.kind === "move" || d?.kind === "vertex" ? d.shape.id : d?.kind === "bend" ? d.shapeId : this.creating?.shape.id;
     let { pt, guides } = this.snap(raw, excl);
@@ -500,7 +482,7 @@ export class SketchPane {
     ui.emit();
   }
 
-  private up(e: PointerEvent) {
+  up(e: PointerEvent) {
     const d = this.drag;
     this.drag = null;
     if (this.creating?.dragged) {
@@ -510,26 +492,6 @@ export class SketchPane {
     if (!d) return;
     if ((d.kind === "move" || d.kind === "vertex" || d.kind === "bend") && !d.moved) store.dropCheckpoint();
     void e;
-  }
-
-  private wheel(e: WheelEvent) {
-    e.preventDefault();
-    const [x, y] = this.local(e);
-    // 트랙패드 두 손가락 스크롤(ctrl 없이 가로 이동이 섞임) → 화면 이동, 그 외 → 확대/축소
-    const isPan = !e.ctrlKey && e.deltaMode === 0 && Math.abs(e.deltaX) > 0.5;
-    if (isPan) {
-      ui.camera.c[this.ua] += e.deltaX / ui.camera.scale;
-      ui.camera.c[this.va] -= e.deltaY / ui.camera.scale;
-      ui.emit();
-      return;
-    }
-    const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015));
-    const before = this.toWorld(x, y);
-    ui.camera.scale = clampScale(ui.camera.scale * k);
-    const after = this.toWorld(x, y);
-    ui.camera.c[this.ua] += before[0] - after[0];
-    ui.camera.c[this.va] += before[1] - after[1];
-    ui.emit();
   }
 
   private finishCreate() {
@@ -732,21 +694,20 @@ export class SketchPane {
 
   // ---------------- 그리기 ----------------
 
-  private resize() {
-    this.dpr = window.devicePixelRatio || 1;
-    this.canvas.width = Math.round(this.w * this.dpr);
-    this.canvas.height = Math.round(this.h * this.dpr);
-    this.render();
+  /** 화면 전체 다시 그리기 (제도판이 세 뷰를 모두 그린다) */
+  render() {
+    this.board.render();
   }
 
-  render() {
+  /** 제도판이 이 뷰 영역으로 잘라 둔 상태에서 호출한다 */
+  renderContent() {
     const c = this.ctx;
     const col = colors!;
     const { w, h } = this;
     if (!w || !h) return;
-    c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const reg = this.board.regionScreenRect(this.view);
     c.fillStyle = col.bg;
-    c.fillRect(0, 0, w, h);
+    c.fillRect(reg[0], reg[1], reg[2] - reg[0], reg[3] - reg[1]);
     this.drawGrid();
     this.drawResultUnderlay();
     if (store.project.mode !== "revolve") this.drawExtentGuides();
@@ -840,8 +801,8 @@ export class SketchPane {
       c.fillStyle = col.text;
       c.font = "600 11px system-ui, sans-serif";
       c.textAlign = "center";
-      c.textBaseline = "top";
-      c.fillText("회전체 모드: 이 뷰에는 구멍만 그릴 수 있어요 (예: 플랜지 볼트 구멍)", w / 2, 8);
+      c.textBaseline = "bottom";
+      c.fillText("회전체 모드: 이 뷰에는 구멍만 그릴 수 있어요 (예: 플랜지 볼트 구멍)", (reg[0] + reg[2]) / 2, reg[3] - 10);
     }
   }
 
@@ -850,17 +811,11 @@ export class SketchPane {
     const r = ui.showResult ? ui.result?.[this.view] : null;
     if (!r) return;
     const c = this.ctx;
-    const { scale, c: cam } = ui.camera;
+    const { scale } = ui.camera;
+    // 투영 경로는 (u, −v) 좌표 → 화면으로: 뷰 원점의 화면 위치만큼 옮긴다
+    const [x0, y0] = this.toScreen(0, 0);
     c.save();
-    // 투영 경로는 (u, −v) 좌표 → 화면으로
-    c.setTransform(
-      this.dpr * scale,
-      0,
-      0,
-      this.dpr * scale,
-      this.dpr * (this.w / 2 - cam[this.ua] * scale),
-      this.dpr * (this.h / 2 + cam[this.va] * scale),
-    );
+    c.setTransform(this.dpr * scale, 0, 0, this.dpr * scale, this.dpr * x0, this.dpr * y0);
     c.strokeStyle = colors!.result;
     c.lineWidth = 1 / scale;
     c.setLineDash([4 / scale, 3 / scale]);
@@ -1093,7 +1048,7 @@ export class SketchPane {
       c.font = "600 11px system-ui, sans-serif";
       c.textAlign = "left";
       c.textBaseline = "top";
-      c.fillText("회전축 (Z) — 오른쪽에 단면 절반을 그리세요", ax + 6, 8);
+      c.fillText("회전축 (Z) — 오른쪽에 단면 절반을 그리세요", ax + 6, Math.max(8, this.board.regionScreenRect(this.view)[1] + 8));
     }
   }
 

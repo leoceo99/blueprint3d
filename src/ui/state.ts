@@ -12,15 +12,16 @@ export interface HoleSettings {
 }
 
 /**
- * 모든 2D 창이 함께 쓰는 화면 상태.
- * 카메라는 3D 좌표(X, Y, Z)의 중심과 배율 하나만 가진다 →
- * 정면도·평면도는 X가, 정면도·우측면도는 Z가 항상 일직선으로 맞는다 (3각법 정렬).
+ * 화면 상태 (도구, 선택, 제도판 카메라, 커서, 검사 결과).
+ * 세 뷰는 제도판 한 장 위에 3각법으로 배치되므로
+ * 정면도·평면도는 X가, 정면도·우측면도는 Z가 항상 일직선으로 맞는다.
  */
 class UIState {
   tool: Tool = "select";
   sel: { view: ViewId; id: string } | null = null;
   activeView: ViewId = "front";
-  camera = { scale: 4, c: [30, 20, 20] as [number, number, number] };
+  /** 제도판 화면: 가운데의 도면 좌표(mm)와 배율(px/mm) */
+  camera = { scale: 4, x: 60, y: 50 };
   grid = 1;
   /** 모서리 도구: 둥글게(R) 또는 모따기(C)와 크기 */
   cornerKind: "fillet" | "chamfer" = "fillet";
