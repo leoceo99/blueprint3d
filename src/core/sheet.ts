@@ -129,7 +129,8 @@ function arcPoints(p0: Pt, p1: Pt, rx: number, ry: number, rotDeg: number, large
   let dt = ang((x1 - cx1) / rx, (y1 - cy1) / ry, (-x1 - cx1) / rx, (-y1 - cy1) / ry);
   if (!sweep && dt > 0) dt -= 2 * Math.PI;
   if (sweep && dt < 0) dt += 2 * Math.PI;
-  const steps = Math.max(2, Math.ceil((Math.abs(dt) / (2 * Math.PI)) * n));
+  // 큰 원호도 매끄럽게: 최소 2.5°마다 한 점 (n은 원 한 바퀴 최소 점 수)
+  const steps = Math.max(4, Math.ceil((Math.abs(dt) / (2 * Math.PI)) * n), Math.ceil(Math.abs(dt) / (Math.PI / 72)));
   const pts: Pt[] = [];
   for (let k = 1; k <= steps; k++) {
     const t = t1 + (dt * k) / steps;

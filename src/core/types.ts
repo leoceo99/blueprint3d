@@ -22,12 +22,21 @@ interface ShapeBase {
   hole: boolean;
 }
 
+/** 꼭짓점 처리: 모서리 R(둥글게) 또는 모따기 */
+export interface Corner {
+  kind: "fillet" | "chamfer";
+  /** fillet이면 반지름, chamfer면 꼭짓점에서 양쪽으로 자르는 거리 (mm) */
+  size: number;
+}
+
 export interface RectShape extends ShapeBase {
   kind: "rect";
   x: number;
   y: number;
   w: number;
   h: number;
+  /** 꼭짓점 순서: 왼쪽아래, 오른쪽아래, 오른쪽위, 왼쪽위 */
+  corners?: (Corner | null)[];
 }
 
 export interface CircleShape extends ShapeBase {
@@ -40,9 +49,24 @@ export interface CircleShape extends ShapeBase {
 export interface PolyShape extends ShapeBase {
   kind: "poly";
   pts: [number, number][];
+  /**
+   * 변 i (pts[i] → pts[i+1])의 휨 정도 (DXF bulge = tan(호 각도/4)).
+   * 0이면 직선, 양수면 반시계 방향 호, 1이면 반원.
+   */
+  bulges?: number[];
+  /** 꼭짓점 i의 모서리 처리 (양쪽 변이 직선일 때만 적용) */
+  corners?: (Corner | null)[];
 }
 
-export type Shape2D = RectShape | CircleShape | PolyShape;
+/** 장공(긴 구멍): 두 중심점 a, b와 폭 w, 양끝은 반원 */
+export interface SlotShape extends ShapeBase {
+  kind: "slot";
+  a: [number, number];
+  b: [number, number];
+  w: number;
+}
+
+export type Shape2D = RectShape | CircleShape | PolyShape | SlotShape;
 
 /**
  * auto    : 그린 뷰가 1개면 두께만큼 돌출, 2~3개면 각 뷰를 돌출한 뒤 교집합

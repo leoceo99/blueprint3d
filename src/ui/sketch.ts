@@ -1,4 +1,17 @@
-import { boundsOf, isDegenerate, normRect, pointInShape, shapeCenter } from "../core/geometry2d";
+import {
+  arcInfo,
+  boundsOf,
+  bulgeThrough,
+  flatten,
+  isDegenerate,
+  normRect,
+  outline,
+  pointInShape,
+  rectPoints,
+  rectToPoly,
+  shapeCenter,
+  translated,
+} from "../core/geometry2d";
 import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Severity, type Shape2D, type ViewId } from "../core/types";
 import { newId, store } from "../store";
 import { ui } from "./state";
@@ -14,7 +27,16 @@ interface Guide {
 type Drag =
   | { kind: "pan"; sx: number; sy: number; c: [number, number, number] }
   | { kind: "move"; shape: Shape2D; orig: Shape2D; anchor: Pt; grab: Pt; moved: boolean }
-  | { kind: "vertex"; shape: Shape2D; index: number; moved: boolean };
+  | { kind: "vertex"; shape: Shape2D; index: number; moved: boolean }
+  /** 변 가운데 손잡이를 끌어 변을 원호로 휘게 */
+  | { kind: "bend"; shapeId: string; index: number; moved: boolean };
+
+/** 선택한 도형의 손잡이: 꼭짓점(크기 조절) 또는 변 가운데(휘기) */
+interface Handle {
+  pt: Pt;
+  kind: "vertex" | "mid";
+  index: number;
+}
 
 /** 사각형/원 그리기 중 상태 (끌어서 그리기, 또는 클릭-클릭) */
 interface Creating {
@@ -81,6 +103,10 @@ export class SketchPane {
   private hover: Pt | null = null; // 스냅된 커서 위치
   private hoverRaw: [number, number] | null = null;
   private hoverShapeId: string | null = null;
+  /** 모서리 도구로 가리킨 꼭짓점 */
+  private hoverCorner: { shapeId: string; index: number; pt: Pt } | null = null;
+  /** 측정 도구: 첫 점과 (있으면) 두 번째 점 */
+  private measure: { a: Pt; b: Pt | null } | null = null;
   private guides: Guide[] = [];
   private dpr = 1;
   private spaceDown = false;
@@ -258,9 +284,10 @@ export class SketchPane {
 
   cancel() {
     this.closeDyn();
-    const had = this.polyDraft.length > 0 || this.creating !== null;
+    const had = this.polyDraft.length > 0 || this.creating !== null || this.measure !== null;
     this.polyDraft = [];
     this.creating = null;
+    this.measure = null;
     this.onPolyDraft();
     this.render();
     return had;
@@ -338,11 +365,27 @@ export class SketchPane {
       return;
     }
 
-    if (ui.tool === "rect" || ui.tool === "circle") {
+    if (ui.tool === "measure") {
+      if (!this.measure || this.measure.b) this.measure = { a: sp, b: null };
+      else this.measure.b = sp;
+      this.render();
+      return;
+    }
+
+    if (ui.tool === "corner") {
+      const hc = this.findCorner(x, y);
+      if (!hc) return;
+      this.applyCorner(hc.shapeId, hc.index, e.shiftKey);
+      return;
+    }
+
+    if (ui.tool === "rect" || ui.tool === "circle" || ui.tool === "slot") {
       const shape: Shape2D =
         ui.tool === "rect"
           ? { id: newId(), kind: "rect", hole: false, x: sp[0], y: sp[1], w: 0, h: 0 }
-          : { id: newId(), kind: "circle", hole: false, cx: sp[0], cy: sp[1], r: 0 };
+          : ui.tool === "circle"
+            ? { id: newId(), kind: "circle", hole: false, cx: sp[0], cy: sp[1], r: 0 }
+            : { id: newId(), kind: "slot", hole: false, a: sp, b: sp, w: ui.slotWidth };
       this.creating = { shape, start: sp, downAt: [x, y], dragged: false };
       this.render();
       return;
@@ -351,10 +394,10 @@ export class SketchPane {
     // 선택 도구
     const sel = this.selected();
     if (sel) {
-      const vi = this.hitVertex(sel, x, y);
-      if (vi >= 0) {
+      const h = this.hitHandle(sel, x, y);
+      if (h) {
         store.checkpoint();
-        this.drag = { kind: "vertex", shape: sel, index: vi, moved: false };
+        this.drag = h.kind === "vertex" ? { kind: "vertex", shape: sel, index: h.index, moved: false } : { kind: "bend", shapeId: sel.id, index: h.index, moved: false };
         return;
       }
     }
@@ -388,12 +431,13 @@ export class SketchPane {
       return;
     }
 
-    const excl = d?.kind === "move" || d?.kind === "vertex" ? d.shape.id : this.creating?.shape.id;
+    const excl = d?.kind === "move" || d?.kind === "vertex" ? d.shape.id : d?.kind === "bend" ? d.shapeId : this.creating?.shape.id;
     let { pt, guides } = this.snap(raw, excl);
     if (e.shiftKey && ui.tool === "poly" && this.polyDraft.length) pt = this.ortho(pt, this.polyDraft[this.polyDraft.length - 1]);
     this.hover = pt;
     this.guides = guides;
     this.hoverShapeId = !d && ui.tool === "select" ? (this.hitShape(raw)?.id ?? null) : null;
+    this.hoverCorner = ui.tool === "corner" ? this.findCorner(x, y) : null;
 
     // 다른 창에 투영선을 그릴 수 있게 3D 커서 공유
     const cur: [number | null, number | null, number | null] = [null, null, null];
@@ -418,6 +462,8 @@ export class SketchPane {
         const r = Math.hypot(raw[0] - c.start[0], raw[1] - c.start[1]);
         const g = ui.snapGrid ? ui.grid / 2 : 0;
         s.r = g ? Math.max(g, Math.round(r / g) * g) : Math.round(r * 1000) / 1000;
+      } else if (s.kind === "slot") {
+        s.b = e.shiftKey ? this.ortho(pt, c.start) : pt;
       }
     } else if (d?.kind === "move") {
       const target: Pt = [d.anchor[0] + raw[0] - d.grab[0], d.anchor[1] + raw[1] - d.grab[1]];
@@ -432,6 +478,8 @@ export class SketchPane {
       d.moved = true;
       setVertex(d.shape, d.index, pt);
       store.changed();
+    } else if (d?.kind === "bend") {
+      this.bendEdge(d, raw);
     }
     ui.emit();
   }
@@ -444,7 +492,7 @@ export class SketchPane {
       return;
     }
     if (!d) return;
-    if ((d.kind === "move" || d.kind === "vertex") && !d.moved) store.dropCheckpoint();
+    if ((d.kind === "move" || d.kind === "vertex" || d.kind === "bend") && !d.moved) store.dropCheckpoint();
     void e;
   }
 
@@ -506,13 +554,71 @@ export class SketchPane {
     return null;
   }
 
-  private hitVertex(s: Shape2D, x: number, y: number): number {
-    const vs = vertices(s);
-    for (let i = 0; i < vs.length; i++) {
-      const [sx, sy] = this.toScreen(vs[i][0], vs[i][1]);
-      if (Math.hypot(sx - x, sy - y) < 8) return i;
+  private hitHandle(s: Shape2D, x: number, y: number): Handle | null {
+    for (const h of handles(s)) {
+      const [sx, sy] = this.toScreen(h.pt[0], h.pt[1]);
+      if (Math.hypot(sx - x, sy - y) < 8) return h;
     }
-    return -1;
+    return null;
+  }
+
+  /** 변 가운데 손잡이를 끌면 그 변이 끄는 점을 지나는 원호가 된다 (사각형은 다각형으로 바뀜) */
+  private bendEdge(d: Extract<Drag, { kind: "bend" }>, p: Pt) {
+    const list = store.project.views[this.view];
+    const idx = list.findIndex((s) => s.id === d.shapeId);
+    if (idx < 0) return;
+    let s = list[idx];
+    if (s.kind === "rect") {
+      s = rectToPoly(s);
+      list[idx] = s;
+    }
+    if (s.kind !== "poly") return;
+    const n = s.pts.length;
+    const a = s.pts[d.index];
+    const b = s.pts[(d.index + 1) % n];
+    let bulge = bulgeThrough(a, p, b);
+    if (Math.abs(bulge) < 0.03) bulge = 0; // 거의 곧으면 직선으로
+    bulge = Math.max(-1, Math.min(1, bulge)); // 반원까지만
+    const bulges = s.bulges ? [...s.bulges] : new Array(n).fill(0);
+    bulges[d.index] = Math.round(bulge * 1e4) / 1e4;
+    s.bulges = bulges;
+    d.moved = true;
+    store.changed();
+  }
+
+  /** 모서리 도구: 커서 근처의 사각형/다각형 꼭짓점 */
+  private findCorner(x: number, y: number): { shapeId: string; index: number; pt: Pt } | null {
+    let best: { shapeId: string; index: number; pt: Pt; d: number } | null = null;
+    for (const s of store.project.views[this.view]) {
+      if (s.kind !== "rect" && s.kind !== "poly") continue;
+      const pts = s.kind === "rect" ? rectPoints(s) : s.pts;
+      pts.forEach((pt, i) => {
+        const [sx, sy] = this.toScreen(pt[0], pt[1]);
+        const dd = Math.hypot(sx - x, sy - y);
+        if (dd < 14 && (!best || dd < best.d)) best = { shapeId: s.id, index: i, pt, d: dd };
+      });
+    }
+    return best;
+  }
+
+  /** 꼭짓점에 모서리 R/모따기 적용. 같은 것이 이미 있으면 해제. all이면 그 도형의 모든 꼭짓점 */
+  private applyCorner(shapeId: string, index: number, all: boolean) {
+    const s = store.project.views[this.view].find((x) => x.id === shapeId);
+    if (!s || (s.kind !== "rect" && s.kind !== "poly")) return;
+    const n = s.kind === "rect" ? 4 : s.pts.length;
+    const want = { kind: ui.cornerKind, size: ui.cornerSize };
+    const cur = s.corners?.[index];
+    const same = cur && cur.kind === want.kind && Math.abs(cur.size - want.size) < 1e-9;
+    store.update(() => {
+      const corners = s.corners ? [...s.corners] : new Array(n).fill(null);
+      while (corners.length < n) corners.push(null);
+      const value = same ? null : { ...want };
+      if (all) corners.fill(value);
+      else corners[index] = value;
+      s.corners = corners.some(Boolean) ? corners : undefined;
+    });
+    ui.sel = { view: this.view, id: s.id };
+    ui.emit();
   }
 
   private revolveLocked() {
@@ -534,7 +640,9 @@ export class SketchPane {
         ? "가로,세로 (예: 40,20) ⏎"
         : this.creating?.shape.kind === "circle"
           ? "지름 (예: 10) ⏎"
-          : "다음 점: 거리<각도 (예: 30<90) 또는 Δx,Δy ⏎";
+          : this.creating?.shape.kind === "slot"
+            ? "중심거리,폭 (예: 20,6) ⏎"
+            : "다음 점: 거리<각도 (예: 30<90) 또는 Δx,Δy ⏎";
     this.dyn.value = first;
     this.dyn.focus();
   }
@@ -557,6 +665,19 @@ export class SketchPane {
       this.finishCreate();
     } else if (c?.shape.kind === "circle") {
       c.shape.r = Math.abs(nums[0]) / 2;
+      this.finishCreate();
+    } else if (c?.shape.kind === "slot") {
+      const sl = c.shape;
+      const dx = sl.b[0] - sl.a[0];
+      const dy = sl.b[1] - sl.a[1];
+      const len = Math.hypot(dx, dy);
+      const dir: Pt = len > 1e-9 ? [dx / len, dy / len] : [1, 0];
+      const L = nums[0];
+      sl.b = [Math.round((sl.a[0] + dir[0] * L) * 1e4) / 1e4, Math.round((sl.a[1] + dir[1] * L) * 1e4) / 1e4];
+      if (nums[1] && nums[1] > 0) {
+        sl.w = nums[1];
+        ui.slotWidth = nums[1];
+      }
       this.finishCreate();
     } else if (this.polyDraft.length) {
       const last = this.polyDraft[this.polyDraft.length - 1];
@@ -641,18 +762,34 @@ export class SketchPane {
       c.lineWidth = 2;
       c.strokeStyle = col.accent;
       c.stroke();
-      for (const [u, v] of vertices(sel)) {
-        const [x, y] = this.toScreen(u, v);
-        c.fillStyle = col.bg;
-        c.strokeStyle = col.accent;
-        c.lineWidth = 1.5;
-        c.fillRect(x - 4, y - 4, 8, 8);
-        c.strokeRect(x - 4, y - 4, 8, 8);
-      }
+      if (ui.tool === "select")
+        for (const h of handles(sel)) {
+          const [x, y] = this.toScreen(h.pt[0], h.pt[1]);
+          c.fillStyle = h.kind === "mid" ? col.accent : col.bg;
+          c.strokeStyle = col.accent;
+          c.lineWidth = 1.5;
+          if (h.kind === "mid") {
+            // 변 휘기 손잡이: 작은 마름모
+            c.beginPath();
+            c.moveTo(x, y - 4.5);
+            c.lineTo(x + 4.5, y);
+            c.lineTo(x, y + 4.5);
+            c.lineTo(x - 4.5, y);
+            c.closePath();
+            c.globalAlpha = 0.75;
+            c.fill();
+            c.globalAlpha = 1;
+          } else {
+            c.fillRect(x - 4, y - 4, 8, 8);
+            c.strokeRect(x - 4, y - 4, 8, 8);
+          }
+        }
       this.label(sel);
     }
     if (draft) this.label(draft);
+    this.drawCornerHover();
     this.drawPolyDraft();
+    this.drawMeasure();
     this.drawFindingMarkers();
     this.drawCursor();
     this.drawFlash();
@@ -697,12 +834,67 @@ export class SketchPane {
       c.arc(x, y, Math.max(s.r * ui.camera.scale, 0.5), 0, Math.PI * 2);
       return;
     }
-    vertices(s).forEach(([u, v], i) => {
+    const pts = flatten(s, Math.PI / 48);
+    pts.forEach(([u, v], i) => {
       const [x, y] = this.toScreen(u, v);
       if (i) c.lineTo(x, y);
       else c.moveTo(x, y);
     });
     c.closePath();
+  }
+
+  private drawCornerHover() {
+    const hc = this.hoverCorner;
+    if (!hc || ui.tool !== "corner") return;
+    const c = this.ctx;
+    const [x, y] = this.toScreen(hc.pt[0], hc.pt[1]);
+    c.beginPath();
+    c.arc(x, y, 9, 0, Math.PI * 2);
+    c.strokeStyle = colors!.snap;
+    c.lineWidth = 2;
+    c.stroke();
+    const label = ui.cornerKind === "fillet" ? `R${fmt(ui.cornerSize)}` : `C${fmt(ui.cornerSize)}`;
+    this.tag(`${label} 적용 (Shift: 전체)`, x, y - 22, colors!.snap);
+  }
+
+  private drawMeasure() {
+    const m = this.measure;
+    if (!m) return;
+    const b = m.b ?? (ui.activeView === this.view ? this.hover : null);
+    const c = this.ctx;
+    const col = colors!;
+    const [ax, ay] = this.toScreen(m.a[0], m.a[1]);
+    c.fillStyle = col.snap;
+    c.beginPath();
+    c.arc(ax, ay, 3.5, 0, Math.PI * 2);
+    c.fill();
+    if (!b) return;
+    const [bx, by] = this.toScreen(b[0], b[1]);
+    const du = b[0] - m.a[0];
+    const dv = b[1] - m.a[1];
+    // 가로/세로 성분은 점선, 직선 거리는 실선
+    c.strokeStyle = col.snap;
+    c.lineWidth = 1;
+    c.setLineDash([3, 3]);
+    c.beginPath();
+    c.moveTo(ax, ay);
+    c.lineTo(bx, ay);
+    c.lineTo(bx, by);
+    c.stroke();
+    c.setLineDash([]);
+    c.lineWidth = 1.75;
+    c.beginPath();
+    c.moveTo(ax, ay);
+    c.lineTo(bx, by);
+    c.stroke();
+    c.beginPath();
+    c.arc(bx, by, 3.5, 0, Math.PI * 2);
+    c.fill();
+    const [ua, va] = VIEW_AXES[this.view];
+    const len = Math.hypot(du, dv);
+    const ang = (Math.atan2(dv, du) * 180) / Math.PI;
+    this.tag(`${fmt(len)} mm  ∠${fmt(ang)}°`, (ax + bx) / 2, (ay + by) / 2 - 14, col.snap);
+    this.tag(`Δ${ua} ${fmt(du)} · Δ${va} ${fmt(dv)}`, (ax + bx) / 2, (ay + by) / 2 + 8, col.snap);
   }
 
   private label(s: Shape2D) {
@@ -715,6 +907,10 @@ export class SketchPane {
     } else if (s.kind === "circle") {
       text = `Ø${fmt(s.r * 2)}`;
       at = [s.cx, s.cy + s.r];
+    } else if (s.kind === "slot") {
+      text = `장공 ${fmt(Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]))} × ${fmt(s.w)}`;
+      const b = boundsOf([{ ...s, hole: false }])!;
+      at = [(b[0] + b[2]) / 2, b[3]];
     } else {
       const b = boundsOf([{ ...s, hole: false }])!;
       text = `${fmt(b[2] - b[0])} × ${fmt(b[3] - b[1])}`;
@@ -986,7 +1182,33 @@ function keyPoints(s: Shape2D): Pt[] {
       [s.cx - s.r, s.cy - s.r],
       [s.cx + s.r, s.cy + s.r],
     ];
-  return vertices(s);
+  if (s.kind === "slot") {
+    const b = boundsOf([{ ...s, hole: false }])!;
+    return [s.a, s.b, [b[0], b[1]], [b[2], b[3]]];
+  }
+  // 꼭짓점 + 원호 중심
+  const pts: Pt[] = [...vertices(s)];
+  for (const seg of outline(s)) {
+    const arc = arcInfo(seg);
+    if (arc) pts.push(arc.center);
+  }
+  return pts;
+}
+
+/** 선택한 도형의 손잡이 */
+export function handles(s: Shape2D): Handle[] {
+  const out: Handle[] = vertices(s).map((pt, index) => ({ pt, kind: "vertex" as const, index }));
+  if (s.kind === "rect" || s.kind === "poly") {
+    const pts = s.kind === "rect" ? rectPoints(s) : s.pts;
+    const n = pts.length;
+    for (let i = 0; i < n; i++) {
+      const bulge = s.kind === "poly" ? (s.bulges?.[i] ?? 0) : 0;
+      const arc = arcInfo({ a: pts[i], b: pts[(i + 1) % n], bulge });
+      const mid: Pt = arc ? arc.mid : [(pts[i][0] + pts[(i + 1) % n][0]) / 2, (pts[i][1] + pts[(i + 1) % n][1]) / 2];
+      out.push({ pt: mid, kind: "mid", index: i });
+    }
+  }
+  return out;
 }
 
 export function vertices(s: Shape2D): Pt[] {
@@ -1000,13 +1222,29 @@ export function vertices(s: Shape2D): Pt[] {
     ];
   }
   if (s.kind === "circle") return [[s.cx + s.r, s.cy]];
+  if (s.kind === "slot") {
+    // 두 중심점 + 폭 손잡이 (a 쪽 옆면)
+    const L = Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) || 1;
+    const n: Pt = [-(s.b[1] - s.a[1]) / L, (s.b[0] - s.a[0]) / L];
+    const m: Pt = [(s.a[0] + s.b[0]) / 2, (s.a[1] + s.b[1]) / 2];
+    return [s.a, s.b, [m[0] + n[0] * (s.w / 2), m[1] + n[1] * (s.w / 2)]];
+  }
   return s.pts;
 }
 
 function setVertex(s: Shape2D, i: number, p: Pt) {
   if (s.kind === "poly") s.pts[i] = p;
   else if (s.kind === "circle") s.r = Math.max(Math.hypot(p[0] - s.cx, p[1] - s.cy), 0.05);
-  else {
+  else if (s.kind === "slot") {
+    if (i === 0) s.a = p;
+    else if (i === 1) s.b = p;
+    else {
+      // 중심선에서 떨어진 거리 × 2 = 폭
+      const L = Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]);
+      const d = L > 1e-9 ? Math.abs((s.b[0] - s.a[0]) * (p[1] - s.a[1]) - (s.b[1] - s.a[1]) * (p[0] - s.a[0])) / L : Math.hypot(p[0] - s.a[0], p[1] - s.a[1]);
+      s.w = Math.max(Math.round(d * 2 * 1e4) / 1e4, 0.1);
+    }
+  } else {
     const opp = vertices(s)[(i + 2) % 4];
     const r = normRect(s);
     Object.assign(s, {
@@ -1019,24 +1257,11 @@ function setVertex(s: Shape2D, i: number, p: Pt) {
 }
 
 function translateShape(s: Shape2D, orig: Shape2D, du: number, dv: number) {
-  const r = (n: number) => Math.round(n * 1e4) / 1e4;
-  if (s.kind === "rect" && orig.kind === "rect") {
-    s.x = r(orig.x + du);
-    s.y = r(orig.y + dv);
-  } else if (s.kind === "circle" && orig.kind === "circle") {
-    s.cx = r(orig.cx + du);
-    s.cy = r(orig.cy + dv);
-  } else if (s.kind === "poly" && orig.kind === "poly") {
-    s.pts = orig.pts.map(([u, v]) => [r(u + du), r(v + dv)]);
-  }
+  Object.assign(s, translated(orig, du, dv));
 }
 
 function contains(outer: Shape2D, inner: Shape2D): boolean {
-  const pts: Pt[] =
-    inner.kind === "circle"
-      ? Array.from({ length: 12 }, (_, i) => [inner.cx + inner.r * Math.cos((i * Math.PI) / 6), inner.cy + inner.r * Math.sin((i * Math.PI) / 6)])
-      : vertices(inner);
-  return pts.every(([u, v]) => pointInShape(u, v, outer));
+  return flatten(inner, Math.PI / 6).every(([u, v]) => pointInShape(u, v, outer));
 }
 
 export function fmt(n: number): string {
@@ -1046,8 +1271,11 @@ export function fmt(n: number): string {
 export function shapeLabel(s: Shape2D): string {
   if (s.kind === "rect") {
     const r = normRect(s);
-    return `사각형 ${fmt(r.w)}×${fmt(r.h)}`;
+    const c = s.corners?.find(Boolean);
+    return `사각형 ${fmt(r.w)}×${fmt(r.h)}${c ? ` · ${c.kind === "fillet" ? "R" : "C"}${fmt(c.size)}` : ""}`;
   }
   if (s.kind === "circle") return `원 Ø${fmt(s.r * 2)}`;
-  return `다각형 ${s.pts.length}점`;
+  if (s.kind === "slot") return `장공 ${fmt(Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]))}×${fmt(s.w)}`;
+  const arcs = s.bulges?.filter((b) => b).length ?? 0;
+  return `다각형 ${s.pts.length}점${arcs ? ` · 호 ${arcs}` : ""}`;
 }

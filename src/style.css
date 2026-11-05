@@ -146,14 +146,15 @@ kbd {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   padding: 4px 8px 0;
+  overflow-x: auto;
 }
 .ribbon[hidden] { display: none; }
-.group { display: flex; flex-direction: column; padding: 0 10px; border-right: 1px solid var(--border); }
+.group { display: flex; flex-direction: column; padding: 0 8px; border-right: 1px solid var(--border); flex: none; }
 .group:last-child { border-right: none; }
 .group .tools { display: flex; gap: 2px; }
 .group .tools button {
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
-  width: 58px; height: 56px; padding: 2px; border-color: transparent; background: transparent; font-size: 11px;
+  width: 52px; height: 56px; padding: 2px; border-color: transparent; background: transparent; font-size: 11px;
 }
 .group .tools button svg { display: block; margin-bottom: 1px; }
 .group .tools button kbd { font-size: 9px; border: none; background: none; padding: 0; }
@@ -163,6 +164,10 @@ kbd {
 .group .fields label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text-muted); }
 .group .fields label[hidden] { display: none; }
 .group .fields .unit { display: flex; align-items: center; gap: 4px; color: var(--text); }
+.corner-opts { display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 0 4px; }
+.corner-opts .seg button { min-height: 22px; height: 22px; padding: 0 10px; font-weight: 600; }
+.corner-opts .unit { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-muted); }
+.corner-opts input { width: 54px; min-height: 22px; height: 22px; padding: 1px 4px; }
 .glabel { text-align: center; font-size: 10.5px; color: var(--text-muted); padding: 2px 0 4px; }
 
 /* ---------- 작업 영역 ---------- */
@@ -243,6 +248,10 @@ kbd {
 .seg button { border: none; border-radius: 0; min-height: 26px; }
 .seg button.on { background: var(--accent); color: var(--accent-text); }
 .props-empty { grid-column: 1 / -1; color: var(--text-muted); }
+.props-body .inline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.props-body .inline input[type="number"] { width: 56px; min-height: 26px; padding: 2px 4px; }
+.props-body .inline .muted { font-size: 11px; }
+.props-body .section-title { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 11px; font-weight: 700; color: var(--text-muted); }
 .stat { font-variant-numeric: tabular-nums; }
 
 .checks { flex: 1; min-height: 0; display: flex; flex-direction: column; }

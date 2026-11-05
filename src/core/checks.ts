@@ -2,7 +2,8 @@
  * 규칙 기반 설계 검사 (즉시 실행, 비용 없음).
  * AI 검토는 이 결과를 함께 받아서 중복 없이 더 깊은 문제를 찾는다.
  */
-import { boundsOf, isDegenerate, normRect, pointInShape } from "./geometry2d";
+import { boundsOf, distToBoundary, flatten, isDegenerate, normRect, pointInShape, rectPoints } from "./geometry2d";
+export { distToBoundary };
 import type { BuildResult, Finding, FindingRef, Process, Project, Shape2D, ViewId } from "./types";
 import { VIEW_AXES, VIEW_IDS, VIEW_LABEL } from "./types";
 
@@ -33,48 +34,16 @@ const f2 = (n: number) => String(Math.round(n * 100) / 100);
 
 // ---------------- 기하 유틸 ----------------
 
-export function segments(s: Shape2D): [Pt, Pt][] {
-  let pts: Pt[];
-  if (s.kind === "rect") {
-    const r = normRect(s);
-    pts = [
-      [r.x, r.y],
-      [r.x + r.w, r.y],
-      [r.x + r.w, r.y + r.h],
-      [r.x, r.y + r.h],
-    ];
-  } else if (s.kind === "poly") pts = s.pts;
-  else return [];
-  return pts.map((p, i) => [p, pts[(i + 1) % pts.length]]);
-}
-
-function distToSeg(p: Pt, a: Pt, b: Pt): number {
-  const dx = b[0] - a[0];
-  const dy = b[1] - a[1];
-  const l2 = dx * dx + dy * dy;
-  let t = l2 ? ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2 : 0;
-  t = Math.max(0, Math.min(1, t));
-  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
-}
-
-/** 점에서 도형 경계까지 거리 */
-export function distToBoundary(p: Pt, s: Shape2D): number {
-  if (s.kind === "circle") return Math.abs(Math.hypot(p[0] - s.cx, p[1] - s.cy) - s.r);
-  return Math.min(...segments(s).map(([a, b]) => distToSeg(p, a, b)));
-}
-
-/** 도형 경계 위의 표본점 */
-export function boundarySamples(s: Shape2D, n = 24): Pt[] {
-  if (s.kind === "circle")
-    return Array.from({ length: n }, (_, i) => {
-      const t = (i / n) * Math.PI * 2;
-      return [s.cx + s.r * Math.cos(t), s.cy + s.r * Math.sin(t)] as Pt;
-    });
+/** 도형 경계 위의 표본점 (원호 구간 포함) */
+export function boundarySamples(s: Shape2D): Pt[] {
+  const pts = flatten(s, Math.PI / 12);
   const out: Pt[] = [];
-  for (const [a, b] of segments(s)) {
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
     const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
     const k = Math.max(1, Math.min(12, Math.ceil(len / 2)));
-    for (let i = 0; i < k; i++) out.push([a[0] + ((b[0] - a[0]) * i) / k, a[1] + ((b[1] - a[1]) * i) / k]);
+    for (let j = 0; j < k; j++) out.push([a[0] + ((b[0] - a[0]) * j) / k, a[1] + ((b[1] - a[1]) * j) / k]);
   }
   return out;
 }
@@ -103,6 +72,7 @@ function shapeName(s: Shape2D): string {
     const r = normRect(s);
     return `${f2(r.w)}×${f2(r.h)} 사각형`;
   }
+  if (s.kind === "slot") return `폭 ${f2(s.w)} 장공`;
   return `다각형(${s.pts.length}점)`;
 }
 
@@ -208,6 +178,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
         });
       s.pts.forEach((a, i) => {
         const b = s.pts[(i + 1) % s.pts.length];
+        if (s.bulges?.[i]) return;
         const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
         if (len > 0 && len < 0.2)
           add({
@@ -279,7 +250,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
           at = pt;
         }
       });
-      const size = h.kind === "circle" ? h.r * 2 : Math.min(normRectOrBox(h).w, normRectOrBox(h).h);
+      const size = h.kind === "circle" ? h.r * 2 : h.kind === "slot" ? h.w : Math.min(normRectOrBox(h).w, normRectOrBox(h).h);
       const t = p.thickness;
       let minEdge = rules.minWall;
       let why = `최소 벽 두께 ${rules.minWall}mm`;
@@ -351,16 +322,20 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             suggestion: `Ø${(Math.round(d * 10) / 10).toFixed(1)}처럼 0.1mm 단위로 바꾸세요. (예: M3 관통 Ø3.4, M4 관통 Ø4.5, M5 관통 Ø5.5, M6 관통 Ø6.6)`,
             refs: [ref(h, [h.cx, h.cy])],
           });
-      } else if (rules.sharpInnerCornerNote) {
-        add({
-          id: `sharp-corner:${v}:${h.id}`,
-          severity: "info",
-          category: "가공성",
-          title: "각진 구멍의 안쪽 모서리",
-          detail: `${VIEW_LABEL[v]}의 ${shapeName(h)} 구멍은 엔드밀로 가공하면 안쪽 모서리가 공구 반지름만큼 둥글어집니다.`,
-          suggestion: "도면에 모서리 R(예: R1 이상)을 지정하거나, 와이어/레이저 가공을 지정하세요.",
-          refs: [ref(h, samples[0])],
-        });
+      } else if (rules.sharpInnerCornerNote && (h.kind === "rect" || h.kind === "poly")) {
+        // 모서리 R을 준 꼭짓점은 괜찮다. 나머지 각진 꼭짓점만 알려 준다
+        const verts: Pt[] = h.kind === "rect" ? rectPoints(h) : h.pts;
+        const sharp = verts.filter((_, i) => h.corners?.[i]?.kind !== "fillet");
+        if (sharp.length)
+          add({
+            id: `sharp-corner:${v}:${h.id}`,
+            severity: "info",
+            category: "가공성",
+            title: `각진 구멍의 안쪽 모서리 ${sharp.length}곳`,
+            detail: `${VIEW_LABEL[v]}의 ${shapeName(h)} 구멍은 엔드밀로 가공하면 안쪽 모서리가 공구 반지름만큼 둥글어집니다.`,
+            suggestion: "‘모서리(E)’ 도구로 R(예: R1 이상)을 주거나, 와이어/레이저 가공을 지정하세요.",
+            refs: [ref(h, sharp[0])],
+          });
       }
     }
 

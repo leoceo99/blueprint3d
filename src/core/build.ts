@@ -11,20 +11,27 @@ import {
   type Drawing,
   type Shape3D,
 } from "replicad";
-import { boundsOf, isDegenerate, normRect } from "./geometry2d";
+import { arcInfo, boundsOf, isDegenerate, normRect, outline } from "./geometry2d";
 import type { BuildResult, Project, ProjectedView, Shape2D, ViewId } from "./types";
 import { VIEW_IDS, VIEW_LABEL } from "./types";
 
 export class BuildError extends Error {}
 
 function shapeToDrawing(s: Shape2D): Drawing {
-  if (s.kind === "rect") {
+  if (s.kind === "circle") return drawCircle(s.r).translate(s.cx, s.cy);
+  if (s.kind === "rect" && !s.corners?.some(Boolean)) {
     const r = normRect(s);
     return drawRectangle(r.w, r.h).translate(r.x + r.w / 2, r.y + r.h / 2);
   }
-  if (s.kind === "circle") return drawCircle(s.r).translate(s.cx, s.cy);
-  let pen = draw(s.pts[0]);
-  for (const p of s.pts.slice(1)) pen = pen.lineTo(p);
+  // 선과 원호로 이루어진 외곽선을 그대로 따라 그린다 (원호는 세 점 원호)
+  const segs = outline(s);
+  let pen = draw(segs[0].a);
+  segs.forEach((seg, i) => {
+    const end = i === segs.length - 1 ? segs[0].a : seg.b;
+    const arc = arcInfo(seg);
+    if (i === segs.length - 1 && !arc) return; // 마지막 직선은 close()가 그린다
+    pen = arc ? pen.threePointsArcTo(end, arc.mid) : pen.lineTo(end);
+  });
   return pen.close();
 }
 

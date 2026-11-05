@@ -51,6 +51,44 @@ describe("2D → 3D", () => {
   });
 });
 
+describe("모서리 R · 장공 · 휜 변", () => {
+  it("모서리 R 판재 부피", () => {
+    const p = emptyProject();
+    p.thickness = 5;
+    p.views.top.push({ id: "a", kind: "rect", x: 0, y: 0, w: 40, h: 20, hole: false, corners: [0, 1, 2, 3].map(() => ({ kind: "fillet" as const, size: 4 })) });
+    const r = buildAll(p).result;
+    const expected = (40 * 20 - (4 - Math.PI) * 16) * 5;
+    expect(Math.abs(r.volume - expected) / expected).toBeLessThan(0.005);
+  });
+
+  it("장공 구멍이 뚫린다", () => {
+    const p = emptyProject();
+    p.thickness = 4;
+    p.views.top.push({ id: "a", kind: "rect", x: 0, y: 0, w: 60, h: 30, hole: false });
+    p.views.top.push({ id: "s", kind: "slot", a: [20, 15], b: [40, 15], w: 6, hole: true });
+    const r = buildAll(p).result;
+    const expected = (60 * 30 - (20 * 6 + Math.PI * 9)) * 4;
+    expect(Math.abs(r.volume - expected) / expected).toBeLessThan(0.005);
+  });
+
+  it("휜 변(원호)과 모따기가 섞인 다각형", () => {
+    const p = emptyProject();
+    p.thickness = 2;
+    p.views.top.push({
+      id: "p",
+      kind: "poly",
+      hole: false,
+      pts: [[0, 0], [20, 0], [20, 10], [0, 10]],
+      bulges: [0, 1, 0, 0],
+      corners: [{ kind: "chamfer", size: 2 }, null, null, { kind: "chamfer", size: 2 }],
+    });
+    const r = buildAll(p).result;
+    const expected = (200 + (Math.PI * 25) / 2 - 2 * 2) * 2;
+    expect(Math.abs(r.volume - expected) / expected).toBeLessThan(0.005);
+    expect(r.bbox[1][0]).toBeCloseTo(25, 3);
+  });
+});
+
 describe("3D → 2D 투영", () => {
   it("뷰마다 3각법 좌표로 투영된다", () => {
     const p = emptyProject();

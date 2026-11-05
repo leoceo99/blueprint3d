@@ -52,4 +52,27 @@ export const SAMPLES: Project[] = [
       side: [],
     },
   },
+  {
+    version: 1,
+    name: "모터 마운트 (모서리 R · 장공 · 배열)",
+    mode: "auto",
+    process: "cnc",
+    thickness: 5,
+    views: {
+      front: [],
+      top: [
+        { id: "m1", kind: "rect", hole: false, x: 0, y: 0, w: 80, h: 60, corners: [0, 1, 2, 3].map(() => ({ kind: "fillet" as const, size: 6 })) },
+        { id: "m2", kind: "circle", hole: true, cx: 40, cy: 30, r: 11 },
+        { id: "m3", kind: "slot", hole: true, a: [40, 47], b: [40, 51], w: 3.4 },
+        { id: "m4", kind: "slot", hole: true, a: [23, 30], b: [19, 30], w: 3.4 },
+        { id: "m5", kind: "slot", hole: true, a: [40, 13], b: [40, 9], w: 3.4 },
+        { id: "m6", kind: "slot", hole: true, a: [57, 30], b: [61, 30], w: 3.4 },
+        { id: "m7", kind: "circle", hole: true, cx: 7, cy: 7, r: 2.25 },
+        { id: "m8", kind: "circle", hole: true, cx: 73, cy: 7, r: 2.25 },
+        { id: "m9", kind: "circle", hole: true, cx: 73, cy: 53, r: 2.25 },
+        { id: "m10", kind: "circle", hole: true, cx: 7, cy: 53, r: 2.25 },
+      ],
+      side: [],
+    },
+  },
 ];

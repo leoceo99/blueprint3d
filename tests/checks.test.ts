@@ -68,6 +68,21 @@ describe("규칙 기반 설계 검사", () => {
     expect(codes(p, { bbox: [[0, 0, 0], [30, 10, 10]], solidCount: 2 })).toContain("multi-solid");
   });
 
+  it("각진 사각 구멍은 안내, 모서리 R을 주면 사라진다", () => {
+    const p = emptyProject();
+    p.views.top = [rect("a", 0, 0, 60, 40), rect("h", 20, 10, 20, 10, true)];
+    expect(codes(p)).toContain("sharp-corner");
+    (p.views.top[1] as any).corners = [0, 1, 2, 3].map(() => ({ kind: "fillet", size: 2 }));
+    expect(codes(p)).not.toContain("sharp-corner");
+  });
+
+  it("장공 구멍도 가장자리 거리 검사", () => {
+    const p = emptyProject();
+    p.views.top = [rect("a", 0, 0, 60, 40), { id: "s", kind: "slot", hole: true, a: [10, 3.5], b: [30, 3.5], w: 6 }];
+    const f = runChecks(p).find((x) => x.id.startsWith("hole-edge"))!;
+    expect(f.title).toContain("0.5mm");
+  });
+
   it("제조 방식에 따라 기준이 달라진다 (판금: 구멍 ≥ 두께)", () => {
     const p = emptyProject();
     p.thickness = 4;

@@ -38,6 +38,7 @@
           <button data-tool="rect" title="사각형 (R)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="14" height="10" rx="0.5"/></svg>사각형<kbd>R</kbd></button>
           <button data-tool="circle" title="원 (C)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/></svg>원<kbd>C</kbd></button>
           <button data-tool="poly" title="다각형 (L)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3l7 5-2.7 8.5H5.7L3 8z"/></svg>다각형<kbd>L</kbd></button>
+          <button data-tool="slot" title="장공 (S)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6.5" width="15" height="7" rx="3.5"/><circle cx="6" cy="10" r="0.6" fill="currentColor"/><circle cx="14" cy="10" r="0.6" fill="currentColor"/></svg>장공<kbd>S</kbd></button>
         </div>
         <div class="glabel">그리기</div>
       </div>
@@ -52,14 +53,28 @@
         <div class="glabel">편집</div>
       </div>
       <div class="group">
+        <div class="tools">
+          <button data-tool="corner" title="모서리 R / 모따기 (E)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17V9a6 6 0 016-6h8"/><path d="M3 17h14" stroke-dasharray="1.5 2"/></svg>모서리<kbd>E</kbd></button>
+          <div class="corner-opts">
+            <div class="seg">
+              <button data-corner="fillet" title="둥글게 (R)">R</button>
+              <button data-corner="chamfer" title="모따기 (C)">C</button>
+            </div>
+            <span class="unit"><input id="cornerSize" type="number" min="0.1" step="0.5" title="모서리 크기" />mm</span>
+          </div>
+          <button data-tool="measure" title="측정 (M)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13.5l11-11 4 4-11 11z"/><path d="M6 10l1.5 1.5M8.5 7.5l1.5 1.5M11 5l1.5 1.5"/></svg>측정<kbd>M</kbd></button>
+        </div>
+        <div class="glabel">모서리 · 측정</div>
+      </div>
+      <div class="group">
         <div class="fields">
           <label>방식
             <select id="mode">
-              <option value="auto">자동 (돌출 / 3면 교집합)</option>
-              <option value="revolve">회전체 (정면도 단면)</option>
+              <option value="auto">자동 (돌출·교집합)</option>
+              <option value="revolve">회전체</option>
             </select>
           </label>
-          <label id="thicknessWrap">두께 (뷰 1개일 때) <span class="unit"><input id="thickness" type="number" min="0.1" step="0.5" />mm</span></label>
+          <label id="thicknessWrap" title="뷰를 1개만 그렸을 때 돌출 두께">두께 <span class="unit"><input id="thickness" type="number" min="0.1" step="0.5" />mm</span></label>
         </div>
         <div class="glabel">3D 생성</div>
       </div>
@@ -67,8 +82,8 @@
         <div class="fields">
           <label>제조 방식
             <select id="process">
-              <option value="cnc">기계 가공 (CNC)</option>
-              <option value="print3d">3D 프린팅 (FDM)</option>
+              <option value="cnc">CNC 가공</option>
+              <option value="print3d">3D 프린팅</option>
               <option value="laser">판금 · 레이저</option>
             </select>
           </label>

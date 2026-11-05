@@ -58,7 +58,7 @@ const SYSTEM = `당신은 기계 부품 설계 검토 전문가입니다. 사용
 
 앱의 규칙:
 - 단위는 mm. 3각법(Third angle) 3면도: 정면도(front)는 가로 X·세로 Z, 평면도(top)는 가로 X·세로 Y, 우측면도(side)는 가로 Y·세로 Z. 각 뷰 좌표는 (u, v) = (가로, 세로)이며 v는 위쪽이 +.
-- 도형은 rect(x, y=왼쪽 아래, w, h), circle(cx, cy, r), poly(pts)이며 hole=true면 빼기(구멍), false면 몸체.
+- 도형은 rect(x, y=왼쪽 아래, w, h, corners), circle(cx, cy, r), poly(pts, bulges, corners), slot(a, b 두 중심점, w 폭)이며 hole=true면 빼기(구멍), false면 몸체. corners는 꼭짓점별 모서리 처리(fillet=R, chamfer=모따기, size mm), bulges는 변별 휨(0=직선, 1=반원).
 - 3D 생성 방식(mode):
   - auto: 뷰를 1개만 그리면 그 뷰를 thickness만큼 시선 방향으로 돌출. 2~3개면 각 뷰를 시선 방향으로 끝까지 관통 돌출한 뒤 교집합. 따라서 어느 뷰의 구멍은 그 시선 방향으로 끝까지 관통한다(막힌 구멍·깊이 지정 불가).
   - revolve: 정면도 단면(u ≥ 0)을 Z축 중심으로 360° 회전.
