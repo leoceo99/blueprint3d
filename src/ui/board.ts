@@ -12,7 +12,7 @@
  * - 화면 좌표(px) ↔ 도면 좌표(mm, 위가 +) ↔ 각 뷰 좌표(뷰마다 원점이 다름, offset으로 연결)
  * - 각 뷰의 그리기·편집은 SketchPane이 맡고, 이 클래스는 배치·화면 이동·확대·입력 분배를 맡는다.
  */
-import { shapeBounds, isDegenerate } from "../core/geometry2d";
+import { boundsOf, isDegenerate, shapeBounds } from "../core/geometry2d";
 import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type ViewId } from "../core/types";
 import { store } from "../store";
 import { palette, SketchPane } from "./sketch";
@@ -155,6 +155,14 @@ export class DraftBoard {
     this.laidOut = true;
   }
 
+  /** 뷰 틀의 화면 사각형 [왼, 위, 오른, 아래] */
+  frameScreenRect(v: ViewId): Rect {
+    const f = this.frameSheet(v);
+    const [x0, y1] = this.sheetToScreen(f[0], f[1]);
+    const [x1, y0] = this.sheetToScreen(f[2], f[3]);
+    return [x0, y0, x1, y1];
+  }
+
   /** 도면 좌표로 본 뷰의 틀 */
   private frameSheet(v: ViewId): Rect {
     const f = this.frames[v];
@@ -295,8 +303,10 @@ export class DraftBoard {
     // 끌거나 그리는 동안에는 배치를 고정 (뷰가 움직이면 커서와 어긋남)
     if (!this.lockPane && !this.pendingPane()) this.layout();
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    c.fillStyle = col.boardBg;
+    // 종이 한 장: 바탕과 격자는 세 뷰와 오른쪽 위 칸까지 끊김 없이 이어진다
+    c.fillStyle = col.bg;
     c.fillRect(0, 0, W, H);
+    this.drawGrid();
 
     for (const v of VIEW_IDS) {
       const r = this.regionScreenRect(v);
@@ -345,7 +355,39 @@ export class DraftBoard {
     }
   }
 
-  /** 오른쪽 위 빈 칸: 평면도 ↔ 우측면도를 잇는 45° 선과 투영선 */
+  /** 도면 좌표 기준 격자 (뷰 원점이 10mm 단위에 놓이므로 각 뷰의 격자와도 맞는다) */
+  private drawGrid() {
+    const c = this.ctx;
+    const col = palette();
+    const W = this.w;
+    const H = this.h;
+    const steps = [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+    const step = steps.find((s) => s >= (ui.grid || 1) && s * ui.camera.scale >= 8) ?? 5000;
+    const major = steps.find((s) => s >= step * 5) ?? step * 5;
+    const [x0, y1] = this.screenToSheet(0, 0);
+    const [x1, y0] = this.screenToSheet(W, H);
+    c.lineWidth = 1;
+    for (const [st, color] of [
+      [step, col.gridMinor],
+      [major, col.gridMajor],
+    ] as const) {
+      c.strokeStyle = color;
+      c.beginPath();
+      for (let gx = Math.floor(x0 / st) * st; gx <= x1; gx += st) {
+        const x = Math.round(this.sheetToScreen(gx, 0)[0]) + 0.5;
+        c.moveTo(x, 0);
+        c.lineTo(x, H);
+      }
+      for (let gy = Math.floor(y0 / st) * st; gy <= y1; gy += st) {
+        const y = Math.round(this.sheetToScreen(0, gy)[1]) + 0.5;
+        c.moveTo(0, y);
+        c.lineTo(W, y);
+      }
+      c.stroke();
+    }
+  }
+
+  /** 오른쪽 위 칸: 평면도 ↔ 우측면도의 깊이(Y)를 잇는 45° 선 (제도에서 쓰는 보조선) */
   private drawCorner() {
     const c = this.ctx;
     const col = palette();
@@ -355,8 +397,6 @@ export class DraftBoard {
     c.beginPath();
     c.rect(sx, 0, this.w - sx, sy);
     c.clip();
-    c.fillStyle = col.cornerBg;
-    c.fillRect(sx, 0, this.w - sx, sy);
     const ot = this.off.top[1];
     const os = this.off.side[0];
     // 45° 선: 평면도의 Y(위로 증가) = 우측면도의 Y(오른쪽으로 증가)
@@ -368,30 +408,34 @@ export class DraftBoard {
     const big = 1e5;
     const a = this.sheetToScreen(this.split.x, this.split.x - os + ot);
     const b = this.sheetToScreen(this.split.x + big, this.split.x + big - os + ot);
-    c.strokeStyle = col.frame;
-    c.lineWidth = 1;
-    c.setLineDash([10, 4, 2, 4]);
-    c.beginPath();
-    c.moveTo(a[0], a[1]);
-    c.lineTo(b[0], b[1]);
-    c.stroke();
-    c.setLineDash([4, 4]);
-    // 평면도의 Y 범위를 우측면도로 넘겨 주는 주황 보조선
-    const tf = this.frames.top;
-    const hasTop = store.project.views.top.some((s) => !s.hole) || !!ui.result?.top;
-    if (hasTop) {
-      c.strokeStyle = col.guide;
-      const m = Math.max(8, 0.12 * Math.max(tf[2] - tf[0], tf[3] - tf[1]));
-      for (const y of [tf[1] + m, tf[3] - m]) {
-        const [p, q, r] = seg(y);
-        c.beginPath();
-        c.moveTo(...p);
-        c.lineTo(...q);
-        c.lineTo(...r);
-        c.stroke();
+    // 평면도·우측면도를 쓸 때만 보이는 옅은 선
+    const used = (["top", "side"] as ViewId[]).some((v) => store.project.views[v].length > 0) || !!ui.result;
+    if (used) {
+      c.strokeStyle = col.frame;
+      c.globalAlpha = 0.45;
+      c.lineWidth = 1;
+      c.setLineDash([8, 4, 2, 4]);
+      c.beginPath();
+      c.moveTo(a[0], a[1]);
+      c.lineTo(b[0], b[1]);
+      c.stroke();
+      c.setLineDash([]);
+      c.globalAlpha = 1;
+      // 선 옆에 짧은 설명
+      const t = 0.18;
+      const lx = sx + (this.w - sx) * t;
+      const ly = a[1] + (lx - a[0]) * ((b[1] - a[1]) / (b[0] - a[0]));
+      if (ly > 14 && ly < sy - 6) {
+        c.fillStyle = col.text;
+        c.globalAlpha = 0.75;
+        c.font = "11px system-ui, sans-serif";
+        c.textAlign = "left";
+        c.textBaseline = "bottom";
+        c.fillText("45° 연결선: 평면도 ↔ 우측면도 깊이(Y)", lx + 8, ly - 4);
+        c.globalAlpha = 1;
       }
     }
-    // 지금 커서의 Y
+    // 지금 커서의 Y (평면도·우측면도에서만)
     const cy = ui.cursor?.[1];
     if (cy != null && (ui.activeView === "top" || ui.activeView === "side")) {
       const [p, q, r] = seg(cy);
@@ -407,5 +451,25 @@ export class DraftBoard {
     }
     c.setLineDash([]);
     c.restore();
+
+    // 우측면도에 그어지는 평면도 깊이(Y) 보조선을 45° 선을 돌아 평면도의 그 모서리까지 잇는다
+    const tb = boundsOf(store.project.views.top);
+    if (tb && store.project.mode === "auto") {
+      c.strokeStyle = col.guide;
+      c.globalAlpha = 0.7;
+      c.lineWidth = 1;
+      c.setLineDash([4, 4]);
+      for (const y of [tb[1], tb[3]]) {
+        const start = this.sheetToScreen(tb[2], y + ot);
+        const [, q, r] = seg(y);
+        c.beginPath();
+        c.moveTo(...start);
+        c.lineTo(...q);
+        c.lineTo(...r);
+        c.stroke();
+      }
+      c.setLineDash([]);
+      c.globalAlpha = 1;
+    }
   }
 }

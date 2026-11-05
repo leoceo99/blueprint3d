@@ -706,9 +706,7 @@ export class SketchPane {
     const { w, h } = this;
     if (!w || !h) return;
     const reg = this.board.regionScreenRect(this.view);
-    c.fillStyle = col.bg;
-    c.fillRect(reg[0], reg[1], reg[2] - reg[0], reg[3] - reg[1]);
-    this.drawGrid();
+    this.drawAxes();
     this.drawResultUnderlay();
     if (store.project.mode !== "revolve") this.drawExtentGuides();
 
@@ -1003,44 +1001,26 @@ export class SketchPane {
     c.fillText(text, x, y + 0.5);
   }
 
-  private drawGrid() {
+  /** 이 뷰의 원점 축 (회전체 모드의 정면도는 회전축 표시) */
+  private drawAxes() {
     const c = this.ctx;
     const col = colors!;
-    const { w, h } = this;
-    const steps = [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
-    const step = steps.find((s) => s >= (ui.grid || 1) && s * ui.camera.scale >= 8) ?? 5000;
-    const major = steps.find((s) => s >= step * 5) ?? step * 5;
-    const [u0, v1] = this.toWorld(0, 0);
-    const [u1, v0] = this.toWorld(w, h);
-    c.lineWidth = 1;
-    for (const [st, color] of [
-      [step, col.gridMinor],
-      [major, col.gridMajor],
-    ] as const) {
-      c.strokeStyle = color;
-      c.beginPath();
-      for (let u = Math.floor(u0 / st) * st; u <= u1; u += st) {
-        const x = Math.round(this.toScreen(u, 0)[0]) + 0.5;
-        c.moveTo(x, 0);
-        c.lineTo(x, h);
-      }
-      for (let v = Math.floor(v0 / st) * st; v <= v1; v += st) {
-        const y = Math.round(this.toScreen(0, v)[1]) + 0.5;
-        c.moveTo(0, y);
-        c.lineTo(w, y);
-      }
-      c.stroke();
-    }
     const [ax, ay] = this.toScreen(0, 0);
     const revolve = store.project.mode === "revolve" && this.view === "front";
+    // 축은 이 뷰의 틀 안에만 (영역 끝까지 그으면 다른 뷰와 만나는 곳에서 뚝 끊겨 보인다)
+    const [fx0, fy0, fx1, fy1] = this.board.frameScreenRect(this.view);
     c.strokeStyle = col.axis;
     c.lineWidth = revolve ? 1.5 : 1;
     c.setLineDash(revolve ? [12, 4, 2, 4] : []);
     c.beginPath();
-    c.moveTo(Math.round(ax) + 0.5, 0);
-    c.lineTo(Math.round(ax) + 0.5, h);
-    c.moveTo(0, Math.round(ay) + 0.5);
-    c.lineTo(w, Math.round(ay) + 0.5);
+    if (ax >= fx0 && ax <= fx1) {
+      c.moveTo(Math.round(ax) + 0.5, fy0);
+      c.lineTo(Math.round(ax) + 0.5, fy1);
+    }
+    if (ay >= fy0 && ay <= fy1) {
+      c.moveTo(fx0, Math.round(ay) + 0.5);
+      c.lineTo(fx1, Math.round(ay) + 0.5);
+    }
     c.stroke();
     c.setLineDash([]);
     if (revolve) {
