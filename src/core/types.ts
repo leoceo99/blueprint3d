@@ -25,6 +25,18 @@ interface ShapeBase {
    * 없으면 끝까지 관통. (정면도는 앞면, 평면도는 윗면, 우측면도는 오른쪽 면부터)
    */
   depth?: number;
+  /**
+   * 치수를 식이나 변수에 묶어 둔 것 (예: { w: "L", cx: "L/2" }).
+   * 묶인 치수는 변수가 바뀌면 다시 계산되고, 끌어서 바꿀 수 없다(잠금).
+   * 키는 도형마다 다르다: 사각형 x y w h / 원 cx cy d / 장공 ax ay bx by w / 구멍 depth
+   */
+  exprs?: Record<string, string>;
+}
+
+/** 이름 붙은 변수 (예: L = 80, t = 10, e = L/10) */
+export interface Param {
+  name: string;
+  expr: string;
 }
 
 /** 구멍 도구로 만든 원형 구멍의 규격 */
@@ -116,6 +128,10 @@ export interface Project {
   process?: Process;
   /** 뷰를 하나만 그렸을 때의 돌출 두께 */
   thickness: number;
+  /** 두께를 식으로 지정했으면 그 식 */
+  thicknessExpr?: string;
+  /** 변수 목록 */
+  params?: Param[];
   views: Record<ViewId, Shape2D[]>;
 }
 

@@ -102,4 +102,37 @@ export const SAMPLES: Project[] = [
       side: [{ id: "g6", kind: "circle", hole: true, cx: 20, cy: 12.5, r: 2.1, depth: 12, spec: { size: "M5", purpose: "tap", head: "none", drillPoint: true } }],
     },
   },
+  {
+    version: 1,
+    name: "변수로 만드는 판 (L·W·t·e를 바꿔 보세요)",
+    mode: "auto",
+    process: "cnc",
+    thickness: 6,
+    thicknessExpr: "t",
+    params: [
+      { name: "L", expr: "100" },
+      { name: "W", expr: "60" },
+      { name: "t", expr: "6" },
+      { name: "e", expr: "8" },
+    ],
+    views: {
+      front: [],
+      top: [
+        { id: "p1", kind: "rect", hole: false, x: 0, y: 0, w: 100, h: 60, exprs: { x: "0", y: "0", w: "L", h: "W" }, corners: [0, 1, 2, 3].map(() => ({ kind: "fillet" as const, size: 4 })) },
+        ...([["e", "e"], ["L-e", "e"], ["L-e", "W-e"], ["e", "W-e"]] as const).map(([cx, cy], i) => ({
+          id: `p${i + 2}`,
+          kind: "circle" as const,
+          hole: true,
+          cx: 0,
+          cy: 0,
+          r: 2.75,
+          exprs: { cx, cy },
+          spec: { size: "M5", purpose: "clearance-normal" as const, head: "none" as const },
+        })),
+        { id: "p6", kind: "slot", hole: true, a: [0, 0], b: [0, 0], w: 10, exprs: { ax: "L/2 - L/6", ay: "W/2", bx: "L/2 + L/6", by: "W/2", w: "W/6" } },
+      ],
+      side: [],
+    },
+  },
 ];
+

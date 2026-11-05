@@ -1,3 +1,4 @@
+import { applyExpressions } from "./core/params";
 import { emptyProject, type Project, type Shape2D, type ViewId } from "./core/types";
 
 const KEY = "blueprint3d.project.v1";
@@ -40,6 +41,8 @@ class Store {
 
   /** 변경 후 호출: 저장하고 화면들에 알린다. */
   changed() {
+    // 변수·식에 묶인 치수를 다시 계산 (묶인 치수는 끌어도 원래 값으로 돌아감 = 잠금)
+    applyExpressions(this.project);
     this.version++;
     save(this.project);
     this.listeners.forEach((l) => l());

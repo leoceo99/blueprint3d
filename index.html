@@ -76,7 +76,7 @@
               <option value="revolve">회전체</option>
             </select>
           </label>
-          <label id="thicknessWrap" title="뷰를 1개만 그렸을 때 돌출 두께">두께 <span class="unit"><input id="thickness" type="number" min="0.1" step="0.5" />mm</span></label>
+          <label id="thicknessWrap" title="뷰를 1개만 그렸을 때 돌출 두께">두께 <span class="unit"><input id="thickness" type="text" spellcheck="false" />mm</span></label>
         </div>
         <div class="glabel">3D 생성</div>
       </div>
@@ -110,6 +110,11 @@
       <aside class="panel left">
         <div class="panel-head">모델 트리</div>
         <div id="tree" class="tree"></div>
+        <div class="panel-head params-head">
+          변수
+          <button id="addParam" class="small" title="변수 추가">+ 추가</button>
+        </div>
+        <div id="params" class="params"></div>
       </aside>
 
       <section class="stage">

@@ -3,6 +3,8 @@ import { runChecks } from "./core/checks";
 import { boundsOf, mirrored, normRect, rotated, translated } from "./core/geometry2d";
 import { SAMPLES } from "./core/samples";
 import { HEAD_LABEL, PURPOSE_LABEL, specDiameter, THREADS, withTableHead } from "./core/standards";
+import { isValidName, plainNumber, referencedNames } from "./core/expr";
+import { evaluateParams, getDim, paramUsage, renameParam, setDimInput, toggleLock } from "./core/params";
 import { buildSheet, sheetToDXF, type Sheet } from "./core/sheet";
 import {
   emptyProject,
@@ -63,6 +65,7 @@ function requestRender() {
     if (key !== panelKey) {
       panelKey = key;
       renderTree();
+      renderParams();
       renderProps();
       renderFindings();
       renderRibbon();
@@ -175,9 +178,19 @@ const nameInput = $<HTMLInputElement>("#name");
 modeSel.onchange = () => store.update((p) => (p.mode = modeSel.value as Project["mode"]));
 procSel.onchange = () => store.update((p) => (p.process = procSel.value as Process));
 thick.onchange = () => {
-  const t = parseFloat(thick.value);
-  if (t > 0) store.update((p) => (p.thickness = t));
-  else thick.value = String(store.project.thickness);
+  const text = thick.value.trim();
+  const n = plainNumber(text);
+  if (n !== null) {
+    if (n > 0) store.update((p) => ((p.thickness = n), (p.thicknessExpr = undefined)));
+    else toast("두께는 0보다 커야 합니다.");
+  } else if (text) {
+    // 식: 모르는 변수가 없는지 먼저 확인
+    const { values } = evaluateParams(store.project);
+    const unknown = referencedNames(text).find((n) => !values.has(n));
+    if (unknown) toast(`없는 변수: ${unknown}`);
+    else store.update((p) => (p.thicknessExpr = text));
+  }
+  thick.value = store.project.thicknessExpr ?? fmt(store.project.thickness);
 };
 gridSel.value = String(ui.grid);
 gridSel.onchange = () => {
@@ -197,7 +210,8 @@ function renderRibbon() {
   $<HTMLButtonElement>("#redoBtn").disabled = !store.canRedo;
   modeSel.value = p.mode;
   procSel.value = p.process ?? "cnc";
-  if (document.activeElement !== thick) thick.value = String(p.thickness);
+  if (document.activeElement !== thick) thick.value = p.thicknessExpr ?? fmt(p.thickness);
+  thick.title = p.thicknessExpr ? `= ${fmt(p.thickness)} mm` : "숫자 또는 식 (예: t, L/8)";
   if (document.activeElement !== nameInput) nameInput.value = p.name;
   $("#thicknessWrap").hidden = p.mode !== "auto";
   $$<HTMLButtonElement>("[data-corner]").forEach((b) => b.classList.toggle("on", b.dataset.corner === ui.cornerKind));
@@ -332,6 +346,57 @@ function worstSeverity(view: ViewId, id: string) {
   return best;
 }
 
+// ---------------- 변수 ----------------
+function renderParams() {
+  const box = $("#params");
+  if (box.contains(document.activeElement)) return;
+  box.innerHTML = "";
+  const p = store.project;
+  const { values, errors } = evaluateParams(p);
+  const list = p.params ?? [];
+  if (!list.length) {
+    box.append(el("div", { innerHTML: "치수에 이름을 붙여 쓰면 한 번에 고칠 수 있어요.<br/>예: <code>L = 80</code> → 가로 칸에 <code>L</code>, 구멍 위치에 <code>L/2</code>" }, "params-empty"));
+    return;
+  }
+  list.forEach((prm, i) => {
+    const row = el("div", {}, "param-row" + (errors.has(prm.name) ? " err" : ""));
+    const name = el("input", { value: prm.name, spellcheck: false, title: "변수 이름" }, "pname");
+    name.onchange = () => {
+      const to = name.value.trim();
+      if (to === prm.name) return;
+      if (!isValidName(to)) return toast("이름은 영문·한글로 시작하고 영문·한글·숫자·_만 쓸 수 있어요."), (name.value = prm.name);
+      if (list.some((x) => x.name === to)) return toast("같은 이름의 변수가 이미 있어요."), (name.value = prm.name);
+      const from = prm.name;
+      store.update((pp) => renameParam(pp, from, to));
+    };
+    const expr = el("input", { value: prm.expr, spellcheck: false, title: "값 또는 식" }, "pexpr");
+    expr.onchange = () => {
+      const t = expr.value.trim();
+      if (!t) return (expr.value = prm.expr);
+      store.update((pp) => (pp.params![i].expr = t));
+    };
+    for (const inp of [name, expr]) inp.onkeydown = (e) => e.key === "Enter" && inp.blur();
+    const val = el("span", {
+      textContent: errors.has(prm.name) ? "⚠" : plainNumber(prm.expr) === null ? `= ${fmt(values.get(prm.name) ?? NaN)}` : "",
+      title: errors.get(prm.name) ?? "",
+    }, "pval");
+    const del = el("button", { textContent: "×", title: "변수 지우기" }, "pdel");
+    del.onclick = () => {
+      const n = paramUsage(p, prm.name);
+      if (n && !confirm(`${prm.name}을(를) ${n}곳에서 쓰고 있어요. 지우면 그 치수에 오류가 납니다. 지울까요?`)) return;
+      store.update((pp) => pp.params!.splice(i, 1));
+    };
+    row.append(name, el("span", { textContent: "=" }, "peq"), expr, val, del);
+    box.append(row);
+  });
+}
+$("#addParam").onclick = () => {
+  const used = new Set((store.project.params ?? []).map((x) => x.name));
+  const name = ["L", "W", "H", "t", "d", "e"].find((n) => !used.has(n)) ?? `v${used.size + 1}`;
+  store.update((p) => (p.params = [...(p.params ?? []), { name, expr: "10" }]));
+  requestAnimationFrame(() => $<HTMLInputElement>("#params .param-row:last-child .pexpr")?.select());
+};
+
 // ---------------- 속성 ----------------
 function numRow(label: string, value: number, onSet: (n: number) => void, min?: number) {
   const k = document.createElement("span");
@@ -351,6 +416,44 @@ function numRow(label: string, value: number, onSet: (n: number) => void, min?: 
   };
   i.onkeydown = (e) => e.key === "Enter" && i.blur();
   return [k, i];
+}
+
+/**
+ * 식에 묶을 수 있는 치수 칸. 숫자를 넣으면 값, 식(예: L/2)을 넣으면 그 식에 묶인다.
+ * 🔒: 지금 값으로 잠금 (끌어도 안 바뀜), fx: 식에 묶여 있음
+ */
+function exprRow(label: string, s: Shape2D, key: string): HTMLElement[] {
+  const k = keyCell(label);
+  const wrap = el("div", {}, "expr-field");
+  const bound = s.exprs?.[key];
+  const value = getDim(s, key);
+  const isFormula = bound !== undefined && plainNumber(bound) === null;
+  const input = el("input", {
+    type: "text",
+    value: bound ?? fmt(value),
+    spellcheck: false,
+    title: "숫자 또는 식 (예: L/2, L-8, t*2)",
+  });
+  if (bound !== undefined) input.classList.add("bound");
+  input.onchange = () => {
+    store.checkpoint();
+    const err = setDimInput(s, key, input.value, store.project);
+    if (err) store.dropCheckpoint();
+    else store.changed();
+    if (err) {
+      toast(err);
+      input.value = s.exprs?.[key] ?? fmt(getDim(s, key));
+    }
+  };
+  input.onkeydown = (e) => e.key === "Enter" && input.blur();
+  const lock = el("button", {
+    textContent: bound !== undefined ? (isFormula ? "fx" : "🔒") : "🔓",
+    title: bound !== undefined ? "잠금/식 해제 (값은 그대로)" : "지금 값으로 잠그기 (끌어도 안 바뀜)",
+  }, "lock" + (bound !== undefined ? " on" : ""));
+  lock.onclick = () => store.update(() => toggleLock(s, key));
+  wrap.append(input, lock);
+  if (isFormula) wrap.append(el("span", { textContent: `= ${fmt(value)}` }, "muted computed"));
+  return [k, wrap];
 }
 
 function renderProps() {
@@ -412,48 +515,60 @@ function renderProps() {
       depth: s.depth,
     };
     box.append(
-      ...numRow(`중심 ${ua}`, s.cx, (n) => (s.cx = n)),
-      ...numRow(`중심 ${va}`, s.cy, (n) => (s.cy = n)),
-      ...holeForm(state, view, (next) => {
-        store.update(() => {
-          const plain = next.spec.purpose === "custom" && next.spec.head === "none" && !next.spec.drillPoint;
-          s.spec = plain ? undefined : next.spec;
-          s.r = (specDiameter(next.spec) ?? next.d) / 2;
-          s.depth = next.depth;
-        });
-      }),
+      ...exprRow(`중심 ${ua}`, s, "cx"),
+      ...exprRow(`중심 ${va}`, s, "cy"),
+      ...holeForm(
+        state,
+        view,
+        (next) => {
+          store.update(() => {
+            const plain = next.spec.purpose === "custom" && next.spec.head === "none" && !next.spec.drillPoint;
+            s.spec = plain ? undefined : next.spec;
+            s.r = (specDiameter(next.spec) ?? next.d) / 2;
+            // 규격 지름을 쓰면 지름 식은 의미가 없으므로 해제
+            if (specDiameter(next.spec) !== null && s.exprs?.d !== undefined) toggleLock(s, "d");
+            if (next.depth === undefined && s.exprs?.depth !== undefined) toggleLock(s, "depth");
+            s.depth = next.depth;
+          });
+        },
+        s,
+      ),
     );
-    box.append(...copyControls(s, view));
+    box.append(...alignControls(s, view), ...copyControls(s, view));
     return;
   }
-  if (s.hole) box.append(...depthRow(s.depth, view, (d) => store.update(() => (s.depth = d))));
+  if (s.hole)
+    box.append(
+      ...depthRow(
+        s.depth,
+        view,
+        (d) =>
+          store.update(() => {
+            if (d === undefined && s.exprs?.depth !== undefined) toggleLock(s, "depth");
+            s.depth = d;
+          }),
+        s,
+      ),
+    );
   if (s.kind === "rect") {
     const r = normRect(s);
-    box.append(
-      ...numRow(`${ua} (왼쪽)`, r.x, (n) => (s.x = n)),
-      ...numRow(`${va} (아래)`, r.y, (n) => (s.y = n)),
-      ...numRow("가로", r.w, (n) => Object.assign(s, { x: r.x, w: n }), 0.01),
-      ...numRow("세로", r.h, (n) => Object.assign(s, { y: r.y, h: n }), 0.01),
-    );
+    void r;
+    box.append(...exprRow(`${ua} (왼쪽)`, s, "x"), ...exprRow(`${va} (아래)`, s, "y"), ...exprRow("가로", s, "w"), ...exprRow("세로", s, "h"));
   } else if (s.kind === "slot") {
     const len = Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]);
     box.append(
-      ...numRow(`중심1 ${ua}`, s.a[0], (n) => (s.a = [n, s.a[1]])),
-      ...numRow(`중심1 ${va}`, s.a[1], (n) => (s.a = [s.a[0], n])),
-      ...numRow(`중심2 ${ua}`, s.b[0], (n) => (s.b = [n, s.b[1]])),
-      ...numRow(`중심2 ${va}`, s.b[1], (n) => (s.b = [s.b[0], n])),
+      ...exprRow(`중심1 ${ua}`, s, "ax"),
+      ...exprRow(`중심1 ${va}`, s, "ay"),
+      ...exprRow(`중심2 ${ua}`, s, "bx"),
+      ...exprRow(`중심2 ${va}`, s, "by"),
       ...numRow("중심거리", len, (n) => {
         const dir = len > 1e-9 ? [(s.b[0] - s.a[0]) / len, (s.b[1] - s.a[1]) / len] : [1, 0];
         s.b = [s.a[0] + dir[0] * n, s.a[1] + dir[1] * n];
       }, 0),
-      ...numRow("폭", s.w, (n) => (s.w = n), 0.01),
+      ...exprRow("폭", s, "w"),
     );
   } else if (s.kind === "circle") {
-    box.append(
-      ...numRow(`중심 ${ua}`, s.cx, (n) => (s.cx = n)),
-      ...numRow(`중심 ${va}`, s.cy, (n) => (s.cy = n)),
-      ...numRow("지름 Ø", s.r * 2, (n) => (s.r = n / 2), 0.01),
-    );
+    box.append(...exprRow(`중심 ${ua}`, s, "cx"), ...exprRow(`중심 ${va}`, s, "cy"), ...exprRow("지름 Ø", s, "d"));
   } else {
     const k = document.createElement("span");
     k.className = "k full";
@@ -486,8 +601,74 @@ function renderProps() {
       box.append(btn);
     }
   }
+  if (s.kind === "poly") {
+    const btn = el("button", { textContent: "거의 수평·수직인 변 바로잡기" }, "small full");
+    btn.title = "5° 안쪽으로 기울어진 변을 정확히 수평·수직으로 맞춥니다";
+    btn.onclick = () => {
+      let changed = 0;
+      store.update(() => (changed = straightenPoly(s)));
+      toast(changed ? `변 ${changed}개를 바로잡았어요.` : "바로잡을 변이 없어요.");
+    };
+    box.append(btn);
+  }
   if (s.kind === "rect" || s.kind === "poly") box.append(...cornerControls(s));
-  box.append(...copyControls(s, ui.sel.view));
+  box.append(...alignControls(s, ui.sel.view), ...copyControls(s, ui.sel.view));
+}
+
+/** 거의 수평·수직(5° 이내)인 변의 두 끝점을 평균 높이/위치로 맞춘다 */
+function straightenPoly(s: Extract<Shape2D, { kind: "poly" }>): number {
+  const tol = Math.tan((5 * Math.PI) / 180);
+  let count = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    const n = s.pts.length;
+    for (let i = 0; i < n; i++) {
+      if (s.bulges?.[i]) continue;
+      const a = s.pts[i];
+      const b = s.pts[(i + 1) % n];
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      if (Math.abs(dy) > 1e-9 && Math.abs(dy) <= Math.abs(dx) * tol) {
+        const m = Math.round(((a[1] + b[1]) / 2) * 1e4) / 1e4;
+        a[1] = m;
+        b[1] = m;
+        if (pass === 0) count++;
+      } else if (Math.abs(dx) > 1e-9 && Math.abs(dx) <= Math.abs(dy) * tol) {
+        const m = Math.round(((a[0] + b[0]) / 2) * 1e4) / 1e4;
+        a[0] = m;
+        b[0] = m;
+        if (pass === 0) count++;
+      }
+    }
+  }
+  return count;
+}
+
+/** 부품 가운데로 맞추기 (가로/세로) — 위치가 잠겨 있으면 하지 않음 */
+function alignControls(s: Shape2D, view: ViewId): HTMLElement[] {
+  const row = el("div", {}, "inline");
+  const go = (axis: 0 | 1) => {
+    // 이 도형을 뺀 몸체들의 범위 가운데 (몸체 자신을 맞출 땐 다른 몸체 기준)
+    const others = store.project.views[view].filter((o) => o.id !== s.id);
+    const b = boundsOf(others) ?? boundsOf(store.project.views[view]);
+    if (!b) return toast("기준이 될 몸체가 없어요.");
+    const target = axis === 0 ? (b[0] + b[2]) / 2 : (b[1] + b[3]) / 2;
+    const sb = boundsOf([{ ...s, hole: false }])!;
+    const cur = axis === 0 ? (sb[0] + sb[2]) / 2 : (sb[1] + sb[3]) / 2;
+    const keys = s.kind === "rect" ? [axis === 0 ? "x" : "y"] : s.kind === "circle" ? [axis === 0 ? "cx" : "cy"] : s.kind === "slot" ? (axis === 0 ? ["ax", "bx"] : ["ay", "by"]) : [];
+    if (keys.some((k) => s.exprs?.[k] !== undefined)) return toast("위치가 잠겨 있거나 식에 묶여 있어요. 🔒를 풀고 다시 하세요.");
+    const d = target - cur;
+    store.update((p) => {
+      const list = p.views[view];
+      const i = list.findIndex((o) => o.id === s.id);
+      if (i >= 0) list[i] = translated(list[i], axis === 0 ? d : 0, axis === 1 ? d : 0);
+    });
+  };
+  const b1 = el("button", { textContent: "↔ 가로 가운데" }, "small");
+  b1.onclick = () => go(0);
+  const b2 = el("button", { textContent: "↕ 세로 가운데" }, "small");
+  b2.onclick = () => go(1);
+  row.append(b1, b2);
+  return [keyCell("가운데 맞춤"), row];
 }
 
 const DEPTH_FROM: Record<ViewId, string> = { front: "앞면부터", top: "윗면부터", side: "오른쪽 면부터" };
@@ -510,12 +691,15 @@ function keyCell(text: string) {
 }
 
 /** 깊이: [관통] 체크 또는 mm 값 */
-function depthRow(depth: number | undefined, view: ViewId, onSet: (d: number | undefined) => void): HTMLElement[] {
+function depthRow(depth: number | undefined, view: ViewId, onSet: (d: number | undefined) => void, shape?: Shape2D): HTMLElement[] {
   const row = el("div", {}, "inline");
   const through = el("input", { type: "checkbox", checked: depth === undefined });
   const lab = el("label", {}, "check");
   lab.append(through, "관통");
-  const num = el("input", { type: "number", step: "any", min: "0.01", value: depth !== undefined ? fmt(depth) : "", placeholder: "mm" });
+  const bound = shape?.exprs?.depth;
+  const num = el("input", { type: "text", value: bound ?? (depth !== undefined ? fmt(depth) : ""), placeholder: "mm", spellcheck: false });
+  num.style.width = "64px";
+  if (bound !== undefined) num.classList.add("bound");
   num.disabled = depth === undefined;
   through.onchange = () => {
     if (through.checked) onSet(undefined);
@@ -525,16 +709,30 @@ function depthRow(depth: number | undefined, view: ViewId, onSet: (d: number | u
     }
   };
   num.onchange = () => {
-    const v = parseFloat(num.value);
-    if (v > 0) onSet(v);
+    const n = plainNumber(num.value);
+    if (shape && n === null) {
+      // 식 (예: t - 2)
+      store.checkpoint();
+      const err = setDimInput(shape, "depth", num.value, store.project);
+      if (err) {
+        store.dropCheckpoint();
+        toast(err);
+      } else store.changed();
+      return;
+    }
+    if (n !== null && n > 0) {
+      if (shape?.exprs?.depth !== undefined) store.update((p) => setDimInput(shape, "depth", String(n), p));
+      else onSet(n);
+    }
   };
   num.onkeydown = (e) => e.key === "Enter" && num.blur();
   row.append(lab, num, el("span", { textContent: DEPTH_FROM[view] }, "muted"));
+  if (bound !== undefined && plainNumber(bound) === null && depth !== undefined) row.append(el("span", { textContent: `= ${fmt(depth)}` }, "muted"));
   return [keyCell("깊이"), row];
 }
 
 /** 규격 구멍 설정 (구멍 도구 기본값과 선택한 원형 구멍이 같이 쓴다) */
-function holeForm(state: HoleSettings, view: ViewId, apply: (next: HoleSettings) => void): HTMLElement[] {
+function holeForm(state: HoleSettings, view: ViewId, apply: (next: HoleSettings) => void, shape?: Shape2D): HTMLElement[] {
   const spec = state.spec;
   const set = (patch: Partial<HoleSpec>, extra: Partial<HoleSettings> = {}) => apply({ ...state, ...extra, spec: { ...spec, ...patch } });
   const select = <T extends string>(options: [T, string][], value: T, onChange: (v: T) => void) => {
@@ -555,7 +753,7 @@ function holeForm(state: HoleSettings, view: ViewId, apply: (next: HoleSettings)
     select(THREADS.map((t) => [t.size, t.size] as [string, string]), spec.size, (size) => apply({ ...state, spec: withTableHead({ ...spec, size }) })),
   );
   const d = specDiameter(spec);
-  if (d === null) out.push(...numRow("지름 Ø", state.d, (n) => apply({ ...state, d: n }), 0.01));
+  if (d === null) out.push(...(shape ? exprRow("지름 Ø", shape, "d") : numRow("지름 Ø", state.d, (n) => apply({ ...state, d: n }), 0.01)));
   else out.push(keyCell("지름 Ø"), el("span", { textContent: `${fmt(d)} mm (표준값)` }, "stat"));
   out.push(keyCell("머리 자리"), select(Object.entries(HEAD_LABEL) as [HoleSpec["head"], string][], spec.head, (head) => set({ head })));
   if (spec.head === "counterbore")
@@ -568,7 +766,7 @@ function holeForm(state: HoleSettings, view: ViewId, apply: (next: HoleSettings)
       ...numRow("바깥 지름", spec.csDiameter ?? 0, (n) => set({ csDiameter: n }), 0.01),
       ...numRow("각도 (°)", spec.csAngle ?? 90, (n) => set({ csAngle: n }), 1),
     );
-  out.push(...depthRow(state.depth, view, (depth) => apply({ ...state, depth })));
+  out.push(...depthRow(state.depth, view, (depth) => apply({ ...state, depth }), shape));
   if (state.depth !== undefined) {
     const cb = el("input", { type: "checkbox", checked: !!spec.drillPoint });
     cb.onchange = () => set({ drillPoint: cb.checked });

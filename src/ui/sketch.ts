@@ -14,6 +14,8 @@ import {
   translated,
 } from "../core/geometry2d";
 import { holeLabel, specDiameter, threadRow } from "../core/standards";
+import { plainNumber } from "../core/expr";
+import { getDim, setDimInput } from "../core/params";
 import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Severity, type Shape2D, type ViewId } from "../core/types";
 import { newId, store } from "../store";
 import type { DraftBoard } from "./board";
@@ -126,6 +128,10 @@ export class SketchPane {
   private hoverCorner: { shapeId: string; index: number; pt: Pt } | null = null;
   /** 측정 도구: 첫 점과 (있으면) 두 번째 점 */
   private measure: { a: Pt; b: Pt | null } | null = null;
+  /** 화면에 그린 치수 숫자의 클릭 영역 (선택한 도형) */
+  private dimHits: { box: [number, number, number, number]; shapeId: string; key: string }[] = [];
+  /** 치수 숫자를 눌러 고치는 중 */
+  private dimEdit: { shapeId: string; key: string } | null = null;
   private guides: Guide[] = [];
   private canvas: HTMLCanvasElement;
   private dyn: HTMLInputElement;
@@ -157,6 +163,10 @@ export class SketchPane {
     this.dyn.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Enter") {
+        if (this.dimEdit) {
+          if (this.applyDimEdit(this.dyn.value)) this.closeDyn();
+          return;
+        }
         this.applyDyn(this.dyn.value);
         this.closeDyn();
       } else if (e.key === "Escape") this.closeDyn();
@@ -339,6 +349,15 @@ export class SketchPane {
       ui.emit();
     }
     const [x, y] = this.local(e);
+
+    // 선택한 도형의 치수 숫자를 누르면 바로 고치기
+    if (ui.tool === "select" && !this.busy) {
+      const hit = this.dimHits.find((h) => x >= h.box[0] && x <= h.box[2] && y >= h.box[1] && y <= h.box[3]);
+      if (hit) {
+        this.openDimEdit(hit);
+        return;
+      }
+    }
 
     const raw = this.toWorld(x, y);
     let sp = this.snap(raw).pt;
@@ -651,7 +670,48 @@ export class SketchPane {
     if (this.dyn.hidden) return;
     this.dyn.hidden = true;
     this.dynHint.hidden = true;
+    this.dyn.classList.remove("err");
+    this.dimEdit = null;
     this.canvas.focus();
+  }
+
+  /** 치수 숫자를 누르면 그 자리에서 값이나 식을 입력 */
+  private openDimEdit(hit: { box: [number, number, number, number]; shapeId: string; key: string }) {
+    const s = store.project.views[this.view].find((x) => x.id === hit.shapeId);
+    if (!s) return;
+    this.dimEdit = { shapeId: hit.shapeId, key: hit.key };
+    const cx = (hit.box[0] + hit.box[2]) / 2;
+    this.dyn.hidden = false;
+    this.dynHint.hidden = false;
+    this.dyn.style.left = `${Math.max(4, Math.min(cx - 60, this.w - 130))}px`;
+    this.dyn.style.top = `${Math.max(4, hit.box[1] - 4)}px`;
+    this.dynHint.style.left = this.dyn.style.left;
+    this.dynHint.style.top = `${Math.max(4, hit.box[1] - 4) + 32}px`;
+    this.dynHint.textContent = "숫자 또는 식 (예: 40, L/2, L-8) ⏎";
+    this.dyn.value = s.exprs?.[hit.key] ?? fmt(getDim(s, hit.key));
+    // 클릭이 끝나면 브라우저가 캔버스에 초점을 주므로, 그 다음에 입력칸으로 옮긴다
+    setTimeout(() => {
+      this.dyn.focus();
+      this.dyn.select();
+    }, 0);
+  }
+
+  private applyDimEdit(text: string): boolean {
+    const d = this.dimEdit;
+    if (!d) return true;
+    const s = store.project.views[this.view].find((x) => x.id === d.shapeId);
+    if (!s) return true;
+    // 성공했을 때만 실행 취소 기록을 남긴다
+    store.checkpoint();
+    const err = setDimInput(s, d.key, text, store.project);
+    if (err) store.dropCheckpoint();
+    else store.changed();
+    if (err) {
+      this.dyn.classList.add("err");
+      this.dynHint.textContent = `⚠ ${err}`;
+      return false;
+    }
+    return true;
   }
 
   private applyDyn(text: string) {
@@ -701,6 +761,7 @@ export class SketchPane {
 
   /** 제도판이 이 뷰 영역으로 잘라 둔 상태에서 호출한다 */
   renderContent() {
+    this.dimHits = [];
     const c = this.ctx;
     const col = colors!;
     const { w, h } = this;
@@ -785,7 +846,8 @@ export class SketchPane {
             c.strokeRect(x - 4, y - 4, 8, 8);
           }
         }
-      this.label(sel);
+      if (ui.tool === "select" && (sel.kind === "rect" || sel.kind === "circle" || sel.kind === "slot")) this.drawDims(sel);
+      else this.label(sel);
     }
     if (draft) this.label(draft);
     this.drawCornerHover();
@@ -985,6 +1047,139 @@ export class SketchPane {
     }
     const [x, y] = this.toScreen(at[0], at[1]);
     this.tag(text, x, y - 14, colors!.accent);
+  }
+
+  /** 치수 숫자에 보일 글자: 식이면 "L/2 = 40", 잠금이면 "🔒 40" */
+  private dimText(s: Shape2D, key: string, prefix = ""): string {
+    const v = fmt(getDim(s, key));
+    const e = s.exprs?.[key];
+    if (e === undefined) return prefix + v;
+    return plainNumber(e) !== null ? `🔒 ${prefix}${v}` : `${prefix}${e} = ${v}`;
+  }
+
+  /**
+   * 치수선 하나: a→b (뷰 좌표) 사이를 화면에서 off(px)만큼 띄워 그리고, 가운데 숫자는 누르면 고칠 수 있다.
+   * dir: "h"면 가로 치수(위/아래로 띄움), "v"면 세로 치수(좌/우로 띄움)
+   */
+  private dimLine(s: Shape2D, key: string, a: Pt, b: Pt, dir: "h" | "v", off: number, prefix = "") {
+    const c = this.ctx;
+    const col = colors!;
+    const [ax, ay] = this.toScreen(a[0], a[1]);
+    const [bx, by] = this.toScreen(b[0], b[1]);
+    if (Math.hypot(bx - ax, by - ay) < 6) return;
+    const bound = s.exprs?.[key] !== undefined;
+    const color = bound ? col.accent : col.text;
+    // 치수선 위치
+    const p1: [number, number] = dir === "h" ? [ax, ay + off] : [ax + off, ay];
+    const p2: [number, number] = dir === "h" ? [bx, (dir === "h" ? ay : by) + off] : [(dir === "v" ? ax : bx) + off, by];
+    c.strokeStyle = color;
+    c.fillStyle = color;
+    c.lineWidth = 1;
+    c.globalAlpha = 0.9;
+    c.beginPath();
+    // 치수 보조선
+    c.moveTo(ax, ay);
+    c.lineTo(...p1);
+    c.moveTo(bx, by);
+    c.lineTo(...p2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(...p1);
+    c.lineTo(...p2);
+    c.stroke();
+    // 화살표
+    const arrow = (p: [number, number], q: [number, number]) => {
+      const L = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
+      const ux = (q[0] - p[0]) / L;
+      const uy = (q[1] - p[1]) / L;
+      c.beginPath();
+      c.moveTo(p[0], p[1]);
+      c.lineTo(p[0] + ux * 7 - uy * 3, p[1] + uy * 7 + ux * 3);
+      c.lineTo(p[0] + ux * 7 + uy * 3, p[1] + uy * 7 - ux * 3);
+      c.closePath();
+      c.fill();
+    };
+    arrow(p1, p2);
+    arrow(p2, p1);
+    c.globalAlpha = 1;
+    // 숫자 (누르면 고치기)
+    const text = this.dimText(s, key, prefix);
+    c.font = "600 11px system-ui, sans-serif";
+    const tw = c.measureText(text).width + 12;
+    const mx = (p1[0] + p2[0]) / 2;
+    const my = (p1[1] + p2[1]) / 2;
+    const box: [number, number, number, number] = [mx - tw / 2, my - 10, mx + tw / 2, my + 10];
+    c.fillStyle = bound ? col.accent : col.bg;
+    c.strokeStyle = color;
+    c.beginPath();
+    c.roundRect(box[0], box[1], tw, 20, 5);
+    c.fill();
+    c.stroke();
+    c.fillStyle = bound ? "#fff" : col.text;
+    c.textAlign = "center";
+    c.textBaseline = "middle";
+    c.fillText(text, mx, my + 0.5);
+    this.dimHits.push({ box, shapeId: s.id, key });
+  }
+
+  /** 선택한 도형의 크기·위치 치수 (원점 기준) */
+  private drawDims(s: Shape2D) {
+    if (s.kind === "rect") {
+      const r = normRect(s);
+      this.dimLine(s, "w", [r.x, r.y + r.h], [r.x + r.w, r.y + r.h], "h", -22);
+      this.dimLine(s, "h", [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], "v", 26);
+      // 위치: 원점(가로 0, 세로 0)에서 왼쪽 아래 모서리까지
+      if (Math.abs(r.x) > 1e-6) this.dimLine(s, "x", [0, r.y], [r.x, r.y], "h", 22);
+      if (Math.abs(r.y) > 1e-6) this.dimLine(s, "y", [r.x, 0], [r.x, r.y], "v", -26);
+    } else if (s.kind === "circle") {
+      const [x, y] = this.toScreen(s.cx, s.cy);
+      const rr = s.r * ui.camera.scale;
+      // 지름: 규격 구멍이면 규격 이름만 (지름은 규격이 정함)
+      if (s.spec && specDiameter(s.spec) !== null) this.tag(holeLabel(s.r * 2, s.spec, s.depth), x, y - rr - 14, colors!.accent);
+      else {
+        const text = this.dimText(s, "d", "Ø");
+        const c = this.ctx;
+        c.font = "600 11px system-ui, sans-serif";
+        const tw = c.measureText(text).width + 12;
+        const by = y - rr - 16;
+        const bound = s.exprs?.d !== undefined;
+        c.fillStyle = bound ? colors!.accent : colors!.bg;
+        c.strokeStyle = bound ? colors!.accent : colors!.text;
+        c.beginPath();
+        c.roundRect(x - tw / 2, by - 10, tw, 20, 5);
+        c.fill();
+        c.stroke();
+        c.fillStyle = bound ? "#fff" : colors!.text;
+        c.textAlign = "center";
+        c.textBaseline = "middle";
+        c.fillText(text, x, by + 0.5);
+        this.dimHits.push({ box: [x - tw / 2, by - 10, x + tw / 2, by + 10], shapeId: s.id, key: "d" });
+      }
+      if (Math.abs(s.cx) > 1e-6) this.dimLine(s, "cx", [0, s.cy - s.r], [s.cx, s.cy - s.r], "h", 22);
+      if (Math.abs(s.cy) > 1e-6) this.dimLine(s, "cy", [s.cx - s.r, 0], [s.cx - s.r, s.cy], "v", -26);
+    } else if (s.kind === "slot") {
+      // 폭은 숫자 칸으로, 위치는 첫 번째 중심 기준
+      const [x, y] = this.toScreen(s.a[0], s.a[1]);
+      const text = this.dimText(s, "w", "폭 ");
+      const c = this.ctx;
+      c.font = "600 11px system-ui, sans-serif";
+      const tw = c.measureText(text).width + 12;
+      const by = y - (s.w / 2) * ui.camera.scale - 16;
+      const bound = s.exprs?.w !== undefined;
+      c.fillStyle = bound ? colors!.accent : colors!.bg;
+      c.strokeStyle = bound ? colors!.accent : colors!.text;
+      c.beginPath();
+      c.roundRect(x - tw / 2, by - 10, tw, 20, 5);
+      c.fill();
+      c.stroke();
+      c.fillStyle = bound ? "#fff" : colors!.text;
+      c.textAlign = "center";
+      c.textBaseline = "middle";
+      c.fillText(text, x, by + 0.5);
+      this.dimHits.push({ box: [x - tw / 2, by - 10, x + tw / 2, by + 10], shapeId: s.id, key: "w" });
+      if (Math.abs(s.a[0]) > 1e-6) this.dimLine(s, "ax", [0, s.a[1] - s.w / 2], [s.a[0], s.a[1] - s.w / 2], "h", 22);
+      if (Math.abs(s.a[1]) > 1e-6) this.dimLine(s, "ay", [s.a[0] - s.w / 2, 0], [s.a[0] - s.w / 2, s.a[1]], "v", -26);
+    }
   }
 
   private tag(text: string, x: number, y: number, bg: string) {

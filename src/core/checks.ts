@@ -3,6 +3,7 @@
  * AI 검토는 이 결과를 함께 받아서 중복 없이 더 깊은 문제를 찾는다.
  */
 import { boundsOf, distToBoundary, flatten, isDegenerate, normRect, pointInShape, rectPoints, shapeCenter } from "./geometry2d";
+import { applyExpressions } from "./params";
 import { outerDiameter } from "./standards";
 export { distToBoundary };
 import type { BuildResult, Finding, FindingRef, Process, Project, Shape2D, ViewId } from "./types";
@@ -91,6 +92,20 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
     if (!out.some((o) => o.id === f.id)) out.push({ ...f, source: "rule" });
   };
   const viewsToCheck = VIEW_IDS;
+
+  // 변수·치수 식 오류
+  for (const prob of applyExpressions(structuredClone(p)).problems) {
+    const isParam = prob.key.startsWith("param:");
+    add({
+      id: `expr:${prob.view ?? ""}:${prob.shapeId ?? ""}:${prob.key}`,
+      severity: "error",
+      category: "변수",
+      title: isParam ? `변수 ${prob.key.slice(6)} 식 오류` : prob.key === "thickness" ? "두께 식 오류" : "치수 식 오류",
+      detail: prob.message + (isParam || prob.key === "thickness" ? "" : ` (${VIEW_LABEL[prob.view!]}, ${prob.key})`),
+      suggestion: "식이나 변수 이름을 확인하세요. 오류가 난 치수는 마지막으로 계산된 값을 그대로 씁니다.",
+      refs: prob.view && prob.shapeId ? [{ view: prob.view, shapeId: prob.shapeId }] : [],
+    });
+  }
 
   if (buildError)
     add({
