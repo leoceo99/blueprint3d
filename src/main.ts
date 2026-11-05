@@ -2,6 +2,7 @@ import { getApiKey, requestReview, setApiKey, AI_MODEL } from "./ai";
 import { runChecks } from "./core/checks";
 import { boundsOf, mirrored, normRect, rotated, translated } from "./core/geometry2d";
 import { SAMPLES } from "./core/samples";
+import { HEAD_LABEL, PURPOSE_LABEL, specDiameter, THREADS, withTableHead } from "./core/standards";
 import { buildSheet, sheetToDXF, type Sheet } from "./core/sheet";
 import {
   emptyProject,
@@ -10,6 +11,7 @@ import {
   VIEW_LABEL,
   type BuildResult,
   type Finding,
+  type HoleSpec,
   type Process,
   type Project,
   type Shape2D,
@@ -19,7 +21,7 @@ import { engine } from "./engine";
 import { pickTextFile, safeName, saveFile } from "./files";
 import { newId, store } from "./store";
 import { fmt, refreshColors, shapeLabel, SketchPane } from "./ui/sketch";
-import { ui, type Tool } from "./ui/state";
+import { ui, type HoleSettings, type Tool } from "./ui/state";
 import { Viewer3D } from "./ui/viewer";
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -225,11 +227,17 @@ snapAlignBtn.onclick = () => {
   ui.snapAlign = !ui.snapAlign;
   ui.emit();
 };
+const resultBtn = $("#resultBtn");
+resultBtn.onclick = () => {
+  ui.showResult = !ui.showResult;
+  ui.emit();
+};
 const HINTS: Record<Tool, string> = {
   select: "클릭: 선택 · 끌기: 이동 · 꼭짓점 끌기: 크기 · 빈 곳 끌기/휠 클릭/스페이스+끌기: 화면 이동 · 휠: 확대",
   rect: "끌거나 두 번 클릭해서 사각형 · 그리는 중 숫자 입력 → 정확한 치수 (예: 40,20) · Shift: 정사각형",
   circle: "중심에서 끌어서 원 · 그리는 중 숫자 입력 → 지름 · 몸체 안에 그리면 자동으로 구멍",
   poly: "클릭으로 점 추가 · 첫 점 클릭/더블클릭/Enter: 닫기 · Shift: 수평·수직·45° · 숫자 입력: 30<90 또는 Δx,Δy · Backspace: 점 취소",
+  hole: "클릭한 곳에 규격 구멍을 놓습니다 · 규격·용도·머리 자리·깊이는 오른쪽 ‘구멍 설정’에서 · 다른 뷰의 3D 윤곽(흐린 선)에 맞춰 놓으면 옆으로 뚫는 구멍",
   slot: "한쪽 끝 중심에서 다른 쪽 끝 중심까지 끌기 · 숫자 입력: 중심거리,폭 (예: 20,6) · Shift: 수평·수직·45°",
   corner: "사각형·다각형의 꼭짓점 클릭: 모서리 R/모따기 적용 (같은 값이면 해제) · Shift+클릭: 그 도형의 모든 꼭짓점",
   measure: "두 점을 클릭해서 거리 재기 (점·중심·정렬선에 붙음) · Esc: 지우기",
@@ -241,6 +249,7 @@ function renderStatus() {
   $("#toolHint").textContent = HINTS[ui.tool];
   snapGridBtn.classList.toggle("on", ui.snapGrid);
   snapAlignBtn.classList.toggle("on", ui.snapAlign);
+  resultBtn.classList.toggle("on", ui.showResult);
 }
 
 // ---------------- 모델 트리 ----------------
@@ -258,7 +267,8 @@ function renderTree() {
   const tree = $("#tree");
   tree.innerHTML = "";
   for (const v of VIEW_IDS) {
-    const disabled = p.mode === "revolve" && v !== "front";
+    const disabled = false;
+    const holesOnly = p.mode === "revolve" && v !== "front";
     const box = document.createElement("div");
     box.className = "tree-view" + (disabled ? " disabled" : "");
     const head = document.createElement("div");
@@ -273,7 +283,7 @@ function renderTree() {
     if (!p.views[v].length) {
       const e = document.createElement("div");
       e.className = "tree-empty";
-      e.textContent = disabled ? "회전체 모드에서는 사용 안 함" : "비어 있음";
+      e.textContent = holesOnly ? "구멍만 그릴 수 있어요" : "비어 있음";
       box.appendChild(e);
     }
     for (const s of p.views[v]) {
@@ -283,7 +293,7 @@ function renderTree() {
       const ic = SHAPE_ICON[s.kind];
       const sev = worstSeverity(v, s.id);
       it.innerHTML =
-        `${ic}<span>${esc(shapeLabel(s))}</span>` +
+        `${ic}<span class="name" title="${esc(shapeLabel(s))}">${esc(shapeLabel(s, true))}</span>` +
         (sev ? `<span class="dot" style="background:${SEV_COLOR[sev]}"></span>` : "") +
         `<span class="badge">${s.hole ? "구멍" : "몸체"}</span>`;
       it.onclick = () => {
@@ -341,8 +351,22 @@ function renderProps() {
   if (box.contains(document.activeElement) && document.activeElement !== box) return;
   box.innerHTML = "";
   const s = selectedShape();
+  if ((!s || !ui.sel) && ui.tool === "hole") {
+    const title = document.createElement("div");
+    title.className = "full";
+    title.innerHTML = `<b>구멍 설정</b> <span class="muted">· 클릭하면 이 구멍이 놓여요</span>`;
+    box.append(
+      title,
+      ...holeForm(ui.hole, ui.activeView, (next) => {
+        ui.hole = next;
+        panelKey = "";
+        ui.emit();
+      }),
+    );
+    return;
+  }
   if (!s || !ui.sel) {
-    box.innerHTML = `<div class="props-empty">도형을 선택하면 치수를 숫자로 고칠 수 있어요.<br/>단축키: <kbd>V</kbd> 선택 <kbd>R</kbd> 사각형 <kbd>C</kbd> 원 <kbd>L</kbd> 다각형 <kbd>S</kbd> 장공 <kbd>E</kbd> 모서리 <kbd>M</kbd> 측정 <kbd>H</kbd> 구멍 전환 <kbd>F</kbd> 전체 보기<br/>선택한 도형의 ◆ 손잡이를 끌면 변이 둥글게 휩니다.</div>`;
+    box.innerHTML = `<div class="props-empty">도형을 선택하면 치수를 숫자로 고칠 수 있어요.<br/>단축키: <kbd>V</kbd> 선택 <kbd>R</kbd> 사각형 <kbd>C</kbd> 원 <kbd>L</kbd> 다각형 <kbd>S</kbd> 장공 <kbd>D</kbd> 구멍 <kbd>E</kbd> 모서리 <kbd>M</kbd> 측정 <kbd>H</kbd> 구멍 전환 <kbd>F</kbd> 전체 보기<br/>선택한 도형의 ◆ 손잡이를 끌면 변이 둥글게 휩니다.</div>`;
     return;
   }
   const [ua, va] = VIEW_AXES[ui.sel.view];
@@ -362,6 +386,30 @@ function renderProps() {
     seg.appendChild(b);
   }
   box.append(head, seg);
+  const view = ui.sel.view;
+  if (s.hole && s.kind === "circle") {
+    // 원형 구멍: 규격·용도·머리 자리·깊이를 한 곳에서
+    const state: HoleSettings = {
+      spec: s.spec ?? { size: nearestSize(s.r * 2), purpose: "custom", head: "none", csAngle: 90, drillPoint: false },
+      d: s.r * 2,
+      depth: s.depth,
+    };
+    box.append(
+      ...numRow(`중심 ${ua}`, s.cx, (n) => (s.cx = n)),
+      ...numRow(`중심 ${va}`, s.cy, (n) => (s.cy = n)),
+      ...holeForm(state, view, (next) => {
+        store.update(() => {
+          const plain = next.spec.purpose === "custom" && next.spec.head === "none" && !next.spec.drillPoint;
+          s.spec = plain ? undefined : next.spec;
+          s.r = (specDiameter(next.spec) ?? next.d) / 2;
+          s.depth = next.depth;
+        });
+      }),
+    );
+    box.append(...copyControls(s, view));
+    return;
+  }
+  if (s.hole) box.append(...depthRow(s.depth, view, (d) => store.update(() => (s.depth = d))));
   if (s.kind === "rect") {
     const r = normRect(s);
     box.append(
@@ -423,6 +471,95 @@ function renderProps() {
   }
   if (s.kind === "rect" || s.kind === "poly") box.append(...cornerControls(s));
   box.append(...copyControls(s, ui.sel.view));
+}
+
+const DEPTH_FROM: Record<ViewId, string> = { front: "앞면부터", top: "윗면부터", side: "오른쪽 면부터" };
+
+function nearestSize(d: number): string {
+  let best = THREADS[0];
+  for (const t of THREADS) if (Math.abs(t.nominal - d) < Math.abs(best.nominal - d)) best = t;
+  return best.size;
+}
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, props: Record<string, unknown> = {}, cls = ""): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  Object.assign(e, props);
+  if (cls) e.className = cls;
+  return e;
+}
+
+function keyCell(text: string) {
+  return el("span", { textContent: text }, "k");
+}
+
+/** 깊이: [관통] 체크 또는 mm 값 */
+function depthRow(depth: number | undefined, view: ViewId, onSet: (d: number | undefined) => void): HTMLElement[] {
+  const row = el("div", {}, "inline");
+  const through = el("input", { type: "checkbox", checked: depth === undefined });
+  const lab = el("label", {}, "check");
+  lab.append(through, "관통");
+  const num = el("input", { type: "number", step: "any", min: "0.01", value: depth !== undefined ? fmt(depth) : "", placeholder: "mm" });
+  num.disabled = depth === undefined;
+  through.onchange = () => {
+    if (through.checked) onSet(undefined);
+    else {
+      num.disabled = false;
+      num.focus();
+    }
+  };
+  num.onchange = () => {
+    const v = parseFloat(num.value);
+    if (v > 0) onSet(v);
+  };
+  num.onkeydown = (e) => e.key === "Enter" && num.blur();
+  row.append(lab, num, el("span", { textContent: DEPTH_FROM[view] }, "muted"));
+  return [keyCell("깊이"), row];
+}
+
+/** 규격 구멍 설정 (구멍 도구 기본값과 선택한 원형 구멍이 같이 쓴다) */
+function holeForm(state: HoleSettings, view: ViewId, apply: (next: HoleSettings) => void): HTMLElement[] {
+  const spec = state.spec;
+  const set = (patch: Partial<HoleSpec>, extra: Partial<HoleSettings> = {}) => apply({ ...state, ...extra, spec: { ...spec, ...patch } });
+  const select = <T extends string>(options: [T, string][], value: T, onChange: (v: T) => void) => {
+    const sel = el("select");
+    for (const [v, label] of options) sel.append(el("option", { value: v, textContent: label, selected: v === value }));
+    sel.onchange = () => onChange(sel.value as T);
+    return sel;
+  };
+  const out: HTMLElement[] = [];
+  out.push(
+    keyCell("용도"),
+    select(Object.entries(PURPOSE_LABEL) as [HoleSpec["purpose"], string][], spec.purpose, (purpose) =>
+      apply({ ...state, spec: withTableHead({ ...spec, purpose }) }),
+    ),
+  );
+  out.push(
+    keyCell("나사 규격"),
+    select(THREADS.map((t) => [t.size, t.size] as [string, string]), spec.size, (size) => apply({ ...state, spec: withTableHead({ ...spec, size }) })),
+  );
+  const d = specDiameter(spec);
+  if (d === null) out.push(...numRow("지름 Ø", state.d, (n) => apply({ ...state, d: n }), 0.01));
+  else out.push(keyCell("지름 Ø"), el("span", { textContent: `${fmt(d)} mm (표준값)` }, "stat"));
+  out.push(keyCell("머리 자리"), select(Object.entries(HEAD_LABEL) as [HoleSpec["head"], string][], spec.head, (head) => set({ head })));
+  if (spec.head === "counterbore")
+    out.push(
+      ...numRow("자리 지름", spec.cbDiameter ?? 0, (n) => set({ cbDiameter: n }), 0.01),
+      ...numRow("자리 깊이", spec.cbDepth ?? 0, (n) => set({ cbDepth: n }), 0.01),
+    );
+  if (spec.head === "countersink")
+    out.push(
+      ...numRow("바깥 지름", spec.csDiameter ?? 0, (n) => set({ csDiameter: n }), 0.01),
+      ...numRow("각도 (°)", spec.csAngle ?? 90, (n) => set({ csAngle: n }), 1),
+    );
+  out.push(...depthRow(state.depth, view, (depth) => apply({ ...state, depth })));
+  if (state.depth !== undefined) {
+    const cb = el("input", { type: "checkbox", checked: !!spec.drillPoint });
+    cb.onchange = () => set({ drillPoint: cb.checked });
+    const lab = el("label", {}, "check");
+    lab.append(cb, "바닥을 드릴 끝 모양(118°)으로");
+    out.push(keyCell("바닥"), lab);
+  }
+  return out;
 }
 
 /** 모서리 R/모따기를 모든 꼭짓점에 한 번에 */
@@ -712,6 +849,7 @@ async function runBuild() {
   if (!hasAny) {
     lastBuild = null;
     buildError = undefined;
+    ui.result = null;
     viewer.setMesh(null);
     setBuildStatus("도형을 그리면 3D가 자동으로 만들어져요", "");
     finishBuild();
@@ -723,6 +861,16 @@ async function runBuild() {
     lastBuild = res;
     buildError = undefined;
     viewer.setMesh(res.mesh);
+    ui.result = Object.fromEntries(
+      VIEW_IDS.map((v) => [
+        v,
+        {
+          visible: res.projections[v].visible.map((d) => new Path2D(d)),
+          hidden: res.projections[v].hidden.map((d) => new Path2D(d)),
+          bounds: res.projections[v].bounds,
+        },
+      ]),
+    ) as typeof ui.result;
     const [[x0, y0, z0], [x1, y1, z1]] = res.bbox;
     setBuildStatus(`✓ 3D ${fmt(x1 - x0)}×${fmt(y1 - y0)}×${fmt(z1 - z0)} mm`, "ok");
   } catch (e: any) {
@@ -920,6 +1068,9 @@ window.addEventListener("keydown", (e) => {
       break;
     case "s":
       setTool("slot");
+      break;
+    case "d":
+      setTool("hole");
       break;
     case "e":
       setTool("corner");

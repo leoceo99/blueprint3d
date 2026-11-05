@@ -7,12 +7,13 @@ import {
   drawCircle,
   drawRectangle,
   drawProjection,
+  Plane,
   ProjectionCamera,
   type Drawing,
   type Shape3D,
 } from "replicad";
 import { arcInfo, boundsOf, isDegenerate, normRect, outline } from "./geometry2d";
-import type { BuildResult, Project, ProjectedView, Shape2D, ViewId } from "./types";
+import type { BuildResult, HoleSpec, Project, ProjectedView, Shape2D, ViewId } from "./types";
 import { VIEW_IDS, VIEW_LABEL } from "./types";
 
 export class BuildError extends Error {}
@@ -35,11 +36,19 @@ function shapeToDrawing(s: Shape2D): Drawing {
   return pen.close();
 }
 
-/** 몸체 도형을 모두 합치고 구멍 도형을 뺀 2D 단면 */
+/**
+ * 2D 단면에서 바로 빼는 구멍: 깊이 지정 없이 관통하는 구멍.
+ * 깊이가 있거나 머리 자리(카운터보어·카운터싱크)가 있는 구멍은 3D를 만든 뒤 따로 판다.
+ */
+function isProfileHole(s: Shape2D): boolean {
+  return s.hole && s.depth === undefined && !(s.kind === "circle" && s.spec && s.spec.head !== "none");
+}
+
+/** 몸체 도형을 모두 합치고 관통 구멍을 뺀 2D 단면 */
 export function profileOf(shapes: Shape2D[]): Drawing | null {
   const valid = shapes.filter((s) => !isDegenerate(s));
   const solids = valid.filter((s) => !s.hole);
-  const holes = valid.filter((s) => s.hole);
+  const holes = valid.filter((s) => s.hole && s.depth === undefined);
   if (!solids.length) return null;
   let d = shapeToDrawing(solids[0]);
   for (const s of solids.slice(1)) d = d.fuse(shapeToDrawing(s));
@@ -51,7 +60,7 @@ export function profileOf(shapes: Shape2D[]): Drawing | null {
 function bigLength(p: Project): number {
   let m = p.thickness;
   for (const v of VIEW_IDS) {
-    const b = boundsOf(p.views[v]);
+    const b = boundsOf(p.views[v].map((s) => ({ ...s, hole: false })));
     if (b) m = Math.max(m, ...b.map(Math.abs));
   }
   return m * 4 + 100;
@@ -76,8 +85,103 @@ function extrudeView(view: ViewId, profile: Drawing, range: [number, number]): S
   return profile.sketchOnPlane("YZ", [a, 0, 0]).extrude(len) as Shape3D;
 }
 
+type Bounds3 = [[number, number, number], [number, number, number]];
+
+/** 뷰에서 보이는 가장 바깥 면의 위치와, 그 면에서 재료 안쪽으로 들어가는 방향 */
+function faceOf(view: ViewId, bb: Bounds3) {
+  if (view === "front") return { axis: 1, face: bb[0][1], into: 1 as const };
+  if (view === "top") return { axis: 2, face: bb[1][2], into: -1 as const };
+  return { axis: 0, face: bb[1][0], into: -1 as const };
+}
+
+/** 깊이 좌표 범위: 바깥 면에서 depth만큼 (조금 바깥에서 시작해 깨끗하게 잘리게) */
+function depthRange(view: ViewId, bb: Bounds3, depth: number, e: number): [number, number] {
+  const { face, into } = faceOf(view, bb);
+  return into > 0 ? [face - e, face + depth] : [face - depth, face + e];
+}
+
+/**
+ * 원형 구멍을 단면 회전으로 만든다: 머리 자리(카운터보어/카운터싱크) + 몸통 + (막힌 구멍이면) 드릴 끝.
+ * 단면은 (반지름 방향, 깊이 방향) 좌표로 그리고 구멍 축을 중심으로 360° 돌린다.
+ */
+export function roundHoleTool(
+  view: ViewId,
+  center: [number, number],
+  r: number,
+  depth: number | null,
+  spec: HoleSpec | undefined,
+  bb: Bounds3,
+  big: number,
+): Shape3D {
+  const { face } = faceOf(view, bb);
+  const [cu, cv] = center;
+  // P: 바깥 면 위의 구멍 중심, D: 재료 안쪽 방향, X: 단면의 반지름 방향
+  const P: [number, number, number] = view === "top" ? [cu, cv, face] : view === "front" ? [cu, face, cv] : [face, cu, cv];
+  const D: [number, number, number] = view === "top" ? [0, 0, -1] : view === "front" ? [0, 1, 0] : [-1, 0, 0];
+  const X: [number, number, number] = view === "side" ? [0, 1, 0] : [1, 0, 0];
+  const N: [number, number, number] = [X[1] * D[2] - X[2] * D[1], X[2] * D[0] - X[0] * D[2], X[0] * D[1] - X[1] * D[0]];
+  const plane = new Plane(P, X, N);
+
+  const e = Math.max(0.5, r * 0.2);
+  const bottom = depth ?? big;
+  const pts: [number, number][] = [[0, -e]];
+  const head = spec?.head ?? "none";
+  if (head === "counterbore" && spec?.cbDiameter && spec.cbDiameter / 2 > r && spec.cbDepth && spec.cbDepth > 0) {
+    const R = spec.cbDiameter / 2;
+    const h = Math.min(spec.cbDepth, bottom);
+    pts.push([R, -e], [R, h], [r, h]);
+  } else if (head === "countersink" && spec?.csDiameter && spec.csDiameter / 2 > r) {
+    const R = spec.csDiameter / 2;
+    const half = (((spec.csAngle ?? 90) / 2) * Math.PI) / 180;
+    const h = Math.min((R - r) / Math.tan(half), bottom);
+    pts.push([R, -e], [R, 0], [r, h]);
+  } else {
+    pts.push([r, -e]);
+  }
+  pts.push([r, bottom]);
+  // 막힌 구멍의 드릴 끝: 118° 원뿔
+  if (depth !== null && spec?.drillPoint) pts.push([0, bottom + r / Math.tan((59 * Math.PI) / 180)]);
+  else pts.push([0, bottom]);
+
+  let pen = draw(pts[0]);
+  for (const q of pts.slice(1)) pen = pen.lineTo(q);
+  const sketch = pen.close().sketchOnPlane(plane) as any;
+  return sketch.revolve(D, { origin: P }) as Shape3D;
+}
+
+/** 단면 회전/돌출로 만든 몸체에 깊이 있는 구멍, 머리 자리, 몸체 없는 뷰의 구멍을 판다 */
+function cutHoleFeatures(p: Project, shape: Shape3D, solidViews: Set<ViewId>, notes: string[]): Shape3D {
+  const bb = shape.boundingBox.bounds as Bounds3;
+  const big = bigLength(p);
+  let count = 0;
+  let crossCount = 0;
+  for (const v of VIEW_IDS) {
+    for (const h of p.views[v]) {
+      if (!h.hole || isDegenerate(h)) continue;
+      const inProfile = solidViews.has(v) && isProfileHole(h);
+      if (inProfile) continue;
+      let tool: Shape3D;
+      if (h.kind === "circle") {
+        tool = roundHoleTool(v, [h.cx, h.cy], h.r, h.depth ?? null, h.spec, bb, big);
+      } else {
+        const range: [number, number] = h.depth !== undefined ? depthRange(v, bb, h.depth, 0.5) : [-big, big];
+        tool = extrudeView(v, shapeToDrawing(h), range);
+      }
+      shape = shape.cut(tool) as Shape3D;
+      if (solidViews.has(v)) count++;
+      else crossCount++;
+    }
+  }
+  if (count) notes.push(`깊이 또는 머리 자리가 있는 구멍·포켓 ${count}개를 바깥 면부터 팠습니다.`);
+  if (crossCount) notes.push(`몸체 없이 구멍만 그린 뷰의 구멍 ${crossCount}개를 그 방향으로 팠습니다.`);
+  return shape;
+}
+
 export function buildSolid(p: Project): { shape: Shape3D; notes: string[] } {
   const notes: string[] = [];
+  let shape: Shape3D;
+  const solidViews = new Set<ViewId>();
+
   if (p.mode === "revolve") {
     const prof = profileOf(p.views.front);
     if (!prof) throw new BuildError("회전 모드: 정면도에 단면을 그려 주세요.");
@@ -86,38 +190,42 @@ export function buildSolid(p: Project): { shape: Shape3D; notes: string[] } {
     const half = prof.intersect(drawRectangle(big, 2 * big).translate(big / 2, 0));
     if (!half.boundingBox || half.boundingBox.width < 1e-6)
       throw new BuildError("회전 모드: 단면이 회전축(가로 0) 오른쪽에 있어야 합니다.");
-    const shape = half.sketchOnPlane("XZ").revolve([0, 0, 1], { origin: [0, 0, 0] }) as Shape3D;
+    shape = half.sketchOnPlane("XZ").revolve([0, 0, 1], { origin: [0, 0, 0] }) as Shape3D;
+    solidViews.add("front");
     notes.push("정면도 단면을 세로축(Z) 중심으로 360° 회전했습니다.");
-    return { shape, notes };
+    if ((["top", "side"] as ViewId[]).some((v) => p.views[v].some((s) => !s.hole)))
+      notes.push("회전체 모드에서는 평면도·우측면도의 몸체는 쓰지 않고 구멍만 반영합니다.");
+  } else {
+    const drawn = VIEW_IDS.map((v) => ({ v, prof: profileOf(p.views[v]) })).filter(
+      (x): x is { v: ViewId; prof: Drawing } => x.prof !== null,
+    );
+    if (!drawn.length) throw new BuildError("도면에 몸체 도형을 하나 이상 그려 주세요.");
+    drawn.forEach((d) => solidViews.add(d.v));
+
+    if (drawn.length === 1) {
+      const { v, prof } = drawn[0];
+      const t = p.thickness;
+      if (!(t > 0)) throw new BuildError("두께는 0보다 커야 합니다.");
+      // 정면도: y∈[0,t] (앞면 y=0) / 평면도: z∈[0,t] (윗면 z=t) / 우측면도: x∈[0,t]
+      shape = extrudeView(v, prof, [0, t]);
+      notes.push(`${VIEW_LABEL[v]}만 그려서 두께 ${t}mm로 돌출했습니다.`);
+    } else {
+      const big = bigLength(p);
+      let acc: Shape3D | null = null;
+      for (const { v, prof } of drawn) {
+        const ext = extrudeView(v, prof, [-big, big]);
+        acc = acc ? (acc.intersect(ext) as Shape3D) : ext;
+      }
+      shape = acc!;
+      notes.push(`${drawn.map((d) => VIEW_LABEL[d.v]).join(" + ")}를 각각 돌출한 뒤 겹치는 부분(교집합)으로 만들었습니다.`);
+      if (drawn.length === 2)
+        notes.push("뷰가 2개뿐이면 형상이 여러 가지로 해석될 수 있어요. 결과가 다르면 세 번째 뷰를 추가하세요.");
+    }
   }
 
-  const drawn = VIEW_IDS.map((v) => ({ v, prof: profileOf(p.views[v]) })).filter(
-    (x): x is { v: ViewId; prof: Drawing } => x.prof !== null,
-  );
-  if (!drawn.length) throw new BuildError("도면에 도형을 하나 이상 그려 주세요.");
-
-  if (drawn.length === 1) {
-    const { v, prof } = drawn[0];
-    const t = p.thickness;
-    if (!(t > 0)) throw new BuildError("두께는 0보다 커야 합니다.");
-    // 정면도: y∈[0,t] (앞면 y=0) / 평면도: z∈[0,t] (윗면 z=t) / 우측면도: x∈[0,t]
-    const shape = extrudeView(v, prof, [0, t]);
-    notes.push(`${VIEW_LABEL[v]}만 그려서 두께 ${t}mm로 돌출했습니다.`);
-    return { shape, notes };
-  }
-
-  const big = bigLength(p);
-  let shape: Shape3D | null = null;
-  for (const { v, prof } of drawn) {
-    const ext = extrudeView(v, prof, [-big, big]);
-    shape = shape ? (shape.intersect(ext) as Shape3D) : ext;
-  }
-  notes.push(
-    `${drawn.map((d) => VIEW_LABEL[d.v]).join(" + ")}를 각각 돌출한 뒤 겹치는 부분(교집합)으로 만들었습니다.`,
-  );
-  if (drawn.length === 2)
-    notes.push("뷰가 2개뿐이면 형상이 여러 가지로 해석될 수 있어요. 결과가 다르면 세 번째 뷰를 추가하세요.");
-  return { shape: shape!, notes };
+  const bb = shape.boundingBox;
+  if (bb && bb.width + bb.height + bb.depth > 0) shape = cutHoleFeatures(p, shape, solidViews, notes);
+  return { shape, notes };
 }
 
 /** 3각법 카메라: 정면은 -Y에서, 평면은 +Z에서, 우측면은 +X에서 본다. */

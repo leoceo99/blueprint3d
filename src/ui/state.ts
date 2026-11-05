@@ -1,6 +1,15 @@
-import type { Finding, ViewId } from "../core/types";
+import type { Finding, HoleSpec, ViewId } from "../core/types";
 
-export type Tool = "select" | "rect" | "circle" | "poly" | "slot" | "corner" | "measure";
+export type Tool = "select" | "rect" | "circle" | "poly" | "slot" | "hole" | "corner" | "measure";
+
+/** 구멍 도구로 다음에 놓을 구멍 */
+export interface HoleSettings {
+  spec: HoleSpec;
+  /** 직접 지정일 때 지름 */
+  d: number;
+  /** 없으면 관통 */
+  depth?: number;
+}
 
 /**
  * 모든 2D 창이 함께 쓰는 화면 상태.
@@ -18,6 +27,14 @@ class UIState {
   cornerSize = 2;
   /** 장공 도구의 기본 폭 */
   slotWidth = 6;
+  hole: HoleSettings = {
+    spec: { size: "M4", purpose: "clearance-normal", head: "none", cbDiameter: 8, cbDepth: 4.4, csDiameter: 9, csAngle: 90, drillPoint: true },
+    d: 5,
+  };
+  /** 3D 결과를 각 2D 창에 흐리게 겹쳐 보기 */
+  showResult = true;
+  /** 3D 결과의 뷰별 투영선 (Path2D로 미리 만들어 둠) */
+  result: Record<ViewId, { visible: Path2D[]; hidden: Path2D[]; bounds: [[number, number], [number, number]] | null }> | null = null;
   snapGrid = true;
   /** 다른 뷰/도형의 좌표에 맞춰 붙기 (추론 스냅) */
   snapAlign = true;

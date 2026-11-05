@@ -1,4 +1,5 @@
 import {
+  area,
   arcInfo,
   boundsOf,
   bulgeThrough,
@@ -12,6 +13,7 @@ import {
   shapeCenter,
   translated,
 } from "../core/geometry2d";
+import { holeLabel, specDiameter, threadRow } from "../core/standards";
 import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Severity, type Shape2D, type ViewId } from "../core/types";
 import { newId, store } from "../store";
 import { ui } from "./state";
@@ -61,6 +63,8 @@ interface Colors {
   error: string;
   warning: string;
   info: string;
+  blindFill: string;
+  result: string;
 }
 
 function readColors(): Colors {
@@ -81,6 +85,8 @@ function readColors(): Colors {
     error: v("--sev-error"),
     warning: v("--sev-warning"),
     info: v("--sev-info"),
+    blindFill: v("--blind-fill"),
+    result: v("--result-line"),
   };
 }
 
@@ -220,6 +226,12 @@ export class SketchPane {
       byAxis[this.ua].push(pu);
       byAxis[this.va].push(pv);
     }
+    // 3D 결과의 이 뷰 투영 범위와 가운데 (구멍만 그리는 뷰에서 위치 잡기용)
+    const rb = ui.result?.[this.view]?.bounds;
+    if (rb) {
+      byAxis[this.ua].push(rb[0][0], rb[1][0], (rb[0][0] + rb[1][0]) / 2);
+      byAxis[this.va].push(rb[0][1], rb[1][1], (rb[0][1] + rb[1][1]) / 2);
+    }
     byAxis[this.ua].push(0);
     byAxis[this.va].push(0);
     return { u: byAxis[this.ua], v: byAxis[this.va] };
@@ -337,7 +349,6 @@ export class SketchPane {
       return;
     }
     if (e.button !== 0) return;
-    if (this.revolveLocked()) return;
 
     const raw = this.toWorld(x, y);
     let sp = this.snap(raw).pt;
@@ -362,6 +373,11 @@ export class SketchPane {
       if (!last || last[0] !== sp[0] || last[1] !== sp[1]) this.polyDraft.push(sp);
       this.onPolyDraft();
       this.render();
+      return;
+    }
+
+    if (ui.tool === "hole") {
+      this.placeHole(sp);
       return;
     }
 
@@ -527,10 +543,22 @@ export class SketchPane {
     this.render();
   }
 
-  private addShape(s: Shape2D) {
-    // 이미 있는 몸체 안쪽에 그리면 자동으로 구멍
+  private addShape(s: Shape2D, forceHole = false) {
     const [cx, cy] = shapeCenter(s);
-    s.hole = store.project.views[this.view].some((o) => !o.hole && pointInShape(cx, cy, o) && contains(o, s));
+    const own = store.project.views[this.view];
+    if (forceHole || this.holesOnly()) s.hole = true;
+    else if (own.some((o) => !o.hole)) {
+      // 이미 있는 몸체 안쪽에 그리면 자동으로 구멍
+      s.hole = own.some((o) => !o.hole && pointInShape(cx, cy, o) && contains(o, s));
+    } else {
+      // 몸체가 없는 뷰: 3D 결과 안쪽에 작게 그리면 그 방향으로 뚫는 구멍으로 본다
+      const rb = ui.result?.[this.view]?.bounds;
+      if (rb) {
+        const inside = cx > rb[0][0] && cx < rb[1][0] && cy > rb[0][1] && cy < rb[1][1];
+        const small = area(s) < 0.5 * (rb[1][0] - rb[0][0]) * (rb[1][1] - rb[0][1]);
+        s.hole = inside && small;
+      }
+    }
     store.update((p) => {
       p.views[this.view].push(s);
     });
@@ -621,8 +649,18 @@ export class SketchPane {
     ui.emit();
   }
 
-  private revolveLocked() {
+  /** 회전체 모드의 평면도·우측면도에는 구멍만 그린다 */
+  private holesOnly() {
     return store.project.mode === "revolve" && this.view !== "front";
+  }
+
+  /** 구멍 도구: 설정된 규격 구멍을 클릭한 곳에 놓는다 */
+  private placeHole(at: Pt) {
+    const h = ui.hole;
+    const d = specDiameter(h.spec) ?? h.d;
+    const spec = { ...h.spec };
+    const hole: Shape2D = { id: newId(), kind: "circle", hole: true, cx: at[0], cy: at[1], r: d / 2, spec, depth: h.depth };
+    this.addShape(hole, true);
   }
 
   // ---------------- 치수 직접 입력 ----------------
@@ -710,6 +748,7 @@ export class SketchPane {
     c.fillStyle = col.bg;
     c.fillRect(0, 0, w, h);
     this.drawGrid();
+    this.drawResultUnderlay();
     if (store.project.mode !== "revolve") this.drawExtentGuides();
 
     const shapes = store.project.views[this.view];
@@ -727,14 +766,17 @@ export class SketchPane {
     }
     for (const s of shapes.filter((s) => s.hole)) {
       this.pathShape(s);
-      c.fillStyle = col.bg;
+      // 관통 구멍은 비어 보이게, 막힌 구멍·포켓은 바닥이 있는 것처럼 옅게 칠한다
+      c.fillStyle = s.depth !== undefined ? col.blindFill : col.bg;
       c.fill();
       c.lineWidth = 1.25;
       c.strokeStyle = col.holeStroke;
-      c.setLineDash([5, 3]);
+      c.setLineDash(s.depth !== undefined ? [] : [5, 3]);
       c.stroke();
       c.setLineDash([]);
+      if (s.kind === "circle") this.drawHoleDecor(s);
     }
+    this.drawHolePreview();
     // 검사에서 걸린 도형 강조
     for (const [id, sev] of flagged) {
       const s = shapes.find((x) => x.id === id);
@@ -794,17 +836,89 @@ export class SketchPane {
     this.drawCursor();
     this.drawFlash();
 
-    if (this.revolveLocked()) {
-      c.fillStyle = col.bg;
-      c.globalAlpha = 0.75;
-      c.fillRect(0, 0, w, h);
-      c.globalAlpha = 1;
+    if (this.holesOnly()) {
       c.fillStyle = col.text;
-      c.font = "13px system-ui, sans-serif";
+      c.font = "600 11px system-ui, sans-serif";
       c.textAlign = "center";
-      c.textBaseline = "middle";
-      c.fillText("회전체 모드에서는 정면도만 사용합니다", w / 2, h / 2);
+      c.textBaseline = "top";
+      c.fillText("회전체 모드: 이 뷰에는 구멍만 그릴 수 있어요 (예: 플랜지 볼트 구멍)", w / 2, 8);
     }
+  }
+
+  /** 3D 결과를 이 뷰에서 본 모습 (외형선 + 숨은선)을 흐리게 */
+  private drawResultUnderlay() {
+    const r = ui.showResult ? ui.result?.[this.view] : null;
+    if (!r) return;
+    const c = this.ctx;
+    const { scale, c: cam } = ui.camera;
+    c.save();
+    // 투영 경로는 (u, −v) 좌표 → 화면으로
+    c.setTransform(
+      this.dpr * scale,
+      0,
+      0,
+      this.dpr * scale,
+      this.dpr * (this.w / 2 - cam[this.ua] * scale),
+      this.dpr * (this.h / 2 + cam[this.va] * scale),
+    );
+    c.strokeStyle = colors!.result;
+    c.lineWidth = 1 / scale;
+    c.setLineDash([4 / scale, 3 / scale]);
+    c.globalAlpha = 0.6;
+    for (const p of r.hidden) c.stroke(p);
+    c.setLineDash([]);
+    c.globalAlpha = 0.9;
+    c.lineWidth = 1.5 / scale;
+    for (const p of r.visible) c.stroke(p);
+    c.restore();
+  }
+
+  /** 규격 구멍 표시: 머리 자리(바깥 원), 탭(나사산 3/4 원) */
+  private drawHoleDecor(s: Extract<Shape2D, { kind: "circle" }>) {
+    const spec = s.spec;
+    if (!spec) return;
+    const c = this.ctx;
+    const [x, y] = this.toScreen(s.cx, s.cy);
+    const k = ui.camera.scale;
+    c.strokeStyle = colors!.holeStroke;
+    c.lineWidth = 1;
+    if (spec.head === "counterbore" && spec.cbDiameter) {
+      c.beginPath();
+      c.arc(x, y, (spec.cbDiameter / 2) * k, 0, Math.PI * 2);
+      c.stroke();
+    } else if (spec.head === "countersink" && spec.csDiameter) {
+      c.setLineDash([2, 2]);
+      c.beginPath();
+      c.arc(x, y, (spec.csDiameter / 2) * k, 0, Math.PI * 2);
+      c.stroke();
+      c.setLineDash([]);
+    }
+    if (spec.purpose === "tap") {
+      // 제도 관례: 나사 바깥지름을 3/4 원으로
+      const t = threadRow(spec.size);
+      if (t) {
+        c.beginPath();
+        c.arc(x, y, (t.nominal / 2) * k, -Math.PI / 2, Math.PI);
+        c.stroke();
+      }
+    }
+  }
+
+  /** 구멍 도구로 놓을 구멍 미리보기 */
+  private drawHolePreview() {
+    if (ui.tool !== "hole" || !this.hover || ui.activeView !== this.view || this.drag) return;
+    const d = specDiameter(ui.hole.spec) ?? ui.hole.d;
+    const c = this.ctx;
+    const [x, y] = this.toScreen(this.hover[0], this.hover[1]);
+    c.globalAlpha = 0.7;
+    c.strokeStyle = colors!.holeStroke;
+    c.lineWidth = 1.5;
+    c.beginPath();
+    c.arc(x, y, (d / 2) * ui.camera.scale, 0, Math.PI * 2);
+    c.stroke();
+    this.drawHoleDecor({ id: "", kind: "circle", hole: true, cx: this.hover[0], cy: this.hover[1], r: d / 2, spec: ui.hole.spec });
+    c.globalAlpha = 1;
+    this.tag(holeLabel(d, ui.hole.spec, ui.hole.depth), x, y - (d / 2) * ui.camera.scale - 14, colors!.holeStroke);
   }
 
   private flaggedShapes(): Map<string, Severity> {
@@ -905,7 +1019,7 @@ export class SketchPane {
       text = `${fmt(r.w)} × ${fmt(r.h)}`;
       at = [r.x + r.w / 2, r.y + r.h];
     } else if (s.kind === "circle") {
-      text = `Ø${fmt(s.r * 2)}`;
+      text = s.hole && (s.spec || s.depth !== undefined) ? holeLabel(s.r * 2, s.spec, s.depth) : `Ø${fmt(s.r * 2)}`;
       at = [s.cx, s.cy + s.r];
     } else if (s.kind === "slot") {
       text = `장공 ${fmt(Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]))} × ${fmt(s.w)}`;
@@ -1268,7 +1382,14 @@ export function fmt(n: number): string {
   return String(Math.round(n * 100) / 100);
 }
 
-export function shapeLabel(s: Shape2D): string {
+export function shapeLabel(s: Shape2D, short = false): string {
+  const base = baseLabel(s);
+  if (s.kind === "circle" && s.hole && (s.spec || s.depth !== undefined)) return holeLabel(s.r * 2, s.spec, s.depth, short);
+  if (s.hole && s.depth !== undefined) return `${base} · 포켓 깊이 ${fmt(s.depth)}`;
+  return base;
+}
+
+function baseLabel(s: Shape2D): string {
   if (s.kind === "rect") {
     const r = normRect(s);
     const c = s.corners?.find(Boolean);

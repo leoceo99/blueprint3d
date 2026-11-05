@@ -2,7 +2,8 @@
  * 규칙 기반 설계 검사 (즉시 실행, 비용 없음).
  * AI 검토는 이 결과를 함께 받아서 중복 없이 더 깊은 문제를 찾는다.
  */
-import { boundsOf, distToBoundary, flatten, isDegenerate, normRect, pointInShape, rectPoints } from "./geometry2d";
+import { boundsOf, distToBoundary, flatten, isDegenerate, normRect, pointInShape, rectPoints, shapeCenter } from "./geometry2d";
+import { outerDiameter } from "./standards";
 export { distToBoundary };
 import type { BuildResult, Finding, FindingRef, Process, Project, Shape2D, ViewId } from "./types";
 import { VIEW_AXES, VIEW_IDS, VIEW_LABEL } from "./types";
@@ -22,10 +23,12 @@ export interface ProcessRules {
   holeVsThickness?: number;
   /** 판재: 구멍~가장자리 ≥ 두께 × 이 값 */
   edgeVsThickness?: number;
+  /** 포켓 깊이/폭 한계 (엔드밀) */
+  maxPocketRatio?: number;
 }
 
 export const PROCESS_RULES: Record<Process, ProcessRules> = {
-  cnc: { minWall: 1.0, minHole: 1.0, maxDepthRatio: 10, sharpInnerCornerNote: true },
+  cnc: { minWall: 1.0, minHole: 1.0, maxDepthRatio: 10, sharpInnerCornerNote: true, maxPocketRatio: 4 },
   print3d: { minWall: 1.2, minHole: 2.0, sharpInnerCornerNote: false },
   laser: { minWall: 1.0, minHole: 1.0, sharpInnerCornerNote: false, holeVsThickness: 1, edgeVsThickness: 1 },
 };
@@ -87,7 +90,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
   const add = (f: Omit<Finding, "source">) => {
     if (!out.some((o) => o.id === f.id)) out.push({ ...f, source: "rule" });
   };
-  const viewsToCheck = p.mode === "revolve" ? (["front"] as ViewId[]) : VIEW_IDS;
+  const viewsToCheck = VIEW_IDS;
 
   if (buildError)
     add({
@@ -211,11 +214,20 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
     }
 
     // 4) 구멍 검사
+    // 몸체를 그린 뷰에서만 "구멍이 몸체 안에 있는지"를 따질 수 있다 (회전체 모드는 정면도만)
+    const bodyView = solids.length > 0 && (p.mode === "auto" || v === "front");
+    const ax = DEPTH_AXIS[v];
+    // 그 뷰의 시선 방향으로 잰 부품 두께
+    const extent = build ? build.bbox[1][ax] - build.bbox[0][ax] : p.mode === "auto" ? p.thickness : null;
     for (const h of holes) {
-      const samples = boundarySamples(h);
+      // 머리 자리(카운터보어·카운터싱크)까지 포함한 바깥 모양으로 가장자리를 잰다
+      const foot = footprint(h);
+      const samples = boundarySamples(foot);
       const inside = samples.map((pt) => solids.filter((s) => pointInShape(pt[0], pt[1], s)));
       const outCount = inside.filter((l) => l.length === 0).length;
-      if (outCount === samples.length) {
+      if (!bodyView) {
+        // 몸체가 없는 뷰의 구멍은 3D에 바로 뚫으므로 위치 검사 생략
+      } else if (outCount === samples.length) {
         add({
           id: `hole-out:${v}:${h.id}`,
           severity: "error",
@@ -226,30 +238,40 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
           refs: [ref(h, samples[0])],
         });
         continue;
-      }
-      if (outCount > 0) {
+      } else if (outCount > 0) {
         const pt = samples[inside.findIndex((l) => l.length === 0)];
-        add({
-          id: `hole-cross:${v}:${h.id}`,
-          severity: "warning",
-          category: "구멍",
-          title: "구멍이 몸체 가장자리를 벗어남",
-          detail: `${VIEW_LABEL[v]}의 ${shapeName(h)}이 가장자리에 걸쳐 있어 구멍이 아니라 홈(노치)이 됩니다.`,
-          suggestion: "의도한 홈이면 그대로 두고, 구멍이라면 안쪽으로 옮기세요.",
-          refs: [ref(h, pt)],
-        });
-        continue;
+        if (h.depth !== undefined)
+          add({
+            id: `hole-step:${v}:${h.id}`,
+            severity: "info",
+            category: "형상",
+            title: "가장자리에 걸친 포켓 = 단차(계단)",
+            detail: `${VIEW_LABEL[v]}의 ${shapeName(h)}이 가장자리에 걸쳐 있어 깊이 ${f2(h.depth)}mm의 계단 모양으로 깎입니다.`,
+            suggestion: "의도한 단차라면 그대로 두세요.",
+            refs: [ref(h, pt)],
+          });
+        else
+          add({
+            id: `hole-cross:${v}:${h.id}`,
+            severity: "warning",
+            category: "구멍",
+            title: "구멍이 몸체 가장자리를 벗어남",
+            detail: `${VIEW_LABEL[v]}의 ${shapeName(h)}이 가장자리에 걸쳐 있어 구멍이 아니라 홈(노치)이 됩니다.`,
+            suggestion: "의도한 홈이면 그대로 두고, 구멍이라면 안쪽으로 옮기세요.",
+            refs: [ref(h, pt)],
+          });
       }
       // 구멍 ~ 가장자리 벽 두께 (몸체가 여러 개면 가장 여유 있는 쪽 기준)
       let wall = Infinity;
       let at: Pt = samples[0];
-      samples.forEach((pt, i) => {
-        const w = Math.max(...inside[i].map((s) => distToBoundary(pt, s)));
-        if (w < wall) {
-          wall = w;
-          at = pt;
-        }
-      });
+      if (bodyView && outCount === 0)
+        samples.forEach((pt, i) => {
+          const w = Math.max(...inside[i].map((s) => distToBoundary(pt, s)));
+          if (w < wall) {
+            wall = w;
+            at = pt;
+          }
+        });
       const size = h.kind === "circle" ? h.r * 2 : h.kind === "slot" ? h.w : Math.min(normRectOrBox(h).w, normRectOrBox(h).h);
       const t = p.thickness;
       let minEdge = rules.minWall;
@@ -258,9 +280,10 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
         minEdge = t * rules.edgeVsThickness;
         why = `판 두께(${f2(t)}mm) 이상`;
       }
-      if (h.kind === "circle" && p.process !== "laser" && size * 0.5 > minEdge) {
-        minEdge = size * 0.5;
-        why = `구멍 지름의 0.5배(${f2(minEdge)}mm) 이상`;
+      const footSize = foot.kind === "circle" ? foot.r * 2 : size;
+      if (h.kind === "circle" && p.process !== "laser" && footSize * 0.5 > minEdge) {
+        minEdge = footSize * 0.5;
+        why = `${foot !== h ? "머리 자리" : "구멍"} 지름의 0.5배(${f2(minEdge)}mm) 이상`;
       }
       if (wall < minEdge - 1e-6)
         add({
@@ -284,14 +307,67 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
           refs: [ref(h, samples[0])],
         });
 
+      if (h.depth !== undefined && extent !== null && h.depth >= extent - 1e-6)
+        add({
+          id: `depth-through:${v}:${h.id}`,
+          severity: "info",
+          category: "형상",
+          title: `깊이 ${f2(h.depth)}mm가 두께 ${f2(extent)}mm 이상이라 관통됨`,
+          detail: `${VIEW_LABEL[v]}의 ${shapeName(h)}은 깊이를 지정했지만 부품을 끝까지 뚫습니다.`,
+          suggestion: "관통이 맞다면 ‘관통’으로 바꾸고, 아니라면 깊이를 줄이세요.",
+          refs: [ref(h, shapeCenter(h))],
+        });
+
       if (h.kind === "circle") {
         const d = h.r * 2;
-        // 관통 깊이 = 그 뷰의 시선 방향 축 길이
-        let depth: number | null = null;
-        if (build) {
-          const ax = DEPTH_AXIS[v];
-          depth = build.bbox[1][ax] - build.bbox[0][ax];
-        } else if (p.mode === "auto") depth = p.thickness;
+        // 구멍 깊이 = 지정한 깊이, 없으면 그 뷰의 시선 방향 두께
+        const depth: number | null = h.depth !== undefined ? Math.min(h.depth, extent ?? h.depth) : extent;
+        const spec = h.spec;
+        if (spec?.head === "counterbore") {
+          if (!spec.cbDiameter || spec.cbDiameter <= d)
+            add({
+              id: `cb-dia:${v}:${h.id}`,
+              severity: "error",
+              category: "구멍",
+              title: "카운터보어 지름이 구멍보다 작음",
+              detail: `자리 지름 Ø${f2(spec.cbDiameter ?? 0)}가 구멍 Ø${f2(d)}보다 커야 볼트 머리가 들어갑니다.`,
+              suggestion: spec.size ? `${spec.size} 표준값으로 바꾸려면 나사 규격을 다시 고르세요.` : "자리 지름을 키우세요.",
+              refs: [ref(h, [h.cx, h.cy])],
+            });
+          if (spec.cbDepth && extent !== null && spec.cbDepth >= extent - 1e-6)
+            add({
+              id: `cb-depth:${v}:${h.id}`,
+              severity: "error",
+              category: "구멍",
+              title: "카운터보어가 부품을 뚫고 나감",
+              detail: `자리 깊이 ${f2(spec.cbDepth)}mm가 두께 ${f2(extent)}mm 이상입니다. 볼트가 걸릴 곳이 없습니다.`,
+              suggestion: "자리 깊이를 줄이거나 부품을 두껍게 하세요.",
+              refs: [ref(h, [h.cx, h.cy])],
+            });
+        }
+        if (spec?.head === "countersink" && (!spec.csDiameter || spec.csDiameter <= d))
+          add({
+            id: `cs-dia:${v}:${h.id}`,
+            severity: "error",
+            category: "구멍",
+            title: "카운터싱크 지름이 구멍보다 작음",
+            detail: `바깥 지름 Ø${f2(spec.csDiameter ?? 0)}가 구멍 Ø${f2(d)}보다 커야 합니다.`,
+            suggestion: "바깥 지름을 키우세요.",
+            refs: [ref(h, [h.cx, h.cy])],
+          });
+        if (spec?.purpose === "tap" && h.depth !== undefined) {
+          const nominal = parseFloat(spec.size.replace("M", ""));
+          if (nominal && h.depth < nominal * 1.5)
+            add({
+              id: `tap-engage:${v}:${h.id}`,
+              severity: "info",
+              category: "구멍",
+              title: `나사 깊이가 얕음 (${f2(h.depth)}mm < ${f2(nominal * 1.5)}mm)`,
+              detail: `${spec.size} 탭은 보통 호칭 지름의 1.5배 이상 물려야 충분히 조여집니다 (강철 기준, 알루미늄은 2배).`,
+              suggestion: `깊이를 ${f2(nominal * 1.5)}mm 이상으로 하세요.`,
+              refs: [ref(h, [h.cx, h.cy])],
+            });
+        }
         if (rules.maxDepthRatio && depth && depth / d > rules.maxDepthRatio)
           add({
             id: `hole-deep:${v}:${h.id}`,
@@ -312,7 +388,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             suggestion: `Ø${f2(p.thickness)} 이상으로 키우거나 후가공(드릴)을 지정하세요.`,
             refs: [ref(h, [h.cx, h.cy])],
           });
-        if (Math.abs(d * 10 - Math.round(d * 10)) > 1e-6)
+        if ((!spec || spec.purpose === "custom") && Math.abs(d * 10 - Math.round(d * 10)) > 1e-6)
           add({
             id: `hole-std:${v}:${h.id}`,
             severity: "info",
@@ -337,6 +413,21 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             refs: [ref(h, sharp[0])],
           });
       }
+      // 깊고 좁은 포켓: 엔드밀 길이 한계
+      if (h.kind !== "circle" && h.depth !== undefined && rules.maxPocketRatio) {
+        const narrow = h.kind === "slot" ? h.w : Math.min(normRectOrBox(h).w, normRectOrBox(h).h);
+        const dep = Math.min(h.depth, extent ?? h.depth);
+        if (narrow > 0 && dep / narrow > rules.maxPocketRatio)
+          add({
+            id: `pocket-deep:${v}:${h.id}`,
+            severity: "warning",
+            category: "가공성",
+            title: `깊고 좁은 포켓 (깊이/폭 = ${f2(dep / narrow)})`,
+            detail: `폭 ${f2(narrow)}mm에 깊이 ${f2(dep)}mm입니다. 엔드밀은 보통 지름의 ${rules.maxPocketRatio}배보다 깊게 깎기 어렵습니다.`,
+            suggestion: "포켓을 넓히거나 얕게 하세요.",
+            refs: [ref(h, shapeCenter(h))],
+          });
+      }
     }
 
     // 5) 구멍끼리 간격/겹침
@@ -346,10 +437,12 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
       if (rules.edgeVsThickness) m = Math.max(m, p.thickness * rules.edgeVsThickness);
       return m;
     };
+    // 몸체가 없는 뷰(옆으로 뚫는 구멍)도 구멍끼리 간격은 본다. 단, 깊이가 다르면 겹쳐도 의도일 수 있다
     for (let i = 0; i < holes.length; i++)
       for (let j = i + 1; j < holes.length; j++) {
-        const a = holes[i];
-        const b = holes[j];
+        if ((holes[i].depth ?? -1) !== (holes[j].depth ?? -1)) continue;
+        const a = footprint(holes[i]);
+        const b = footprint(holes[j]);
         let gap: number;
         let at: Pt;
         if (a.kind === "circle" && b.kind === "circle") {
@@ -375,7 +468,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             title: "구멍끼리 겹침",
             detail: `${VIEW_LABEL[v]}의 ${shapeName(a)}과 ${shapeName(b)}이 겹쳐 하나의 이상한 모양 구멍이 됩니다.`,
             suggestion: "의도한 장공(긴 구멍)이라면 하나의 도형으로 그리고, 아니면 간격을 띄우세요.",
-            refs: [ref(a, at), ref(b)],
+            refs: [ref(holes[i], at), ref(holes[j])],
           });
         else if (gap < minGap(a, b) - 1e-6)
           add({
@@ -385,7 +478,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             title: `구멍 사이 벽이 ${f2(gap)}mm로 얇음`,
             detail: `${VIEW_LABEL[v]}의 두 구멍 사이 벽이 권장 ${f2(minGap(a, b))}mm(최소 벽 ${rules.minWall}mm, 원형 구멍은 작은 지름의 0.5배 이상)보다 얇아 가공 중 찢어지거나 변형되기 쉽습니다.`,
             suggestion: "구멍 간격을 넓히세요.",
-            refs: [ref(a, at), ref(b)],
+            refs: [ref(holes[i], at), ref(holes[j])],
           });
       }
 
@@ -410,6 +503,17 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
   }
 
   if (p.mode === "revolve") {
+    const ignored = (["top", "side"] as ViewId[]).flatMap((v) => p.views[v].filter((s) => !s.hole).map((s) => ({ v, s })));
+    if (ignored.length)
+      add({
+        id: "revolve-ignored",
+        severity: "info",
+        category: "형상",
+        title: "회전체 모드: 평면도·우측면도의 몸체는 쓰지 않음",
+        detail: "회전체는 정면도 단면으로 만들고, 다른 뷰에서는 구멍만 반영합니다.",
+        suggestion: "몸체 도형을 지우거나 ‘구멍’으로 바꾸세요.",
+        refs: ignored.map(({ v, s }) => ({ view: v, shapeId: s.id })),
+      });
     const left = p.views.front.filter((s) => !isDegenerate(s) && (boundsOf([{ ...s, hole: false }]) ?? [0])[0] < -1e-6);
     if (left.length)
       add({
@@ -425,6 +529,13 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
 
   const order = { error: 0, warning: 1, info: 2 };
   return out.sort((a, b) => order[a.severity] - order[b.severity]);
+}
+
+/** 머리 자리까지 포함한 구멍의 바깥 모양 */
+function footprint(h: Shape2D): Shape2D {
+  if (h.kind !== "circle" || !h.spec) return h;
+  const od = outerDiameter(h.r * 2, h.spec);
+  return od > h.r * 2 ? { ...h, r: od / 2 } : h;
 }
 
 function normRectOrBox(s: Shape2D) {

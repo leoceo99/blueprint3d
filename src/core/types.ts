@@ -20,6 +20,29 @@ interface ShapeBase {
   id: string;
   /** true면 구멍(빼기), false면 몸체(더하기) */
   hole: boolean;
+  /**
+   * 구멍일 때만: 그 뷰에서 보이는 가장 바깥 면부터 파 들어가는 깊이 (mm).
+   * 없으면 끝까지 관통. (정면도는 앞면, 평면도는 윗면, 우측면도는 오른쪽 면부터)
+   */
+  depth?: number;
+}
+
+/** 구멍 도구로 만든 원형 구멍의 규격 */
+export interface HoleSpec {
+  /** 나사 호칭 (예: "M4"). purpose가 custom이면 무시 */
+  size: string;
+  /** 볼트 관통(정밀·보통·거침), 탭(나사), 직접 지정 */
+  purpose: "clearance-close" | "clearance-normal" | "clearance-loose" | "tap" | "custom";
+  /** 볼트 머리 자리 */
+  head: "none" | "counterbore" | "countersink";
+  /** 카운터보어 지름·깊이 */
+  cbDiameter?: number;
+  cbDepth?: number;
+  /** 카운터싱크 바깥 지름과 각도 (기본 90°) */
+  csDiameter?: number;
+  csAngle?: number;
+  /** 막힌 구멍 바닥을 드릴 끝 모양(118°)으로 */
+  drillPoint?: boolean;
 }
 
 /** 꼭짓점 처리: 모서리 R(둥글게) 또는 모따기 */
@@ -44,6 +67,8 @@ export interface CircleShape extends ShapeBase {
   cx: number;
   cy: number;
   r: number;
+  /** 구멍 도구로 만든 규격 구멍이면 그 정보 */
+  spec?: HoleSpec;
 }
 
 export interface PolyShape extends ShapeBase {

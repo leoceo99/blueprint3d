@@ -24,6 +24,8 @@
   --ok: #1a7f37;
   --sheet-bg: #dfe4ea;
   --shadow: 0 8px 28px rgba(15, 23, 32, 0.18);
+  --blind-fill: rgba(194, 65, 12, 0.12);
+  --result-line: #7b8ba0;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -52,6 +54,8 @@
     --ok: #3fb950;
     --sheet-bg: #0a1017;
     --shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+    --blind-fill: rgba(251, 146, 60, 0.16);
+    --result-line: #6f8399;
     color-scheme: dark;
   }
 }
@@ -61,7 +65,7 @@
   --canvas-bg: #111a23; --grid-minor: #16212c; --grid-major: #1f2d3b; --axis: #4d6075; --guide: #cf8a22;
   --snap: #f06595; --solid-fill: rgba(76, 141, 255, 0.17); --solid-stroke: #a7c2e6; --hole-stroke: #fb923c;
   --sev-error: #ff6b6b; --sev-warning: #f2b33d; --sev-info: #7c9cff; --ok: #3fb950; --sheet-bg: #0a1017;
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.5); color-scheme: dark;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.5); --blind-fill: rgba(251, 146, 60, 0.16); --result-line: #6f8399; color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -197,6 +201,7 @@ kbd {
 .tree-item.sel { background: var(--accent-soft); border-left-color: var(--accent); }
 .tree-item .ic { width: 14px; height: 14px; flex: none; color: var(--solid-stroke); }
 .tree-item.hole .ic { color: var(--hole-stroke); }
+.tree-item .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tree-item .badge { margin-left: auto; font-size: 10px; padding: 0 5px; border-radius: 8px; background: var(--surface-3); color: var(--text-muted); }
 .tree-item .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .tree-empty { padding: 2px 12px 6px 26px; color: var(--text-muted); font-size: 12px; }
@@ -251,6 +256,8 @@ kbd {
 .props-body .inline { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .props-body .inline input[type="number"] { width: 56px; min-height: 26px; padding: 2px 4px; }
 .props-body .inline .muted { font-size: 11px; }
+.props-body label.check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.props-body select { width: 100%; }
 .props-body .section-title { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); font-size: 11px; font-weight: 700; color: var(--text-muted); }
 .stat { font-variant-numeric: tabular-nums; }
 

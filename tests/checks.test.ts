@@ -83,6 +83,56 @@ describe("규칙 기반 설계 검사", () => {
     expect(f.title).toContain("0.5mm");
   });
 
+  it("카운터보어: 자리 지름이 구멍보다 작거나 너무 깊으면 오류", () => {
+    const p = emptyProject();
+    p.thickness = 6;
+    p.views.top = [rect("a", 0, 0, 50, 50), { id: "h", kind: "circle", cx: 25, cy: 25, r: 2.75, hole: true, spec: { size: "M5", purpose: "clearance-normal", head: "counterbore", cbDiameter: 4, cbDepth: 7 } }];
+    const c = codes(p);
+    expect(c).toContain("cb-dia");
+    expect(c).toContain("cb-depth");
+  });
+
+  it("머리 자리까지 포함해서 가장자리 거리를 잰다", () => {
+    const p = emptyProject();
+    // 구멍 Ø5.5는 가장자리에서 3.25mm 떨어져 괜찮지만, 카운터보어 Ø9.5는 1.25mm만 남는다
+    const hole = { id: "h", kind: "circle" as const, cx: 6, cy: 25, r: 2.75, hole: true };
+    p.views.top = [rect("a", 0, 0, 50, 50), hole];
+    expect(codes(p)).not.toContain("hole-edge");
+    p.views.top[1] = { ...hole, spec: { size: "M5", purpose: "clearance-normal", head: "counterbore", cbDiameter: 9.5, cbDepth: 5.4 } };
+    expect(codes(p)).toContain("hole-edge");
+  });
+
+  it("가장자리에 걸친 포켓은 노치 경고가 아니라 단차 안내", () => {
+    const p = emptyProject();
+    p.views.top = [rect("a", 0, 0, 50, 50), { ...rect("k", -5, -5, 20, 60, true), depth: 3 }];
+    const c = codes(p);
+    expect(c).toContain("hole-step");
+    expect(c).not.toContain("hole-cross");
+  });
+
+  it("깊고 좁은 포켓, 얕은 탭, 두께 이상 깊이", () => {
+    const p = emptyProject();
+    p.thickness = 30;
+    p.views.top = [
+      rect("a", 0, 0, 60, 60),
+      { ...rect("k", 10, 10, 4, 30, true), depth: 20 },
+      { id: "t", kind: "circle", cx: 40, cy: 20, r: 3.3 / 2, hole: true, depth: 4, spec: { size: "M4", purpose: "tap", head: "none" } },
+      { id: "d", kind: "circle", cx: 40, cy: 45, r: 3, hole: true, depth: 40 },
+    ];
+    const c = codes(p);
+    expect(c).toContain("pocket-deep");
+    expect(c).toContain("tap-engage");
+    expect(c).toContain("depth-through");
+    expect(c).not.toContain("hole-std"); // 규격 탭 Ø3.3은 표준이라 안내하지 않음
+  });
+
+  it("몸체 없는 뷰의 구멍은 '몸체 밖' 오류를 내지 않는다", () => {
+    const p = emptyProject();
+    p.views.top = [rect("a", 0, 0, 50, 50)];
+    p.views.side = [circle("x", 25, 5, 2)];
+    expect(codes(p)).not.toContain("hole-out");
+  });
+
   it("제조 방식에 따라 기준이 달라진다 (판금: 구멍 ≥ 두께)", () => {
     const p = emptyProject();
     p.thickness = 4;

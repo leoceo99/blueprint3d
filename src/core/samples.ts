@@ -23,7 +23,7 @@ export const SAMPLES: Project[] = [
   },
   {
     version: 1,
-    name: "플랜지 (회전)",
+    name: "플랜지 (회전체 + 볼트 구멍)",
     mode: "revolve",
     thickness: 10,
     views: {
@@ -31,7 +31,16 @@ export const SAMPLES: Project[] = [
         { id: "f1", kind: "rect", hole: false, x: 8, y: 0, w: 32, h: 8 },
         { id: "f2", kind: "rect", hole: false, x: 8, y: 0, w: 12, h: 30 },
       ],
-      top: [],
+      // 평면도에는 구멍만: 볼트 원 지름 60에 M6 관통 구멍 6개
+      top: Array.from({ length: 6 }, (_, i) => ({
+        id: `b${i}`,
+        kind: "circle" as const,
+        hole: true,
+        cx: Math.round(30 * Math.cos((i * Math.PI) / 3) * 1e4) / 1e4,
+        cy: Math.round(30 * Math.sin((i * Math.PI) / 3) * 1e4) / 1e4,
+        r: 3.3,
+        spec: { size: "M6", purpose: "clearance-normal" as const, head: "none" as const },
+      })),
       side: [],
     },
   },
@@ -73,6 +82,24 @@ export const SAMPLES: Project[] = [
         { id: "m10", kind: "circle", hole: true, cx: 7, cy: 53, r: 2.25 },
       ],
       side: [],
+    },
+  },
+  {
+    version: 1,
+    name: "가이드 블록 (깊이·카운터보어·가로 탭)",
+    mode: "auto",
+    process: "cnc",
+    thickness: 10,
+    views: {
+      front: [{ id: "g1", kind: "rect", hole: false, x: 0, y: 0, w: 80, h: 25 }],
+      top: [
+        { id: "g2", kind: "rect", hole: false, x: 0, y: 0, w: 80, h: 40 },
+        { id: "g3", kind: "circle", hole: true, cx: 12, cy: 20, r: 3.3, spec: { size: "M6", purpose: "clearance-normal", head: "counterbore", cbDiameter: 11, cbDepth: 6.5 } },
+        { id: "g4", kind: "circle", hole: true, cx: 68, cy: 20, r: 3.3, spec: { size: "M6", purpose: "clearance-normal", head: "counterbore", cbDiameter: 11, cbDepth: 6.5 } },
+        { id: "g5", kind: "rect", hole: true, x: 25, y: 10, w: 30, h: 20, depth: 8, corners: [0, 1, 2, 3].map(() => ({ kind: "fillet" as const, size: 3 })) },
+      ],
+      // 오른쪽 면에서 M5 탭 깊이 12
+      side: [{ id: "g6", kind: "circle", hole: true, cx: 20, cy: 12.5, r: 2.1, depth: 12, spec: { size: "M5", purpose: "tap", head: "none", drillPoint: true } }],
     },
   },
 ];
