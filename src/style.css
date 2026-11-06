@@ -434,9 +434,70 @@ label.block input { width: 100%; font-weight: 400; }
 .rv-dtitle { cursor: pointer; }
 .rv-foot { padding: 10px 14px; }
 
+/* ---------- 내 프로젝트 · 버전 기록 창 ---------- */
+.md-back { position: fixed; inset: 0; z-index: 70; background: rgba(0, 0, 0, 0.35); display: flex; align-items: center; justify-content: center; outline: none; }
+.md-back[hidden] { display: none; }
+.md-card { width: 560px; max-width: calc(100vw - 32px); max-height: calc(100vh - 48px); display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
+.md-card.wide { width: 920px; }
+.md-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.md-title { font-size: 14px; }
+.md-body { padding: 12px 14px; overflow: auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.lib-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lib-bar input[type="search"] { width: 180px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.seg-btn { border: none; border-radius: 0; background: var(--surface); min-height: 26px; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.lib-card { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); overflow: hidden; cursor: pointer; }
+.lib-card:hover { border-color: var(--accent); }
+.lib-card.cur { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.lib-thumb { aspect-ratio: 4 / 3; background: var(--canvas-bg); display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); overflow: hidden; }
+.lib-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-thumb.small { width: 96px; flex: none; border: 1px solid var(--border); border-radius: 6px; }
+.lib-noimg { font-size: 30px; color: var(--border); }
+.lib-info { display: flex; flex-direction: column; gap: 1px; padding: 7px 9px; min-width: 0; }
+.lib-info b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-actions { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 9px 8px; }
+.lib-actions button { min-height: 24px; padding: 0 8px; font-size: 12px; }
+button.danger { color: var(--sev-error); }
+.ver-list { display: flex; flex-direction: column; gap: 6px; }
+.ver-row { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 6px; background: var(--surface-2); }
+.ver-row .lib-info { flex: 1; padding: 0; }
+.ver-row .lib-actions { padding: 0; justify-content: flex-end; max-width: 330px; }
+.ver-tag { font-size: 11px; font-weight: 600; color: var(--text-muted); margin-left: 6px; }
+.ver-tag.manual { color: var(--accent); }
+
+/* ---------- 알림 (새 버전, 다른 탭, 저장 문제) ---------- */
+.notices { position: fixed; right: 14px; bottom: 40px; z-index: 90; display: flex; flex-direction: column; gap: 8px; max-width: 420px; }
+.notice { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 9px 10px 9px 12px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); border-left: 4px solid var(--accent); box-shadow: var(--shadow); }
+.notice.warn { border-left-color: var(--sev-warning); }
+.notice.err { border-left-color: var(--sev-error); }
+.notice span { flex: 1 1 220px; }
+.notice button { min-height: 26px; padding: 0 10px; }
+
+/* ---------- 상태 표시줄: 저장·오프라인 ---------- */
+.save-state { border: none; background: transparent; min-height: 20px; height: 20px; padding: 0 6px; font-size: 11px; color: var(--text-muted); }
+.save-state.err { color: var(--sev-error); font-weight: 600; }
+.net-state { font-size: 11px; font-weight: 700; color: var(--sev-warning); }
+.net-state[hidden] { display: none; }
+
+/* ---------- 실험 기능 ---------- */
+.exp-tag::after, .exp-after::after {
+  content: "실험"; font-style: normal; font-size: 10px; font-weight: 700; padding: 0 5px; border-radius: 8px;
+  background: var(--sev-warning); color: #fff; margin-left: 6px; vertical-align: 1px;
+}
+.no-exp .exp { display: none !important; }
+.set-sec { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.set-sec:first-of-type { border-top: none; padding-top: 0; margin-top: 0; }
+.set-sec .note { margin: 0; }
+.set-title { font-weight: 700; }
+label.check { display: flex; align-items: center; gap: 6px; font-weight: 600; cursor: pointer; }
+
 @media print {
   html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; background: #fff !important; }
   body > *:not(#ws-sheet) { display: none !important; }
+  .notices, .md-back { display: none !important; }
   #ws-sheet { display: block !important; height: auto !important; }
   .sheet-toolbar, .sheet-settings { display: none !important; }
   .sheet-body { display: block; }

@@ -1,0 +1,20 @@
+{
+  "name": "도면3D — 2D 도면으로 3D 부품 설계",
+  "short_name": "도면3D",
+  "description": "2D 3면도를 그리면 3D가 만들어지고, 3D에서 도면을 뽑는 노트북용 CAD",
+  "lang": "ko",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f9",
+  "theme_color": "#1d4ed8",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "file_handlers": [
+    { "action": "./", "accept": { "application/json": [".json"], "model/step": [".step", ".stp"], "model/stl": [".stl"] } }
+  ]
+}

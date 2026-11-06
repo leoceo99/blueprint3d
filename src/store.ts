@@ -6,9 +6,15 @@ const KEY = "blueprint3d.project.v1";
 
 type Listener = () => void;
 
+const restored = load();
+
 /** 프로젝트 상태 + 실행 취소/다시 실행 + 자동 저장 */
 class Store {
-  project: Project = load() ?? emptyProject();
+  project: Project = restored?.project ?? emptyProject();
+  /** 보관함(IndexedDB)에서 이 프로젝트의 id. 빈 문자열이면 아직 정해지지 않음 */
+  projectId = restored?.id ?? "";
+  /** 시작할 때 브라우저에 저장된 작업이 있었는지 */
+  readonly restored = !!restored;
   /** 바뀔 때마다 1씩 증가 (화면 갱신 판단용) */
   version = 0;
   private undoStack: string[] = [];
@@ -45,7 +51,7 @@ class Store {
     // 변수·식에 묶인 치수를 다시 계산 (묶인 치수는 끌어도 원래 값으로 돌아감 = 잠금)
     applyExpressions(this.project);
     this.version++;
-    save(this.project);
+    save(this.project, this.projectId);
     this.listeners.forEach((l) => l());
   }
 
@@ -57,6 +63,14 @@ class Store {
 
   replace(p: Project) {
     this.checkpoint();
+    this.project = structuredClone(p);
+    this.changed();
+  }
+
+  /** 다른 프로젝트로 바꾸기: 실행 취소 기록도 새로 시작 */
+  reset(p: Project) {
+    this.undoStack = [];
+    this.redoStack = [];
     this.project = structuredClone(p);
     this.changed();
   }
@@ -84,26 +98,43 @@ class Store {
     return this.redoStack.length > 0;
   }
 
+  /** 지금 상태를 브라우저(localStorage)에 바로 저장 */
+  saveNow() {
+    save(this.project, this.projectId);
+  }
+
   shapes(view: ViewId): Shape2D[] {
     return this.project.views[view];
   }
 }
 
-function load(): Project | null {
+/** 마지막으로 고친 프로젝트 (모든 탭이 같은 곳에 쓰므로 어느 프로젝트인지 _id로 함께 적는다) */
+function load(): { project: Project; id: string } | null {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
-    return normalizeProject(JSON.parse(raw));
+    const j = JSON.parse(raw);
+    const project = normalizeProject(j);
+    if (!project) return null;
+    delete (project as Project & { _id?: string })._id;
+    return { project, id: typeof j?._id === "string" ? j._id : "" };
   } catch {
     return null;
   }
 }
 
-function save(p: Project) {
+/** 자동 저장 실패를 알릴 곳 (저장 공간 부족 등) */
+export let onSaveError: ((e: unknown) => void) | null = null;
+export function setSaveErrorHandler(fn: (e: unknown) => void) {
+  onSaveError = fn;
+}
+
+function save(p: Project, id: string) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(p));
-  } catch {
-    /* 저장소를 쓸 수 없는 환경이면 무시 */
+    localStorage.setItem(KEY, JSON.stringify(id ? { ...p, _id: id } : p));
+  } catch (e) {
+    // 보관함(IndexedDB)에는 따로 저장되므로 작업이 사라지지는 않는다
+    onSaveError?.(e);
   }
 }
 

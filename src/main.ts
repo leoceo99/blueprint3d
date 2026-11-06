@@ -24,9 +24,14 @@ import { pickTextFile, safeName, saveFile } from "./files";
 import { normalizeProject } from "./core/project";
 import { ImportDialog } from "./ui/importDialog";
 import { ReviewDialog } from "./ui/reviewDialog";
-import { getUnderlayData, onUnderlayReady, putUnderlay } from "./underlay";
+import { loadUnderlay, onUnderlayReady, putUnderlay } from "./underlay";
 import { getFile, putFile } from "./fileStore";
-import { newId, store } from "./store";
+import { fromBase64, listProjects, toBase64 } from "./library";
+import { Session } from "./session";
+import { initTabs } from "./tabs";
+import { setupPWA } from "./pwa";
+import { ProjectsDialog, VersionsDialog } from "./ui/libraryDialogs";
+import { newId, setSaveErrorHandler, store } from "./store";
 import { DraftBoard } from "./ui/board";
 import { fmt, refreshColors, shapeLabel } from "./ui/sketch";
 import { ui, type HoleSettings, type Tool } from "./ui/state";
@@ -204,6 +209,7 @@ gridSel.onchange = () => {
   ui.emit();
 };
 nameInput.onchange = () => store.update((p) => (p.name = nameInput.value.trim() || "새 부품"));
+nameInput.onkeydown = (e) => e.key === "Enter" && nameInput.blur();
 
 function renderRibbon() {
   const p = store.project;
@@ -973,6 +979,8 @@ const settings = $<HTMLDialogElement>("#settings");
 $("#aiModel").textContent = AI_MODEL;
 function openSettings() {
   $<HTMLInputElement>("#apiKey").value = getApiKey();
+  $<HTMLInputElement>("#showExp").checked = expOn();
+  void showStorage();
   settings.showModal();
 }
 $("#settingsBtn").onclick = openSettings;
@@ -1115,6 +1123,7 @@ async function runBuild() {
 
 function finishBuild() {
   buildStamp++;
+  if (lastBuild) scheduleThumb();
   const ov = $("#buildOverlay");
   ov.hidden = !buildError;
   ov.textContent = buildError ?? "";
@@ -1214,10 +1223,10 @@ document.addEventListener("click", (e) => {
 for (const s of SAMPLES) {
   const b = document.createElement("button");
   b.textContent = s.name;
-  b.onclick = () => loadProject(structuredClone(s));
+  b.onclick = () => openNew(structuredClone(s));
   $("#samples").appendChild(b);
 }
-fileMenu.querySelector<HTMLButtonElement>('[data-act="new"]')!.onclick = () => loadProject(emptyProject());
+fileMenu.querySelector<HTMLButtonElement>('[data-act="new"]')!.onclick = () => openNew(emptyProject());
 fileMenu.querySelector<HTMLButtonElement>('[data-act="open"]')!.onclick = openProject;
 fileMenu.querySelector<HTMLButtonElement>('[data-act="save"]')!.onclick = saveProject;
 fileMenu.querySelector<HTMLButtonElement>('[data-act="import3d"]')!.onclick = () => {
@@ -1239,7 +1248,7 @@ async function import3D(file: File) {
   const p = emptyProject();
   p.name = file.name.replace(/\.[^.]+$/, "") || "가져온 부품";
   p.source = { kind, name: file.name, key, turns: [0, 0, 0] };
-  loadProject(p);
+  openNew(p);
   showWorkspace("3d");
   toast(`${file.name}을(를) 읽는 중… 방향이 다르면 위쪽 ‘X ↻ Y ↻ Z ↻’로 돌리세요. 도면은 ‘도면 출력’(3)에서.`);
 }
@@ -1261,29 +1270,32 @@ $$<HTMLButtonElement>("[data-turn]").forEach(
         p.source.turns = t;
       })),
 );
-$("#sourceClose").onclick = () => store.update((p) => delete p.source);
+$("#sourceClose").onclick = async () => {
+  await session.snapshot("3D 파일 닫기 전");
+  store.update((p) => delete p.source);
+};
 
 fileMenu.querySelector<HTMLButtonElement>('[data-act="import"]')!.onclick = () => {
   fileMenu.hidden = true;
-  importDlg.pickFile();
+  if (needExp()) importDlg.pickFile();
 };
 
 // ---------------- 도면 이미지 가져오기 ----------------
 const reviewDlg = new ReviewDialog({
   onDraft: (p) => {
-    loadProject(p);
+    openNew(p);
     showWorkspace("3d");
-    toast("AI가 읽은 치수로 3D 초안을 만들었어요. 틀린 곳은 2D 설계(1)에서 고치세요. Ctrl+Z로 되돌릴 수 있어요.");
+    toast("AI가 읽은 치수로 3D 초안을 새 프로젝트로 만들었어요. 틀린 곳은 2D 설계(1)에서 고치세요. 앞의 프로젝트는 ‘내 프로젝트’에 그대로 있어요.");
   },
   openSettings: () => openSettings(),
 });
 const importDlg = new ImportDialog(
   ({ project, underlay }) => {
     if (underlay) putUnderlay(underlay.meta.key, underlay.dataUrl);
-    loadProject(project);
+    openNew(project);
     showWorkspace("design");
     const n = VIEW_IDS.filter((v) => project.views[v].length).length;
-    toast(`도면을 가져왔어요 (뷰 ${n}개). 3D 보기(2)로 확인하고, 다른 곳은 속성 패널에서 고치세요. Ctrl+Z로 되돌릴 수 있어요.`);
+    toast(`도면을 새 프로젝트로 가져왔어요 (뷰 ${n}개). 3D 보기(2)로 확인하고, 다른 곳은 속성 패널에서 고치세요.`);
   },
   (file) => {
     importDlg.close();
@@ -1292,7 +1304,7 @@ const importDlg = new ImportDialog(
 );
 fileMenu.querySelector<HTMLButtonElement>('[data-act="review"]')!.onclick = () => {
   fileMenu.hidden = true;
-  reviewDlg.open();
+  if (needExp()) reviewDlg.open();
 };
 const isImage = (f: File) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|bmp|gif|pdf)$/i.test(f.name) || f.type === "application/pdf";
 window.addEventListener("dragover", (e) => {
@@ -1303,21 +1315,21 @@ window.addEventListener("drop", (e) => {
   const f = all[0];
   if (!f) return;
   e.preventDefault();
-  if (reviewDlg.isOpen || importDlg.isOpen) return;
+  if (reviewDlg.isOpen || importDlg.isOpen || projectsDlg.isOpen || versionsDlg.isOpen) return;
   // 그림 여러 장 → 도면 검토
-  if (all.length > 1 && all.every(isImage)) return void reviewDlg.open(all);
-  if (isImage(f)) importDlg.open(f);
+  if (all.length > 1 && all.every(isImage)) return void (needExp() && reviewDlg.open(all));
+  if (isImage(f)) needExp() && importDlg.open(f);
   else if (is3D(f)) import3D(f);
   else if (/\.json$/i.test(f.name)) f.text().then(openProjectText);
   else toast("이미지(PNG·JPG)·PDF, 3D 파일(STEP·STL), 프로젝트 파일(.json)을 놓아 주세요.");
 });
 window.addEventListener("paste", (e) => {
-  if (isTyping() || importDlg.isOpen || reviewDlg.isOpen) return;
+  if (isTyping() || importDlg.isOpen || reviewDlg.isOpen || projectsDlg.isOpen || versionsDlg.isOpen) return;
   const item = [...(e.clipboardData?.items ?? [])].find((i) => i.kind === "file" && i.type.startsWith("image/"));
   const f = item?.getAsFile();
   if (f) {
     e.preventDefault();
-    importDlg.open(new File([f], "붙여넣은 이미지.png", { type: f.type }));
+    if (needExp()) importDlg.open(new File([f], "붙여넣은 이미지.png", { type: f.type }));
   }
 });
 
@@ -1337,8 +1349,8 @@ function openProjectText(text: string) {
     const p = normalizeProject(raw);
     if (!p) throw new Error();
     if (p.underlay && typeof data === "string" && data.startsWith("data:image/")) putUnderlay(p.underlay.key, data);
-    if (p.source && typeof model === "string") putFile(p.source.key, fromBase64(model)).then(() => loadProject(p));
-    else loadProject(p);
+    if (p.source && typeof model === "string") putFile(p.source.key, fromBase64(model)).then(() => openNew(p));
+    else openNew(p);
   } catch {
     toast("프로젝트 파일을 읽을 수 없습니다.");
   }
@@ -1347,7 +1359,7 @@ async function saveProject() {
   fileMenu.hidden = true;
   // 밑그림 이미지와 가져온 3D 파일도 프로젝트 파일에 넣어 다른 컴퓨터에서도 열리게
   const p = store.project;
-  const data = p.underlay ? getUnderlayData(p.underlay.key) : null;
+  const data = p.underlay ? await loadUnderlay(p.underlay.key) : null;
   let out: Record<string, unknown> = data && p.underlay ? { ...p, underlay: { ...p.underlay, data } } : { ...p };
   if (p.source) {
     const bytes = await getFile(p.source.key);
@@ -1355,34 +1367,48 @@ async function saveProject() {
   }
   saveFile(`${base()}.blueprint3d.json`, JSON.stringify(out, null, 2), "application/json", "json");
 }
-function toBase64(buf: ArrayBuffer): string {
-  const b = new Uint8Array(buf);
-  let s = "";
-  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
-  return btoa(s);
-}
-function fromBase64(s: string): ArrayBuffer {
-  const bin = atob(s);
-  const b = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
-  return b.buffer;
-}
-function loadProject(p: Project) {
+/** 새 프로젝트로 열기 — 지금 프로젝트는 ‘내 프로젝트’에 그대로 남는다 */
+function openNew(p: Project) {
   fileMenu.hidden = true;
-  ai = null;
-  ui.sel = null;
-  store.replace(p);
-  fitAll();
+  commitTyping();
+  session.openAsNew(p).catch(warnStorage);
+}
+async function openFromLibrary(id: string) {
+  commitTyping();
+  try {
+    await session.open(id);
+  } catch (e) {
+    toast(errText(e) || "프로젝트를 열 수 없습니다.");
+  }
 }
 
 // ---------------- 단축키 ----------------
+/** 입력 중인 칸이 있으면 먼저 반영 (프로젝트를 바꾸기 전에) */
+function commitTyping() {
+  if (isTyping()) (document.activeElement as HTMLElement).blur();
+}
 function isTyping() {
   const a = document.activeElement;
   return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
 }
 window.addEventListener("keydown", (e) => {
-  if (settings.open || importDlg.isOpen || reviewDlg.isOpen) return;
+  if (settings.open || importDlg.isOpen || reviewDlg.isOpen || projectsDlg.isOpen || versionsDlg.isOpen) return;
   const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.shiftKey && e.key.toLowerCase() === "o") {
+    e.preventDefault();
+    void projectsDlg.open();
+    return;
+  }
+  if (mod && e.shiftKey && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    void versionsDlg.saveNow();
+    return;
+  }
+  if (mod && e.altKey && e.key.toLowerCase() === "n") {
+    e.preventDefault();
+    openNew(emptyProject());
+    return;
+  }
   if (mod && e.key.toLowerCase() === "s") {
     e.preventDefault();
     saveProject();
@@ -1390,7 +1416,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (mod && e.key.toLowerCase() === "i") {
     e.preventDefault();
-    importDlg.pickFile();
+    if (needExp()) importDlg.pickFile();
     return;
   }
   if (mod && e.key.toLowerCase() === "o") {
@@ -1418,11 +1444,6 @@ window.addEventListener("keydown", (e) => {
   if (mod && e.key.toLowerCase() === "d") {
     e.preventDefault();
     duplicateSelected();
-    return;
-  }
-  if (mod && e.altKey && e.key.toLowerCase() === "n") {
-    e.preventDefault();
-    loadProject(emptyProject());
     return;
   }
   if (mod || e.altKey) return;
@@ -1500,8 +1521,254 @@ function toast(msg: string) {
   toastTimer = window.setTimeout(() => (t.hidden = true), 2800);
 }
 
+// ---------------- 알림 (오래 남는 것: 새 버전, 다른 탭, 저장 문제) ----------------
+type NoticeAction = { label: string; run: () => unknown };
+function notice(text: string, actions: NoticeAction[] = [], kind: "info" | "warn" | "err" = "info", key?: string) {
+  const host = $("#notices");
+  if (key) closeNotice(key);
+  const el = document.createElement("div");
+  el.className = `notice ${kind}`;
+  if (key) el.dataset.key = key;
+  const span = document.createElement("span");
+  span.textContent = text;
+  el.append(span);
+  for (const a of actions) {
+    const b = document.createElement("button");
+    b.textContent = a.label;
+    b.onclick = () => {
+      el.remove();
+      void a.run();
+    };
+    el.append(b);
+  }
+  const x = document.createElement("button");
+  x.className = "ghost";
+  x.textContent = "✕";
+  x.title = "닫기";
+  x.onclick = () => el.remove();
+  el.append(x);
+  host.append(el);
+}
+function closeNotice(key: string) {
+  $("#notices").querySelector(`[data-key="${key}"]`)?.remove();
+}
+const errText = (e: unknown) => (e instanceof Error ? e.message : typeof e === "string" ? e : "");
+const isQuota = (e: unknown) => e instanceof DOMException && (e.name === "QuotaExceededError" || e.name === "NS_ERROR_DOM_QUOTA_REACHED");
+
+// ---------------- 실험 기능 (도면 이미지 인식·AI) ----------------
+const EXP_KEY = "blueprint3d.showExperimental";
+function expOn() {
+  try {
+    return localStorage.getItem(EXP_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+const applyExp = () => document.body.classList.toggle("no-exp", !expOn());
+/** 실험 기능을 쓰려 할 때: 꺼져 있으면 알려 주고 false */
+function needExp() {
+  if (expOn()) return true;
+  toast("도면 이미지 인식과 AI는 실험 기능이에요. 설정(⚙)에서 ‘실험 기능 보이기’를 켜면 쓸 수 있어요.");
+  return false;
+}
+const showExp = $<HTMLInputElement>("#showExp");
+showExp.onchange = () => {
+  try {
+    localStorage.setItem(EXP_KEY, showExp.checked ? "1" : "0");
+  } catch {
+    /* 무시 */
+  }
+  applyExp();
+};
+applyExp();
+
+// ---------------- 저장 공간 ----------------
+const mb = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(0.1, b / 1e6).toFixed(1)} MB`);
+async function showStorage() {
+  const info = $("#storageInfo");
+  const btn = $<HTMLButtonElement>("#persistBtn");
+  const st = navigator.storage;
+  const n = (await listProjects().catch(() => [])).filter((p) => !p.deletedAt).length;
+  if (!st?.estimate) {
+    info.textContent = `프로젝트 ${n}개. 이 브라우저는 저장 공간 크기를 알려 주지 않아요.`;
+    return;
+  }
+  const [{ usage = 0, quota = 0 }, persisted] = await Promise.all([st.estimate(), st.persisted ? st.persisted() : Promise.resolve(false)]);
+  info.textContent =
+    `프로젝트 ${n}개 · 쓰는 중 ${mb(usage)} / 쓸 수 있는 공간 ${mb(quota)} (3D 엔진 등 앱 파일 포함). ` +
+    (persisted ? "브라우저가 자동으로 지우지 않게 보호돼 있어요." : "공간이 모자라면 브라우저가 지울 수도 있어요 — 가끔 ‘내 프로젝트 → 전체 백업 내보내기’를 해 두세요.");
+  btn.hidden = persisted || !st.persist;
+}
+$("#persistBtn").onclick = async () => {
+  const ok = await navigator.storage.persist().catch(() => false);
+  toast(ok ? "저장 공간을 보호하도록 했어요." : "브라우저가 요청을 받아 주지 않았어요. 앱으로 설치하면 보통 보호돼요.");
+  void showStorage();
+};
+
+// ---------------- 내 프로젝트 · 버전 기록 · 자동 저장 ----------------
+const saveStateBtn = $<HTMLButtonElement>("#saveState");
+function setSaveState(st: "saving" | "saved" | "error") {
+  saveStateBtn.classList.toggle("err", st === "error");
+  saveStateBtn.textContent = st === "saving" ? "저장 중…" : st === "saved" ? "✓ 저장됨" : "⚠ 저장 실패";
+}
+let storageWarned = false;
+function warnStorage(e: unknown) {
+  console.error(e);
+  if (storageWarned) return;
+  storageWarned = true;
+  notice(
+    isQuota(e)
+      ? "브라우저 저장 공간이 가득 찼어요. 휴지통을 비우거나, 전체 백업을 내보낸 뒤 안 쓰는 프로젝트를 지워 주세요."
+      : `저장하다 문제가 생겼어요${errText(e) ? ` (${errText(e)})` : ""}. ‘파일로 저장’이나 전체 백업으로 작업을 지켜 두세요.`,
+    [
+      { label: "내 프로젝트", run: () => projectsDlg.open() },
+      { label: "파일로 저장", run: () => saveProject() },
+    ],
+    "err",
+    "storage",
+  );
+}
+setSaveErrorHandler(warnStorage);
+
+const tabs = initTabs({
+  currentId: () => store.projectId,
+  onDuplicate: () => notice("이 프로젝트가 다른 탭에서도 열려 있어요. 두 곳에서 고치면 나중에 저장한 쪽이 남아요.", [], "warn", "dup"),
+  onRemoteSaved: () =>
+    notice("다른 탭에서 이 프로젝트를 고쳤어요.", [{ label: "다시 불러오기", run: () => session.reload() }], "warn", "remote"),
+});
+const session = new Session({
+  onSwitched: () => {
+    ai = null;
+    ui.sel = null;
+    ui.activeView = VIEW_IDS.find((v) => store.project.views[v].length) ?? "front";
+    closeNotice("remote");
+    closeNotice("dup");
+    tabs.announce();
+    fitAll();
+    requestRender();
+  },
+  onSaved: () => tabs.saved(),
+  onState: setSaveState,
+  onError: warnStorage,
+});
+setSaveState("saved");
+tabs.announce();
+
+// 3D가 새로 만들어지면 썸네일 (보관함 카드·버전 기록에 쓰임)
+let thumbTimer = 0;
+function scheduleThumb() {
+  clearTimeout(thumbTimer);
+  const id = store.projectId;
+  const stamp = buildStamp;
+  thumbTimer = window.setTimeout(() => {
+    if (!lastBuild || store.projectId !== id || buildStamp !== stamp || document.visibilityState !== "visible") return;
+    const bg = getComputedStyle(document.documentElement).getPropertyValue("--canvas-bg").trim() || "#fbfcfd";
+    const url = viewer.snapshot(320, 240, "image/jpeg", 0.82, bg);
+    if (url) session.setThumbnail(url);
+  }, 1500);
+}
+
+const projectsDlg = new ProjectsDialog({
+  currentId: () => store.projectId,
+  open: openFromLibrary,
+  newProject: () => openNew(emptyProject()),
+  flush: () => session.flush(),
+  toast,
+  download: (name, text) => void saveFile(name, text, "application/json", "json"),
+  pickText: () => pickTextFile(".json,application/json"),
+  showVersions: (id) => void versionsDlg.open(id),
+  renameCurrent: (name) => store.update((p) => (p.name = name)),
+});
+const versionsDlg = new VersionsDialog({
+  currentId: () => store.projectId,
+  current: () => store.project,
+  restore: (p) => {
+    ai = null;
+    ui.sel = null;
+    store.replace(p);
+    fitAll();
+  },
+  openAsNew: openNew,
+  open: openFromLibrary,
+  flush: () => session.flush(),
+  thumb: () => session.thumb,
+  toast,
+});
+const act = (a: string) => fileMenu.querySelector<HTMLButtonElement>(`[data-act="${a}"]`)!;
+act("projects").onclick = () => {
+  fileMenu.hidden = true;
+  void projectsDlg.open();
+};
+act("versions").onclick = () => {
+  fileMenu.hidden = true;
+  void versionsDlg.open();
+};
+act("snapshot").onclick = () => {
+  fileMenu.hidden = true;
+  void versionsDlg.saveNow();
+};
+saveStateBtn.onclick = () => void versionsDlg.open();
+
+// ---------------- 앱으로 설치 · 오프라인 ----------------
+let installApp: (() => Promise<boolean>) | null = null;
+setupPWA({
+  onUpdate: (apply) =>
+    notice(
+      "새 버전이 준비됐어요.",
+      [
+        {
+          label: "지금 업데이트",
+          run: async () => {
+            await session.flush();
+            apply();
+          },
+        },
+      ],
+      "info",
+      "update",
+    ),
+  onOfflineReady: () => toast("이제 인터넷 없이도 쓸 수 있어요 (3D 엔진까지 이 컴퓨터에 저장됨)."),
+  onInstallable: (install) => {
+    installApp = install;
+    $("#installItem").hidden = false;
+  },
+  onInstalled: () => {
+    installApp = null;
+    $("#installItem").hidden = true;
+    toast("앱으로 설치했어요. 바탕화면이나 시작 메뉴에서 열 수 있어요.");
+  },
+});
+act("install").onclick = async () => {
+  fileMenu.hidden = true;
+  if (installApp && (await installApp())) $("#installItem").hidden = true;
+};
+const netState = $("#netState");
+const updateNet = () => (netState.hidden = navigator.onLine);
+window.addEventListener("online", updateNet);
+window.addEventListener("offline", updateNet);
+updateNet();
+
+// ---------------- 예상하지 못한 오류 ----------------
+let lastCrash = 0;
+function reportCrash(e: unknown) {
+  const m = errText(e) || String(e ?? "");
+  if (!m || /ResizeObserver loop|AbortError|aborted/i.test(m)) return;
+  console.error(e);
+  const now = Date.now();
+  if (now - lastCrash < 8000) return;
+  lastCrash = now;
+  notice(
+    `예상하지 못한 문제가 생겼어요: ${m.slice(0, 140)}. 작업은 자동 저장돼 있으니, 이상하면 새로 고침 하세요.`,
+    [{ label: "새로 고침", run: () => session.flush().then(() => location.reload()) }],
+    "err",
+    "crash",
+  );
+}
+window.addEventListener("error", (e) => reportCrash(e.error ?? e.message));
+window.addEventListener("unhandledrejection", (e) => reportCrash(e.reason));
+
 // ---------------- 시작 ----------------
-if (!VIEW_IDS.some((v) => store.project.views[v].length)) store.project = structuredClone(SAMPLES[0]);
+// 시작 프로젝트: 브라우저에 남은 작업 (처음이면 예제) — Session이 정함
 ui.activeView = VIEW_IDS.find((v) => store.project.views[v].length) ?? "front";
 updateFindings();
 requestAnimationFrame(() => {

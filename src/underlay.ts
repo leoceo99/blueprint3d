@@ -1,11 +1,13 @@
 /**
- * 밑그림 이미지 보관: 브라우저 저장소(localStorage)에 한 장만 두고, 화면 색에 맞춰 물들인 캔버스를 캐시한다.
- * 이미지는 선 = 불투명, 바탕 = 투명인 PNG.
+ * 밑그림 이미지 보관: IndexedDB(fileStore)에 프로젝트마다 한 장씩 두고, 화면 색에 맞춰 물들인 캔버스를 캐시한다.
+ * 이미지는 선 = 불투명, 바탕 = 투명인 PNG(data URL). (예전에는 localStorage에 한 장만 두었다 → 처음 읽을 때 옮긴다)
  */
-const PREFIX = "blueprint3d.underlay.";
-const memory = new Map<string, string>();
+import { getText, memoryText, putFile } from "./fileStore";
+
+const LEGACY = "blueprint3d.underlay.";
 const images = new Map<string, HTMLImageElement>();
 const tinted = new Map<string, HTMLCanvasElement>();
+const loading = new Set<string>();
 let onReady: (() => void) | null = null;
 
 /** 이미지가 늦게 읽히면 화면을 다시 그리도록 */
@@ -14,26 +16,29 @@ export function onUnderlayReady(fn: () => void) {
 }
 
 export function putUnderlay(key: string, dataUrl: string) {
-  memory.set(key, dataUrl);
-  try {
-    // 한 장만 남긴다
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (k?.startsWith(PREFIX) && k !== PREFIX + key) localStorage.removeItem(k);
-    }
-    localStorage.setItem(PREFIX + key, dataUrl);
-  } catch {
-    /* 저장 공간이 모자라면 이번 세션 동안만 */
-  }
+  void putFile(key, dataUrl);
 }
 
+/** 지금 메모리에 있는 밑그림 (없으면 null — loadUnderlay로 읽어 온다) */
 export function getUnderlayData(key: string): string | null {
-  if (memory.has(key)) return memory.get(key)!;
-  try {
-    return localStorage.getItem(PREFIX + key);
-  } catch {
-    return null;
+  return memoryText(key);
+}
+
+/** 저장소에서 읽기 (예전 localStorage에 있으면 옮긴다) */
+export async function loadUnderlay(key: string): Promise<string | null> {
+  let v = await getText(key);
+  if (!v) {
+    try {
+      v = localStorage.getItem(LEGACY + key);
+      if (v) {
+        await putFile(key, v);
+        localStorage.removeItem(LEGACY + key);
+      }
+    } catch {
+      /* 무시 */
+    }
   }
+  return v;
 }
 
 /** 색을 입힌 밑그림 캔버스 (아직 읽는 중이면 null) */
@@ -43,7 +48,13 @@ export function underlayCanvas(key: string, color: string): HTMLCanvasElement | 
   let img = images.get(key);
   if (!img) {
     const src = getUnderlayData(key);
-    if (!src) return null;
+    if (!src) {
+      if (!loading.has(key)) {
+        loading.add(key);
+        loadUnderlay(key).then((v) => v && onReady?.());
+      }
+      return null;
+    }
     img = new Image();
     img.onload = () => onReady?.();
     img.src = src;

@@ -127,19 +127,40 @@ export class Viewer3D {
 
   /** AI 검토용 등각 시점 PNG (base64, 접두어 없이) */
   capture(): string | null {
+    return this.snapshot(960, 720)?.split(",")[1] ?? null;
+  }
+
+  /**
+   * 등각 시점 그림 (data URL). 3D 화면이 숨겨져 있어도 정해진 크기로 그린다.
+   * bg를 주면 그 색 바탕에 (JPEG처럼 투명이 없는 형식용)
+   */
+  snapshot(w: number, h: number, type = "image/png", quality?: number, bg?: string): string | null {
     if (!this.group.children.length) return null;
     const pos = this.camera.position.clone();
     const target = this.controls.target.clone();
     const wasActive = this.active;
     const aspect = this.camera.aspect;
-    // 3D 화면이 숨겨져 있어도 찍을 수 있게 정해진 크기로 그린다
-    this.renderer.setSize(960, 720, false);
-    this.camera.aspect = 960 / 720;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.active = true;
     this.resetView();
+    // 축 표시는 그림에 넣지 않는다
+    const axes = this.scene.getObjectByName("axes");
+    if (axes) axes.visible = false;
     this.renderer.render(this.scene, this.camera);
-    const url = this.renderer.domElement.toDataURL("image/png");
+    if (axes) axes.visible = true;
+    let url: string;
+    if (bg) {
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const g = c.getContext("2d")!;
+      g.fillStyle = bg;
+      g.fillRect(0, 0, w, h);
+      g.drawImage(this.renderer.domElement, 0, 0, w, h);
+      url = c.toDataURL(type, quality);
+    } else url = this.renderer.domElement.toDataURL(type, quality);
     this.camera.position.copy(pos);
     this.controls.target.copy(target);
     this.camera.aspect = aspect;
@@ -147,7 +168,7 @@ export class Viewer3D {
     this.controls.update();
     this.active = wasActive;
     this.resize();
-    return url.split(",")[1] ?? null;
+    return url;
   }
 
   private loop = () => {
