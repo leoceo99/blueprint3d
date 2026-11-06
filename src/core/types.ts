@@ -48,6 +48,21 @@ export interface SheetInfo {
   note?: string;
 }
 
+/**
+ * 가져온 도면 이미지를 제도판 밑그림으로 깔기 (이미지 자체는 따로 저장하고 key로 찾는다).
+ * 이미지 픽셀 (x, y) → 뷰 좌표 (u, v) = ((x - ox) · mmPerPx, (oy - y) · mmPerPx)
+ */
+export interface Underlay {
+  key: string;
+  /** 처리한 이미지 크기 (px) */
+  w: number;
+  h: number;
+  mmPerPx: number;
+  views: Partial<Record<ViewId, { ox: number; oy: number; crop: [number, number, number, number] }>>;
+  /** 보이기 (기본: 보임) */
+  show?: boolean;
+}
+
 /** 이름 붙은 변수 (예: L = 80, t = 10, e = L/10) */
 export interface Param {
   name: string;
@@ -149,6 +164,8 @@ export interface Project {
   params?: Param[];
   /** 출력 도면 설정 (용지, 척도, 표제란) */
   sheet?: SheetInfo;
+  /** 가져온 도면 이미지 밑그림 */
+  underlay?: Underlay;
   views: Record<ViewId, Shape2D[]>;
 }
 

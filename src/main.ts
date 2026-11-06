@@ -22,6 +22,8 @@ import {
 import { engine } from "./engine";
 import { pickTextFile, safeName, saveFile } from "./files";
 import { normalizeProject } from "./core/project";
+import { ImportDialog } from "./ui/importDialog";
+import { getUnderlayData, onUnderlayReady, putUnderlay } from "./underlay";
 import { newId, store } from "./store";
 import { DraftBoard } from "./ui/board";
 import { fmt, refreshColors, shapeLabel } from "./ui/sketch";
@@ -249,6 +251,9 @@ snapAlignBtn.onclick = () => {
   ui.snapAlign = !ui.snapAlign;
   ui.emit();
 };
+const underlayBtn = $("#underlayBtn");
+underlayBtn.onclick = () => store.update((p) => p.underlay && (p.underlay.show = p.underlay.show === false));
+onUnderlayReady(() => requestRender());
 const resultBtn = $("#resultBtn");
 resultBtn.onclick = () => {
   ui.showResult = !ui.showResult;
@@ -272,6 +277,9 @@ function renderStatus() {
   snapGridBtn.classList.toggle("on", ui.snapGrid);
   snapAlignBtn.classList.toggle("on", ui.snapAlign);
   resultBtn.classList.toggle("on", ui.showResult);
+  const u = store.project.underlay;
+  underlayBtn.hidden = workspace !== "design" || !u;
+  underlayBtn.classList.toggle("on", !!u && u.show !== false);
 }
 
 // ---------------- 모델 트리 ----------------
@@ -1206,14 +1214,55 @@ for (const s of SAMPLES) {
 fileMenu.querySelector<HTMLButtonElement>('[data-act="new"]')!.onclick = () => loadProject(emptyProject());
 fileMenu.querySelector<HTMLButtonElement>('[data-act="open"]')!.onclick = openProject;
 fileMenu.querySelector<HTMLButtonElement>('[data-act="save"]')!.onclick = saveProject;
+fileMenu.querySelector<HTMLButtonElement>('[data-act="import"]')!.onclick = () => {
+  fileMenu.hidden = true;
+  importDlg.pickFile();
+};
+
+// ---------------- 도면 이미지 가져오기 ----------------
+const importDlg = new ImportDialog(({ project, underlay }) => {
+  if (underlay) putUnderlay(underlay.meta.key, underlay.dataUrl);
+  loadProject(project);
+  showWorkspace("design");
+  const n = VIEW_IDS.filter((v) => project.views[v].length).length;
+  toast(`도면을 가져왔어요 (뷰 ${n}개). 3D 보기(2)로 확인하고, 다른 곳은 속성 패널에서 고치세요. Ctrl+Z로 되돌릴 수 있어요.`);
+});
+const isImage = (f: File) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|bmp|gif|pdf)$/i.test(f.name) || f.type === "application/pdf";
+window.addEventListener("dragover", (e) => {
+  if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+});
+window.addEventListener("drop", (e) => {
+  const f = e.dataTransfer?.files?.[0];
+  if (!f) return;
+  e.preventDefault();
+  if (isImage(f)) importDlg.open(f);
+  else if (/\.json$/i.test(f.name)) f.text().then(openProjectText);
+  else toast("이미지(PNG·JPG)나 PDF, 프로젝트 파일(.json)을 놓아 주세요.");
+});
+window.addEventListener("paste", (e) => {
+  if (isTyping() || importDlg.isOpen) return;
+  const item = [...(e.clipboardData?.items ?? [])].find((i) => i.kind === "file" && i.type.startsWith("image/"));
+  const f = item?.getAsFile();
+  if (f) {
+    e.preventDefault();
+    importDlg.open(new File([f], "붙여넣은 이미지.png", { type: f.type }));
+  }
+});
 
 async function openProject() {
   fileMenu.hidden = true;
   const text = await pickTextFile(".json,application/json");
-  if (!text) return;
+  if (text) openProjectText(text);
+}
+function openProjectText(text: string) {
   try {
-    const p = normalizeProject(JSON.parse(text));
+    const raw = JSON.parse(text);
+    // 프로젝트 파일에 함께 넣어 둔 밑그림 이미지
+    const data = raw?.underlay?.data;
+    if (raw?.underlay) delete raw.underlay.data;
+    const p = normalizeProject(raw);
     if (!p) throw new Error();
+    if (p.underlay && typeof data === "string" && data.startsWith("data:image/")) putUnderlay(p.underlay.key, data);
     loadProject(p);
   } catch {
     toast("프로젝트 파일을 읽을 수 없습니다.");
@@ -1221,7 +1270,11 @@ async function openProject() {
 }
 function saveProject() {
   fileMenu.hidden = true;
-  saveFile(`${base()}.blueprint3d.json`, JSON.stringify(store.project, null, 2), "application/json", "json");
+  // 밑그림 이미지도 파일에 넣어 다른 컴퓨터에서도 보이게
+  const p = store.project;
+  const data = p.underlay ? getUnderlayData(p.underlay.key) : null;
+  const out = data && p.underlay ? { ...p, underlay: { ...p.underlay, data } } : p;
+  saveFile(`${base()}.blueprint3d.json`, JSON.stringify(out, null, 2), "application/json", "json");
 }
 function loadProject(p: Project) {
   fileMenu.hidden = true;
@@ -1237,11 +1290,16 @@ function isTyping() {
   return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
 }
 window.addEventListener("keydown", (e) => {
-  if (settings.open) return;
+  if (settings.open || importDlg.isOpen) return;
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === "s") {
     e.preventDefault();
     saveProject();
+    return;
+  }
+  if (mod && e.key.toLowerCase() === "i") {
+    e.preventDefault();
+    importDlg.pickFile();
     return;
   }
   if (mod && e.key.toLowerCase() === "o") {

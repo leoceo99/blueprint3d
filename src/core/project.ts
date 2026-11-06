@@ -87,5 +87,7 @@ export function normalizeProject(raw: unknown): Project | null {
   else delete out.params;
   if (sheet && Object.keys(sheet).length) out.sheet = sheet;
   else delete out.sheet;
+  const u = raw.underlay;
+  if (!(obj(u) && typeof u.key === "string" && num(u.w) && num(u.h) && num(u.mmPerPx) && u.mmPerPx > 0 && obj(u.views))) delete out.underlay;
   return out as unknown as Project;
 }

@@ -20,6 +20,7 @@ import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Severity, type Shape2D, type View
 import { newId, store } from "../store";
 import type { DraftBoard } from "./board";
 import { ui } from "./state";
+import { underlayCanvas } from "../underlay";
 
 type Pt = [number, number];
 const AX = { X: 0, Y: 1, Z: 2 } as const;
@@ -71,6 +72,7 @@ interface Colors {
   frame: string;
   frameLabelBg: string;
   cornerBg: string;
+  underlayInk: string;
 }
 
 function readColors(): Colors {
@@ -97,6 +99,7 @@ function readColors(): Colors {
     frame: v("--frame"),
     frameLabelBg: v("--frame-label-bg"),
     cornerBg: v("--corner-bg"),
+    underlayInk: v("--underlay-ink"),
   };
 }
 
@@ -760,6 +763,27 @@ export class SketchPane {
   }
 
   /** 제도판이 이 뷰 영역으로 잘라 둔 상태에서 호출한다 */
+  /** 가져온 도면 이미지를 밑그림으로 (그 뷰에 해당하는 부분만) */
+  private drawImageUnderlay() {
+    const u = store.project.underlay;
+    if (!u || u.show === false) return;
+    const vm = u.views[this.view];
+    if (!vm) return;
+    const img = underlayCanvas(u.key, colors!.underlayInk);
+    if (!img) return;
+    const f = img.width / u.w;
+    const s = u.mmPerPx;
+    const [x0, y0, x1, y1] = vm.crop;
+    const [ax, ay] = this.toScreen((x0 - vm.ox) * s, (vm.oy - y0) * s);
+    const [bx, by] = this.toScreen((x1 - vm.ox) * s, (vm.oy - y1) * s);
+    const c = this.ctx;
+    c.save();
+    c.globalAlpha = 0.55;
+    c.imageSmoothingEnabled = true;
+    c.drawImage(img, x0 * f, y0 * f, (x1 - x0) * f, (y1 - y0) * f, ax, ay, bx - ax, by - ay);
+    c.restore();
+  }
+
   renderContent() {
     this.dimHits = [];
     const c = this.ctx;
@@ -767,6 +791,7 @@ export class SketchPane {
     const { w, h } = this;
     if (!w || !h) return;
     const reg = this.board.regionScreenRect(this.view);
+    this.drawImageUnderlay();
     this.drawAxes();
     this.drawResultUnderlay();
     if (store.project.mode !== "revolve") this.drawExtentGuides();

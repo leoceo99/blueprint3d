@@ -17,6 +17,8 @@
           <button data-act="open">열기… <kbd>Ctrl+O</kbd></button>
           <button data-act="save">저장… <kbd>Ctrl+S</kbd></button>
           <hr />
+          <button data-act="import" title="사진·스캔·PDF 도면에서 뷰와 구멍을 읽어 3D로">도면 이미지 가져오기… <kbd>Ctrl+I</kbd></button>
+          <hr />
           <div class="dd-label">예제 불러오기</div>
           <div id="samples"></div>
         </div>
@@ -212,6 +214,7 @@
       <button id="snapGridBtn" class="toggle" title="격자에 붙기 (G)">격자 스냅</button>
       <button id="snapAlignBtn" class="toggle" title="다른 도형·뷰에 정렬 (A)">정렬 스냅</button>
       <button id="resultBtn" class="toggle" title="3D 결과를 각 2D 창에 흐리게 겹쳐 보기">결과 겹쳐 보기</button>
+      <button id="underlayBtn" class="toggle" title="가져온 도면 이미지를 밑그림으로 보기" hidden>도면 이미지</button>
       <span id="buildStatus" class="build-status"></span>
     </footer>
 

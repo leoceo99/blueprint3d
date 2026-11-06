@@ -26,6 +26,7 @@
   --shadow: 0 8px 28px rgba(15, 23, 32, 0.18);
   --blind-fill: rgba(194, 65, 12, 0.12);
   --result-line: #7b8ba0;
+  --underlay-ink: #3b5b8c;
   --board-bg: #e9edf2;
   --frame: #9aa8b8;
   --frame-label-bg: #dfe5ec;
@@ -60,6 +61,7 @@
     --shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
     --blind-fill: rgba(251, 146, 60, 0.16);
     --result-line: #6f8399;
+    --underlay-ink: #8fb3e3;
     --board-bg: #0b1218;
     --frame: #3f5267;
     --frame-label-bg: #1c2835;
@@ -73,7 +75,7 @@
   --canvas-bg: #111a23; --grid-minor: #16212c; --grid-major: #1f2d3b; --axis: #4d6075; --guide: #cf8a22;
   --snap: #f06595; --solid-fill: rgba(76, 141, 255, 0.17); --solid-stroke: #a7c2e6; --hole-stroke: #fb923c;
   --sev-error: #ff6b6b; --sev-warning: #f2b33d; --sev-info: #7c9cff; --ok: #3fb950; --sheet-bg: #0a1017;
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.5); --blind-fill: rgba(251, 146, 60, 0.16); --result-line: #6f8399;
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.5); --blind-fill: rgba(251, 146, 60, 0.16); --result-line: #6f8399; --underlay-ink: #8fb3e3;
   --board-bg: #0b1218; --frame: #3f5267; --frame-label-bg: #1c2835; --corner-bg: #0f171f; color-scheme: dark;
 }
 
@@ -375,6 +377,29 @@ label.block input { width: 100%; font-weight: 400; }
 .small { font-size: 11px; }
 .sheet-badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
 .sheet-badge:empty { display: none; }
+
+/* ---------- 도면 이미지 가져오기 ---------- */
+.import-dlg { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column; outline: none; }
+.import-dlg[hidden] { display: none; }
+.imp-head { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.imp-head b { font-size: 14px; }
+.imp-body { flex: 1; min-height: 0; display: flex; }
+.imp-stage { flex: 1; min-width: 0; position: relative; background: var(--board-bg); overflow: hidden; }
+.imp-canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.imp-canvas:active { cursor: grabbing; }
+.imp-msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 12px 18px; border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); font-weight: 600; }
+.imp-msg[hidden] { display: none; }
+.imp-panel { width: 340px; flex: none; overflow: auto; background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; }
+.imp-sec { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.imp-title { font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: .02em; }
+.imp-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.imp-row input[type="number"] { width: 90px; }
+.imp-view { display: grid; grid-template-columns: 12px 120px 1fr; gap: 8px; align-items: center; }
+.imp-chip { width: 12px; height: 12px; border-radius: 3px; }
+.imp-check { display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
+.imp-foot { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.imp-go { min-height: 36px; font-weight: 700; }
+.warn { color: var(--sev-warning); }
 
 @media print {
   html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; background: #fff !important; }
