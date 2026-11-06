@@ -8,9 +8,10 @@ import { meshToSTL, rotateQuarter, type Mesh } from "./core/mesh";
 import type { ModelSource, Project } from "./core/types";
 
 export type WorkerRequest =
-  | { id: number; type: "build"; project: Project }
+  /** keep: false면 결과만 돌려주고 내보내기용 모델은 그대로 둔다 (다른 부품의 도면 등) */
+  | { id: number; type: "build"; project: Project; keep?: boolean }
   /** 가져온 3D 파일로 결과 만들기. data는 이 워커가 그 key를 처음 볼 때만 보낸다 */
-  | { id: number; type: "import"; source: ModelSource; data?: ArrayBuffer }
+  | { id: number; type: "import"; source: ModelSource; data?: ArrayBuffer; keep?: boolean }
   | { id: number; type: "export"; format: "stl" | "step" };
 
 export type WorkerResponse =
@@ -35,7 +36,8 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     await ready;
     if (msg.type === "build") {
       const { shape, result } = buildAll(msg.project);
-      setCurrent(shape, null);
+      if (msg.keep === false) shape?.delete?.();
+      else setCurrent(shape, null);
       post({ id: msg.id, ok: true, type: "build", result });
     } else if (msg.type === "import") {
       const src = msg.source;
@@ -50,12 +52,13 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       if (loaded.shape) {
         const shape = orientShape(loaded.shape, src.turns);
         const result = stepResult(shape, src);
-        setCurrent(shape, null);
+        if (msg.keep === false) shape?.delete?.();
+        else setCurrent(shape, null);
         post({ id: msg.id, ok: true, type: "build", result });
       } else {
         const mesh = rotateQuarter(loaded.mesh!, src.turns);
         const result = stlResult(mesh, src);
-        setCurrent(null, mesh);
+        if (msg.keep !== false) setCurrent(null, mesh);
         post({ id: msg.id, ok: true, type: "build", result });
       }
     } else {

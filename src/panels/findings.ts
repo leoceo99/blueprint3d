@@ -1,5 +1,5 @@
 /** 오른쪽 패널: 설계 검사 (규칙 검사 + AI 검토 결과), AI 설계 검토 실행 */
-import { getApiKey, requestReview } from "../ai";
+import { getApiKey } from "../aiKey";
 import { boundsOf } from "../core/geometry2d";
 import { runChecks } from "../core/checks";
 import { buildSheet } from "../core/sheet";
@@ -11,6 +11,7 @@ import { app, commands, invalidatePanels, on, onPanels, requestRender } from "..
 import { $, esc } from "../app/dom";
 import { toast } from "../app/notify";
 import { showWorkspace } from "../workspaces/registry";
+import { activeSheetInfo } from "../workspaces/sheet";
 
 export function initFindings() {
   onPanels(renderFindings);
@@ -118,8 +119,10 @@ export async function toggleAiReview() {
   requestRender();
   try {
     await waitForBuild();
-    const sheet = app.lastBuild ? buildSheet(app.lastBuild, store.project) : null;
+    const sheet = app.lastBuild ? buildSheet(app.lastBuild, { ...store.project, sheet: activeSheetInfo() }) : null;
     const [imageSheet, image3d] = await Promise.all([sheet ? svgToPng(sheet.svg) : null, Promise.resolve(app.viewer.capture())]);
+    // AI SDK는 처음 검토할 때 내려받는다
+    const { requestReview } = await import("../ai");
     const res = await requestReview(
       { project: store.project, build: app.lastBuild, ruleFindings: app.ruleFindings, imageSheet: imageSheet ?? undefined, image3d: image3d ?? undefined },
       aiAbort.signal,

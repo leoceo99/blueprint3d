@@ -13,6 +13,8 @@ import {
   fromBase64,
   getProject,
   importAll,
+  exportAllZip,
+  importBackupBytes,
   listProjects,
   listVersions,
   parseProject,
@@ -188,7 +190,7 @@ describe("프로젝트 보관함 (IndexedDB)", () => {
     expect(res.projects).toBe(backup.projects.length);
     expect(res.versions).toBe(backup.versions.length);
     const back = (await getProject("bk"))!;
-    expect(parseProject(back.data)!.source!.key).toBe("bk-file");
+    expect(parseProject(back.data)!.parts[0].source!.key).toBe("bk-file");
     expect(new Uint8Array((await getFile("bk-file"))!)).toEqual(new Uint8Array([7, 8, 9, 250]));
     expect((await listVersions("bk")).map((v) => v.label)).toContain("백업 전");
 
@@ -205,6 +207,31 @@ describe("프로젝트 보관함 (IndexedDB)", () => {
     expect(names.some((n) => n.endsWith("(백업)"))).toBe(true);
 
     await expect(importAll({ hello: 1 })).rejects.toThrow("백업 파일이 아닙니다");
+  });
+
+  it("전체 백업 zip (9단계): 왕복, 예전 JSON보다 작음, 예전 JSON 백업도 가져옴", async () => {
+    for (const r of await listProjects()) await purgeProject(r.id);
+    const big = new TextEncoder().encode(Array.from({ length: 3000 }, (_, i) => `#${i}=CARTESIAN_POINT('',(${i},0.,0.));`).join("\n"));
+    const p = structuredClone(SAMPLES[0]);
+    p.source = { kind: "step", name: "z.step", key: "zip-file", turns: [0, 0, 0] };
+    await putFile("zip-file", big.slice().buffer);
+    await saveProject("zp", p);
+    await addVersion("zp", p, { auto: false, label: "zip 버전" });
+    const json = JSON.stringify(await exportAll());
+    const z = await exportAllZip();
+    expect(z.projects).toBe(1);
+    expect(z.bytes.length).toBeLessThan(json.length / 3);
+    for (const r of await listProjects()) await purgeProject(r.id);
+    await cleanup();
+    const r = await importBackupBytes(z.bytes);
+    expect(r).toEqual({ projects: 1, versions: 1 });
+    expect(new Uint8Array((await getFile("zip-file"))!)).toEqual(big);
+    expect((await listVersions("zp")).map((v) => v.label)).toEqual(["zip 버전"]);
+    // 예전 JSON 백업
+    for (const x of await listProjects()) await purgeProject(x.id);
+    const r2 = await importBackupBytes(new TextEncoder().encode(json));
+    expect(r2.projects).toBe(1);
+    await expect(importBackupBytes(new TextEncoder().encode("nope"))).rejects.toThrow("백업 파일이 아닙니다");
   });
 
   it("base64 왕복", () => {

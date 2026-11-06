@@ -9,10 +9,12 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "e2e": "node e2e/run.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.4.0",
+    "fflate": "^0.8.3",
     "pdfjs-dist": "6.4.299",
     "replicad": "^1.2.0",
     "replicad-opencascadejs": "^1.1.0",

@@ -23,20 +23,21 @@ class Engine {
     });
   }
 
-  async build(project: Project): Promise<BuildResult> {
-    const r = await this.call({ type: "build", project } as any);
+  /** keep: false면 내보내기용 모델(지금 편집 중인 부품)은 그대로 두고 결과만 */
+  async build(project: Project, keep = true): Promise<BuildResult> {
+    const r = await this.call({ type: "build", project, keep } as any);
     if (!r.ok) throw new Error(r.error);
     if (r.type !== "build") throw new Error("unexpected");
     return r.result;
   }
 
   /** 가져온 3D 파일로 결과 만들기. 워커가 처음 보는 파일이면 내용을 함께 보낸다 */
-  async buildImported(source: ModelSource, load: () => Promise<ArrayBuffer | null>): Promise<BuildResult> {
-    let r = await this.call({ type: "import", source } as any);
+  async buildImported(source: ModelSource, load: () => Promise<ArrayBuffer | null>, keep = true): Promise<BuildResult> {
+    let r = await this.call({ type: "import", source, keep } as any);
     if (!r.ok && r.needData) {
       const data = await load();
       if (!data) throw new Error("가져온 3D 파일을 이 브라우저에서 찾을 수 없습니다. 파일을 다시 가져오세요.");
-      r = await this.call({ type: "import", source, data } as any);
+      r = await this.call({ type: "import", source, data, keep } as any);
     }
     if (!r.ok) throw new Error(r.error);
     if (r.type !== "build") throw new Error("unexpected");

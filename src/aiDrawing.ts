@@ -11,7 +11,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import * as z from "zod/v4";
-import { AI_MODEL, getApiKey } from "./ai";
+import { AI_MODEL, getApiKey } from "./aiKey";
 import { emptyProject, type Project, type Shape2D, type ViewId } from "./core/types";
 
 /** 그림 위의 영역: 그림 크기에 대한 비율 (0~1, 왼쪽 위가 0) */

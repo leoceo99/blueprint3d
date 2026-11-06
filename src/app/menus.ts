@@ -7,7 +7,14 @@ import { bindCommandEl, refreshCommandStates } from "./commandUI";
 import { commands, on } from "./context";
 import { $, $$ } from "./dom";
 
-const EDIT = ["edit.undo", "edit.redo", "edit.history", "-", "edit.delete", "edit.duplicate", "edit.toggleHole", "-", "edit.centerH", "edit.centerV", "edit.straighten", "-", "params.add", "-", "app.palette", "app.settings"];
+const EDIT = [
+  "edit.undo", "edit.redo", "edit.history", "-",
+  "edit.delete", "edit.duplicate", "edit.toggleHole", "-",
+  "edit.centerH", "edit.centerV", "edit.straighten", "-",
+  "params.add", "-",
+  "doc.addPart", "doc.duplicatePart", "doc.renamePart", "doc.deletePart", "doc.addDrawing", "file.import3dAsPart", "-",
+  "app.palette", "app.settings",
+];
 const VIEW = () => [
   ...workspaces().map((w) => `ws.${w.id}`),
   "-",

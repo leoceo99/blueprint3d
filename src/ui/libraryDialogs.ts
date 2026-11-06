@@ -1,14 +1,14 @@
 /**
  * ‘내 프로젝트’ 창(보관함·휴지통·백업)과 ‘버전 기록’ 창.
  */
-import { diffSummary, relativeTime, TRASH_DAYS } from "../core/versions";
-import type { Project } from "../core/types";
+import { relativeTime, TRASH_DAYS } from "../core/versions";
+import { docDiff, type Doc } from "../core/document";
 import {
   addVersion,
   deleteVersion,
   duplicateProject,
-  exportAll,
-  importAll,
+  exportAllZip,
+  importBackupBytes,
   listProjects,
   listVersions,
   parseProject,
@@ -31,8 +31,9 @@ export interface LibraryHooks {
   /** 저장 대기 중인 변경을 보관함에 먼저 쓴다 */
   flush: () => Promise<void>;
   toast: (msg: string) => void;
-  download: (name: string, text: string) => void;
-  pickText: () => Promise<string | null>;
+  download: (name: string, data: ArrayBuffer | string, mime: string, ext: string) => void;
+  /** 파일 하나 고르기 (내용은 이진) */
+  pickFile: (accept: string) => Promise<File | null>;
   showVersions: (id: string) => void;
   renameCurrent: (name: string) => void;
 }
@@ -81,18 +82,18 @@ export class ProjectsDialog {
     const exp = h("button", { textContent: "전체 백업 내보내기", title: "모든 프로젝트·버전·3D 파일·밑그림을 한 파일로" });
     exp.onclick = async () => {
       await this.hooks.flush();
-      const data = await exportAll();
+      const r = await exportAllZip();
       const d = new Date();
       const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-      this.hooks.download(`도면3D_백업_${stamp}.json`, JSON.stringify(data));
-      this.hooks.toast(`프로젝트 ${data.projects.length}개, 버전 ${data.versions.length}개를 백업했어요.`);
+      this.hooks.download(`도면3D_백업_${stamp}.b3dbackup`, r.bytes.slice().buffer, "application/zip", "b3dbackup");
+      this.hooks.toast(`프로젝트 ${r.projects}개, 버전 ${r.versions}개를 백업했어요 (${Math.max(1, Math.round(r.bytes.length / 1024))} KB).`);
     };
     const imp = h("button", { textContent: "백업 가져오기" });
     imp.onclick = async () => {
-      const text = await this.hooks.pickText();
-      if (!text) return;
+      const f = await this.hooks.pickFile(".b3dbackup,.zip,.json,application/json");
+      if (!f) return;
       try {
-        const r = await importAll(JSON.parse(text));
+        const r = await importBackupBytes(new Uint8Array(await f.arrayBuffer()));
         this.hooks.toast(`백업에서 프로젝트 ${r.projects}개, 버전 ${r.versions}개를 가져왔어요.`);
         await this.render();
       } catch (e) {
@@ -185,10 +186,10 @@ export class ProjectsDialog {
 
 export interface VersionHooks {
   currentId: () => string;
-  current: () => Project;
-  /** 지금 프로젝트를 이 내용으로 되돌린다 (실행 취소 가능하게) */
-  restore: (p: Project) => void;
-  openAsNew: (p: Project) => void;
+  current: () => Doc;
+  /** 지금 문서를 이 내용으로 되돌린다 (실행 취소 가능하게) */
+  restore: (p: Doc) => void;
+  openAsNew: (p: Doc) => void;
   open: (id: string) => Promise<void>;
   flush: () => Promise<void>;
   thumb: () => string | undefined;
@@ -250,9 +251,9 @@ export class VersionsDialog {
     this.m.refocus();
   }
 
-  private row(v: VersionRec, cur: Project, now: number): HTMLElement {
+  private row(v: VersionRec, cur: Doc, now: number): HTMLElement {
     const p = parseProject(v.data);
-    const diff = p ? diffSummary(p, cur) : "읽을 수 없는 버전";
+    const diff = p ? docDiff(p, cur) : "읽을 수 없는 버전";
     const img = v.thumb ? h("img", { src: v.thumb, alt: "" }) : placeholder();
     const actions = h("div", {}, "lib-actions");
     const btn = (t: string, fn: () => void, cls = "") => {
@@ -270,6 +271,7 @@ export class VersionsDialog {
       }, "primary");
       btn("새 프로젝트로", () => {
         p.name = `${p.name} (${relativeTime(v.time, Date.now())} 버전)`;
+        if (p.parts.length === 1) p.parts[0].name = p.name;
         this.close();
         this.hooks.openAsNew(p);
       });

@@ -14,25 +14,8 @@ import { PROCESS_RULES } from "./core/checks";
 import type { BuildResult, Finding, Project, ViewId } from "./core/types";
 import { PROCESS_LABEL, VIEW_IDS } from "./core/types";
 
-const KEY_STORAGE = "blueprint3d.anthropicKey";
-export const AI_MODEL = "claude-opus-5-5";
-
-export function getApiKey(): string {
-  try {
-    return localStorage.getItem(KEY_STORAGE) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-export function setApiKey(k: string) {
-  try {
-    if (k) localStorage.setItem(KEY_STORAGE, k);
-    else localStorage.removeItem(KEY_STORAGE);
-  } catch {
-    /* 저장할 수 없는 환경 */
-  }
-}
+import { AI_MODEL, getApiKey } from "./aiKey";
+export { AI_MODEL, getApiKey, setApiKey } from "./aiKey";
 
 const ReviewSchema = z.object({
   summary: z.string().describe("부품에 대한 2~3문장 총평 (한국어)"),

@@ -2,7 +2,7 @@
  * 도면 검토 창 (AI): 사진·스케치·도면 1~6장 → 손글씨 치수 읽기, 뷰·도면끼리 비교, 문제와 질문, 3D 초안.
  */
 import { draftToProject, requestDrawingReview, type DrawingImage, type DrawingReview } from "../aiDrawing";
-import { getApiKey } from "../ai";
+import { getApiKey } from "../aiKey";
 import type { Project } from "../core/types";
 import { fileToCanvas } from "./importDialog";
 

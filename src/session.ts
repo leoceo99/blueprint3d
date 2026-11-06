@@ -6,10 +6,11 @@
  * 보관함 쓰기는 모두 한 줄로 세워(순서대로) 실행해서 서로 덮어쓰지 않게 한다.
  */
 import { SAMPLES } from "./core/samples";
+import { docFromProject, type Doc } from "./core/document";
 import type { Project } from "./core/types";
 import { shouldAutoSnapshot } from "./core/versions";
 import { addVersion, cleanup, getProject, listProjects, listVersions, newProjectId, parseProject, saveProject, setThumb } from "./library";
-import { store } from "./store";
+import { asDoc, store } from "./store";
 
 export interface SessionHooks {
   /** 다른 프로젝트로 바뀐 뒤 (선택 해제·화면 맞추기 등) */
@@ -37,7 +38,7 @@ export class Session {
     if (!store.projectId) {
       store.projectId = newProjectId();
       if (!store.restored) {
-        store.project = structuredClone(SAMPLES[0]);
+        store.doc = docFromProject(structuredClone(SAMPLES[0]));
         this.fresh = true;
       }
       store.saveNow();
@@ -67,7 +68,7 @@ export class Session {
       }
       const rec = await getProject(this.id);
       // 브라우저 저장본이 늘 가장 새것 (고칠 때마다 바로 쓰므로)
-      if (!rec || rec.deletedAt || rec.data !== JSON.stringify(store.project)) await this.enqueue(() => saveProject(this.id, store.project));
+      if (!rec || rec.deletedAt || rec.data !== JSON.stringify(store.doc)) await this.enqueue(() => saveProject(this.id, store.doc));
       this.lastAuto = await lastAutoTime(this.id);
       await cleanup();
     } catch (e) {
@@ -93,7 +94,7 @@ export class Session {
     if (this.dirty) {
       this.dirty = false;
       const id = this.id;
-      const snap = structuredClone(store.project);
+      const snap = structuredClone(store.doc);
       const thumb = this.thumb;
       this.hooks.onState("saving");
       void this.enqueue(async () => {
@@ -122,7 +123,7 @@ export class Session {
   /** 큰 변화 직전에 지금 상태를 자동 버전으로 남긴다 */
   async snapshot(label: string) {
     await this.flush();
-    const snap = structuredClone(store.project);
+    const snap = structuredClone(store.doc);
     await this.enqueue(() => addVersion(this.id, snap, { auto: true, label, thumb: this.thumb }));
   }
 
@@ -143,17 +144,17 @@ export class Session {
     if (p) this.load(this.id, p, rec?.thumb);
   }
 
-  /** 새 프로젝트로 열기 (새 부품, 예제, 파일 열기, 가져오기). 지금 프로젝트는 보관함에 그대로 남는다 */
-  async openAsNew(p: Project) {
+  /** 새 문서로 열기 (새 문서, 예제, 파일 열기, 가져오기). 지금 문서는 보관함에 그대로 남는다 */
+  async openAsNew(p: Doc | Project) {
     await this.flush();
     const id = newProjectId();
-    this.load(id, p);
+    this.load(id, asDoc(p));
     this.lastAuto = undefined;
-    const snap = structuredClone(store.project);
+    const snap = structuredClone(store.doc);
     await this.enqueue(() => saveProject(id, snap));
   }
 
-  private load(id: string, p: Project, thumb?: string) {
+  private load(id: string, p: Doc, thumb?: string) {
     this.quiet = true;
     try {
       store.projectId = id;

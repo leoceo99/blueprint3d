@@ -11,7 +11,7 @@ import { refreshColors } from "./ui/sketch";
 import { ui } from "./ui/state";
 import { Viewer3D } from "./ui/viewer";
 import { appCommands } from "./app/appCommands";
-import { scheduleBuild } from "./app/build";
+import { buildStats, scheduleBuild, scheduleBuildIfChanged } from "./app/build";
 import { bindCommands, refreshCommandStates } from "./app/commandUI";
 import { app, commands, on, onFrame, requestRender } from "./app/context";
 import { $ } from "./app/dom";
@@ -31,6 +31,7 @@ import { initFindings, updateFindings } from "./panels/findings";
 import { initParams } from "./panels/params";
 import { initProps } from "./panels/props";
 import { initTree } from "./panels/tree";
+import { docCommands, initDocTree, syncPartCommands } from "./panels/docTree";
 import { designWorkspace, initDesign } from "./workspaces/design";
 import { exampleWorkspace } from "./workspaces/example";
 import { registerWorkspace, showWorkspace, unregisterWorkspace, workspaces } from "./workspaces/registry";
@@ -59,7 +60,7 @@ commands.onRun = (c) => {
   // 명령 찾기 자신은 ‘최근’에 넣지 않는다
   if (!c.hidden && c.id !== "app.palette") prefs.set({ recent: pushRecent(prefs.get().recent, c.id) });
 };
-commands.register([...appCommands(), ...fileCommands(), ...projectCommands(), ...layoutCommands(), ...shellCommands()]);
+commands.register([...appCommands(), ...fileCommands(), ...projectCommands(), ...docCommands(), ...layoutCommands(), ...shellCommands()]);
 for (const ws of [designWorkspace, view3dWorkspace, sheetWorkspace]) registerWorkspace(ws);
 const syncExample = () => {
   const on = workspaces().some((w) => w.id === exampleWorkspace.id);
@@ -72,6 +73,7 @@ syncExample();
 initDesign();
 initView3d();
 initSheet();
+initDocTree();
 initTree();
 initParams();
 initProps();
@@ -106,7 +108,9 @@ ui.subscribe(requestRender);
 store.subscribe(() => {
   // 지워진 도형을 선택하고 있으면 해제
   if (ui.sel && !store.project.views[ui.sel.view].some((s) => s.id === ui.sel!.id)) ui.sel = null;
-  scheduleBuild();
+  // 3D 모양이 바뀐 경우에만 다시 만든다 (이름·표제란·제조 방식만 바뀌면 건너뜀)
+  scheduleBuildIfChanged();
+  syncPartCommands();
   updateFindings();
   requestRender();
 });
@@ -128,4 +132,4 @@ const firstFit = setInterval(() => {
 }, 200);
 
 // 개발·시험용 (나중에 플러그인 API의 출발점)
-Object.assign(window, { blueprint3d: { commands, workspaces, registerWorkspace, unregisterWorkspace, store } });
+Object.assign(window, { blueprint3d: { commands, workspaces, registerWorkspace, unregisterWorkspace, store, buildStats } });

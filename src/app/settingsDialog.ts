@@ -2,7 +2,7 @@
  * 설정 화면: 일반(테마·언어·단위·격자), 화면 배치, 단축키 바꾸기, 실험 기능, 저장 공간, AI(실험), 개발자.
  * 키 저장 외에는 바꾸는 즉시 적용·저장된다.
  */
-import { AI_MODEL, getApiKey, setApiKey } from "../ai";
+import { AI_MODEL, getApiKey, setApiKey } from "../aiKey";
 import { formatCombo, keyOf } from "../core/keys";
 import { GRIDS, type Theme } from "../core/settings";
 import { h } from "../ui/modal";

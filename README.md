@@ -46,6 +46,17 @@
 ![변수와 식으로 묶인 치수](docs/screenshot-params.png)
 - 모델 트리, 속성 패널(숫자로 치수 수정), 실행 취소/다시 실행, 복제
 
+### 문서: 여러 부품 · 여러 도면 (.b3d)
+- 한 **문서** 안에 **부품 여러 개**와 **도면 여러 장** — 왼쪽 위 ‘문서’에서 부품을 눌러 바꿔 가며 편집, ＋ 부품, 이름(두 번 클릭)·복제·지우기 (실행 취소 가능)
+- **도면은 부품을 참조**: 도면 출력에서 도면을 고르고(＋ 도면, 지우기), 도면마다 그릴 부품·용지·척도·표제란. 편집 중이 아닌 부품의 도면도 그 부품을 따로 3D로 만들어 그린다. 부품을 고치면 도면이 다시 만들어진다
+- **3D 파일을 부품으로 가져오기**: STEP·STL을 지금 문서의 새 부품으로 (새 문서로 가져오기도 그대로)
+- **.b3d 파일**: 문서 하나를 zip 한 파일로 — 부품·도면, 가져온 3D 파일·밑그림 원본(압축), 썸네일. 예전 `.json` 프로젝트 파일도 그대로 열린다(부품 1개 문서로)
+- 장면(메쉬·게임용 모델)은 13단계에서 이 문서에 들어간다 · 예제: 파일 ▸ 예제 ▸ “문서 예제: 부품 2개 + 도면 2장”
+
+![문서: 부품 여러 개](docs/screenshot-document.png)
+
+![도면마다 그릴 부품](docs/screenshot-drawings.png)
+
 ### 명령 찾기 · 단축키 · 화면 배치 · 설정
 - **명령 찾기** (<kbd>Ctrl</kbd>+<kbd>K</kbd> 또는 위쪽 ‘⌕ 명령 찾기’): 이름으로 아무 기능이나 찾아 실행 — **한글 초성**(ㅅㄱㅎ → 사각형 그리기), 영어(undo, print), 띄어쓰기 없이도. 최근 쓴 것이 위로
 - 모든 기능이 “명령”이라 메뉴(파일·편집·보기)·리본·단축키·명령 찾기가 같은 동작을 부른다. **한글 입력 상태에서도** 단축키가 그대로 동작
@@ -64,7 +75,8 @@
 - **전체 백업**: 모든 프로젝트·버전·3D 파일·밑그림을 파일 하나로 내보내고 가져오기 (다른 컴퓨터로 옮기거나, 브라우저 데이터를 지우기 전에)
 - **안전장치**: 같은 프로젝트를 두 탭에서 열면 경고 · 다른 탭에서 고치면 "다시 불러오기" · 저장 공간이 차면 알림 · 예상 못 한 오류도 알림(작업은 이미 저장돼 있음)
 - **앱으로 설치·오프라인**: 파일 ▸ 앱으로 설치(Chrome·Edge) → 바탕화면·시작 메뉴에서 바로 실행. 3D 엔진까지 미리 받아 두어 **인터넷 없이도** 그리기·3D·도면·저장이 그대로 (AI만 안 됨). 새 버전이 나오면 알림
-- **프로젝트 파일(.json)**: 파일로 저장·열기 — 밑그림 이미지와 가져온 3D 파일도 함께 들어감
+- **파일로 저장 (.b3d)**: 다른 컴퓨터로 옮길 때 — 밑그림 이미지와 가져온 3D 파일까지 한 파일에. 설치한 앱이면 탐색기에서 .b3d·STEP·STL 파일을 바로 앱으로 열 수 있다
+- 전체 백업은 zip(`.b3dbackup`) — 예전 JSON 백업보다 3배 이상 작고, 예전 백업도 그대로 가져온다
 
 ![내 프로젝트](docs/screenshot-library.png)
 
@@ -144,7 +156,8 @@ AI를 어떻게 쓸지(클라우드 AI·로컬 모델·규칙 확장)는 아직 
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm test         # 엔진·검사·AI 요청 테스트
+npm test         # 단위 시험 (엔진·검사·문서·파일 형식·명령·AI 요청)
+npm run e2e      # 브라우저 시험 6모음 (빌드 → 미리 보기 서버 → 실행 → 요약). Playwright 필요: npx playwright install chromium
 npm run build    # dist/ 생성 (오프라인용 sw.js 포함)
 npm run preview  # 빌드 결과 실행 — 앱 설치·오프라인은 이걸로 확인 (개발 서버에서는 꺼 둠)
 ```
@@ -164,7 +177,7 @@ npm run preview  # 빌드 결과 실행 — 앱 설치·오프라인은 이걸�
 | Ctrl+S / Ctrl+O | 파일로 저장 / 파일 열기 (.json) | Ctrl+I / Ctrl+V | 도면 이미지 가져오기 / 캡처 붙여넣기 (실험) |
 | **Ctrl+K** / F1 | **명령 찾기** | Ctrl+, | 설정 (단축키 바꾸기) |
 | Ctrl+Alt+Z | 실행 취소 기록 | Ctrl+P | 도면 인쇄 / PDF |
-| Ctrl+B / Ctrl+Alt+B | 왼쪽 / 오른쪽 패널 접기 | | |
+| Ctrl+B / Ctrl+Alt+B | 왼쪽 / 오른쪽 패널 접기 | Ctrl+Alt+] / [ | 다음 / 이전 부품 |
 | Esc | 그리기 취소 → 선택 해제 | Enter / 더블클릭 | 다각형 닫기 |
 | 휠 / 핀치 | 확대 | 휠 클릭·스페이스+끌기·빈 곳 끌기 | 화면 이동 |
 | 1 / 2 / 3 | 2D 설계 / 3D 보기 / 도면 출력 | | |
@@ -183,7 +196,10 @@ src/
     params.ts        변수 계산, 치수를 식에 묶기·잠금, 이름 바꾸기
     standards.ts     나사 구멍 규격표 (볼트 관통·탭·자리파기)
     sheet.ts         투영 → 3면도 도면 (용지·척도, 구멍 지시, 중심선, 표제란, SVG, DXF)
-    project.ts       저장 파일 검사·복구
+    project.ts       저장 파일 검사·복구 (부품 하나)
+    document.ts      문서 모델 (부품·도면·장면, 예전 프로젝트 변환, 부품·도면 추가·삭제, 요약·비교)
+    b3d.ts           .b3d 파일(zip) 읽기·쓰기, 예전 .json 읽기, 전체 백업 zip
+    bytes.ts         base64·data URL
     versions.ts      버전 요약·비교, 자동 버전 정리, 시간 표시
     mesh.ts          STL 읽기, 메쉬 3면도(숨은선: 깊이 버퍼)
     holes3d.ts       STEP 모델에서 구멍 찾기 (원통 면, 카운터보어)
@@ -220,8 +236,9 @@ src/
     build.ts         3D 자동 생성 (0.25초 모아서)
     edit.ts          도형 편집 동작 (삭제·복제·가운데 맞춤…)
     statusbar.ts · shell.ts · notify.ts · dom.ts
-  panels/          tree.ts · params.ts · props.ts · findings.ts (트리, 변수, 속성, 설계 검사·AI 검토)
+  panels/          docTree.ts(문서: 부품·도면) · tree.ts · params.ts · props.ts · findings.ts (트리, 변수, 속성, 설계 검사·AI 검토)
   workspaces/      작업 공간 모듈 — registry.ts(탭·숫자 키·붙이기/떼기), design.ts(+designRibbon), view3d.ts, sheet.ts, example.ts(새 모듈 본보기)
+  aiKey.ts         AI 모델 이름·API 키 (가벼움 — AI SDK는 쓸 때만 내려받음)
   ai.ts            Claude AI 설계 검토
   worker.ts        CAD 연산 (백그라운드 스레드)
   visionWorker.ts  도면 이미지 인식 (백그라운드 스레드)
@@ -244,7 +261,8 @@ src/
   ui/modal.ts      가운데 뜨는 창 틀
 public/            앱 아이콘, manifest.webmanifest (설치 정보)
 vite.config.ts     빌드 설정 + 오프라인용 sw.js 만들기
-tests/             vitest
+tests/             vitest 단위 시험
+e2e/               브라우저 시험 (run.cjs가 한 번에: core · app · library · document · import3d · legacy)
 ```
 
 ## 개발 순서

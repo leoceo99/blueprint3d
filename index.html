@@ -17,19 +17,20 @@
       <div class="menu-wrap">
         <button class="ghost" data-menu="file">파일 ▾</button>
         <div class="dropdown" id="menu-file" hidden>
-          <button data-act="new" data-cmd="file.new" title="새 프로젝트로 시작 (지금 것은 ‘내 프로젝트’에 남아요)">새 부품 <kbd></kbd></button>
+          <button data-act="new" data-cmd="file.new" title="새 문서로 시작 (지금 것은 ‘내 프로젝트’에 남아요)">새 문서 <kbd></kbd></button>
           <button data-act="projects" data-cmd="file.projects" title="저장된 프로젝트 보기·열기·복제·삭제, 전체 백업">내 프로젝트… <kbd></kbd></button>
           <button data-act="versions" data-cmd="file.versions" title="자동·직접 저장한 버전 보기, 되돌리기">버전 기록…</button>
           <button data-act="snapshot" data-cmd="file.snapshot" title="지금 상태에 이름을 붙여 버전으로 남기기">지금 버전 저장… <kbd></kbd></button>
           <hr />
-          <button data-act="open" data-cmd="file.open" title="프로젝트 파일(.json)을 새 프로젝트로 열기">파일 열기… <kbd></kbd></button>
-          <button data-act="save" data-cmd="file.save" title="프로젝트를 파일(.json)로 내보내기 — 다른 컴퓨터로 옮길 때">파일로 저장… <kbd></kbd></button>
+          <button data-act="open" data-cmd="file.open" title="문서 파일(.b3d) 또는 예전 프로젝트(.json)를 새 문서로 열기">파일 열기… <kbd></kbd></button>
+          <button data-act="save" data-cmd="file.save" title="문서를 파일(.b3d)로 — 부품·도면·3D 파일·밑그림을 한 파일에 (다른 컴퓨터로 옮길 때)">파일로 저장 (.b3d)… <kbd></kbd></button>
           <hr />
           <button data-act="import3d" data-cmd="file.import3d" title="다른 CAD에서 만든 STEP·STL 파일로 3면도 만들기">3D 파일 가져오기 (STEP·STL)…</button>
+          <button data-act="import3dPart" data-cmd="file.import3dAsPart" title="STEP·STL 파일을 지금 문서의 새 부품으로">3D 파일을 부품으로 가져오기…</button>
           <button data-act="import" data-cmd="file.importImage" class="exp" title="사진·스캔·PDF 도면에서 뷰와 구멍을 읽어 3D로 (실험 기능: 인식이 틀릴 수 있어요)"><span>도면 이미지 가져오기… <i class="exp-tag"></i></span><kbd></kbd></button>
           <button data-act="review" data-cmd="file.review" class="exp" title="사진·손 스케치·도면 여러 장을 AI가 읽고 잘못된 점을 알려 줍니다 (실험 기능)"><span>도면 검토 (AI)… <i class="exp-tag"></i></span></button>
           <hr />
-          <div class="dd-label">예제 불러오기 (새 프로젝트로)</div>
+          <div class="dd-label">예제 불러오기 (새 문서로)</div>
           <div id="samples"></div>
           <div id="installItem" hidden>
             <hr />
@@ -140,7 +141,9 @@
     </div>
     <main id="ws-main" class="workspace">
       <aside class="panel left">
-        <div class="panel-head">모델 트리</div>
+        <div class="panel-head">문서</div>
+        <div id="docTree" class="doc-tree"></div>
+        <div class="panel-head">모델 트리 <span id="treePart" class="muted"></span></div>
         <div id="tree" class="tree"></div>
         <div class="panel-head params-head">
           변수
@@ -198,7 +201,9 @@
 
     <main id="ws-sheet" class="workspace sheet-ws" hidden>
       <div class="sheet-toolbar">
-        <span class="muted">3D 모델에서 자동 생성된 3각법 3면도</span>
+        <label class="drawing-pick">도면 <select id="drawingSel" aria-label="볼 도면"></select></label>
+        <button id="addDrawing" class="small" title="편집 중인 부품의 도면을 하나 더">＋ 도면</button>
+        <button id="delDrawing" class="small ghost" title="보고 있는 도면 지우기 (실행 취소 가능)">지우기</button>
         <span id="sheetInfo" class="sheet-badge"></span>
         <div class="spacer"></div>
         <button id="expSvg">SVG 저장</button>
@@ -210,7 +215,10 @@
       <div class="sheet-body">
         <aside class="sheet-settings" id="sheetSettings">
           <div class="panel-head">도면 설정</div>
-          <div class="sheet-form">
+          <div class="sheet-form" id="sheetForm">
+            <label>이 도면에 그릴 부품 <select id="drawingPart"></select></label>
+            <label>도면 이름 <input id="drawingName" spellcheck="false" /></label>
+            <div class="form-sep">용지 · 척도</div>
             <label>용지 (가로)
               <select data-sheet="paper">
                 <option value="auto">자동</option><option value="A4">A4</option><option value="A3">A3</option><option value="A2">A2</option>
@@ -230,7 +238,7 @@
             <label>주기 (한 줄에 하나)
               <textarea data-sheet="note" rows="4" placeholder="지시 없는 모따기 C0.5&#10;날카로운 모서리 제거"></textarea>
             </label>
-            <p class="muted small">부품명은 위쪽 이름 칸을 씁니다. DXF는 실제 크기(1:1)로 저장됩니다.</p>
+            <p class="muted small">표제란의 부품명은 그 부품의 이름입니다(왼쪽 ‘문서’에서 바꾸기). DXF는 실제 크기(1:1)로 저장됩니다.</p>
           </div>
         </aside>
         <div id="sheetHost" class="sheet-host"></div>

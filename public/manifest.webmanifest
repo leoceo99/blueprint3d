@@ -9,12 +9,46 @@
   "background_color": "#f4f6f9",
   "theme_color": "#1d4ed8",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
-    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
-    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
   ],
   "file_handlers": [
-    { "action": "./", "accept": { "application/json": [".json"], "model/step": [".step", ".stp"], "model/stl": [".stl"] } }
+    {
+      "action": "./",
+      "accept": {
+        "application/x-blueprint3d": [
+          ".b3d"
+        ],
+        "application/json": [
+          ".json"
+        ],
+        "model/step": [
+          ".step",
+          ".stp"
+        ],
+        "model/stl": [
+          ".stl"
+        ]
+      }
+    }
   ]
 }

@@ -2,7 +2,8 @@
  * 내 프로젝트 · 버전 기록 · 자동 저장 · 여러 탭 · 썸네일 · 저장 공간 (7단계)
  */
 import { emptyProject, VIEW_IDS, type Project } from "../core/types";
-import { pickTextFile, saveFile } from "../files";
+import type { Doc } from "../core/document";
+import { pickFiles, saveFile } from "../files";
 import { listProjects } from "../library";
 import { Session } from "../session";
 import { setSaveErrorHandler, store } from "../store";
@@ -19,8 +20,8 @@ export let session: Session;
 let projectsDlg: ProjectsDialog;
 let versionsDlg: VersionsDialog;
 
-/** 새 프로젝트로 열기 — 지금 프로젝트는 ‘내 프로젝트’에 그대로 남는다 */
-export function openNew(p: Project) {
+/** 새 문서로 열기 — 지금 문서는 ‘내 프로젝트’에 그대로 남는다 */
+export function openNew(p: Doc | Project) {
   commitTyping();
   session.openAsNew(p).catch(warnStorage);
 }
@@ -106,14 +107,14 @@ export function initProjects() {
     newProject: () => openNew(emptyProject()),
     flush: () => session.flush(),
     toast,
-    download: (name, text) => void saveFile(name, text, "application/json", "json"),
-    pickText: () => pickTextFile(".json,application/json"),
+    download: (name, data, mime, ext) => void saveFile(name, data, mime, ext),
+    pickFile: async (accept) => (await pickFiles(accept))[0] ?? null,
     showVersions: (id) => void versionsDlg.open(id),
-    renameCurrent: (name) => store.update((p) => (p.name = name), "이름 바꾸기"),
+    renameCurrent: renameDoc,
   });
   versionsDlg = new VersionsDialog({
     currentId: () => store.projectId,
-    current: () => store.project,
+    current: () => store.doc,
     restore: (p) => {
       app.ai = null;
       ui.sel = null;
@@ -130,10 +131,10 @@ export function initProjects() {
 
   // 부품 이름 칸
   const nameInput = $<HTMLInputElement>("#name");
-  nameInput.onchange = () => store.update((p) => (p.name = nameInput.value.trim() || "새 부품"), "이름 바꾸기");
+  nameInput.onchange = () => renameDoc(nameInput.value.trim() || "새 부품");
   nameInput.onkeydown = (e) => e.key === "Enter" && nameInput.blur();
   const syncName = () => {
-    if (document.activeElement !== nameInput) nameInput.value = store.project.name;
+    if (document.activeElement !== nameInput) nameInput.value = store.doc.name;
   };
   store.subscribe(syncName);
   syncName();
@@ -144,6 +145,14 @@ export function initProjects() {
     toast(ok ? "저장 공간을 보호하도록 했어요." : "브라우저가 요청을 받아 주지 않았어요. 앱으로 설치하면 보통 보호돼요.");
     void showStorage();
   };
+}
+
+/** 문서 이름 바꾸기. 부품이 하나뿐이면 부품 이름도 (표제란 부품명) */
+export function renameDoc(name: string) {
+  store.updateDoc((d) => {
+    d.name = name;
+    if (d.parts.length === 1) d.parts[0].name = name;
+  }, "이름 바꾸기");
 }
 
 const mb = (b: number) => (b >= 1e9 ? `${(b / 1e9).toFixed(1)} GB` : `${Math.max(0.1, b / 1e6).toFixed(1)} MB`);

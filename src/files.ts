@@ -42,6 +42,18 @@ export function pickTextFile(accept: string): Promise<string | null> {
   });
 }
 
+/** 파일 고르기 (여러 개도) */
+export function pickFiles(accept: string, multiple = false): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.multiple = multiple;
+    input.onchange = () => resolve([...(input.files ?? [])]);
+    input.click();
+  });
+}
+
 export function safeName(s: string) {
   return s.replace(/[\\/:*?"<>|\s]+/g, "_").slice(0, 60) || "part";
 }
