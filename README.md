@@ -46,6 +46,15 @@
 ![변수와 식으로 묶인 치수](docs/screenshot-params.png)
 - 모델 트리, 속성 패널(숫자로 치수 수정), 실행 취소/다시 실행, 복제
 
+### 명령 찾기 · 단축키 · 화면 배치 · 설정
+- **명령 찾기** (<kbd>Ctrl</kbd>+<kbd>K</kbd> 또는 위쪽 ‘⌕ 명령 찾기’): 이름으로 아무 기능이나 찾아 실행 — **한글 초성**(ㅅㄱㅎ → 사각형 그리기), 영어(undo, print), 띄어쓰기 없이도. 최근 쓴 것이 위로
+- 모든 기능이 “명령”이라 메뉴(파일·편집·보기)·리본·단축키·명령 찾기가 같은 동작을 부른다. **한글 입력 상태에서도** 단축키가 그대로 동작
+- **실행 취소 기록** (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Z</kbd>): 지금까지 한 일(“사각형 그리기”, “치수 고치기”…) 목록에서 원하는 단계로 건너뛰기. 바뀐 곳만 기록해서 큰 부품도 가볍다
+- **화면 배치**: 패널 경계를 끌어 너비 조절, 두 번 눌러 접기(<kbd>Ctrl</kbd>+<kbd>B</kbd> 왼쪽, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>B</kbd> 오른쪽), 좌우 바꾸기 — 그대로 저장
+- **설정** (<kbd>Ctrl</kbd>+<kbd>,</kbd>): 테마(시스템/밝게/어둡게), 처음 격자, **단축키 바꾸기**(겹치면 알려 주고 정리), 실험 기능, 저장 공간, AI 키, 개발자(예제 작업 공간)
+
+![명령 찾기](docs/screenshot-palette.png)
+
 ### 작업 보관 · 버전 기록 · 오프라인
 - **내 프로젝트**(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>): 프로젝트 여러 개를 썸네일 카드로. 열기·복제·이름 바꾸기·찾기, **휴지통**(30일 안에 되살리기)
   - 새 부품·예제·파일 열기·가져오기는 모두 **새 프로젝트**로 열리고, 앞의 작업은 그대로 남음
@@ -153,9 +162,14 @@ npm run preview  # 빌드 결과 실행 — 앱 설치·오프라인은 이걸�
 | Ctrl+Z / Ctrl+Shift+Z | 실행 취소 / 다시 실행 | Ctrl+Alt+N | 새 부품 (새 프로젝트) |
 | Ctrl+Shift+O | 내 프로젝트 | Ctrl+Shift+S | 지금 버전 저장 |
 | Ctrl+S / Ctrl+O | 파일로 저장 / 파일 열기 (.json) | Ctrl+I / Ctrl+V | 도면 이미지 가져오기 / 캡처 붙여넣기 (실험) |
+| **Ctrl+K** / F1 | **명령 찾기** | Ctrl+, | 설정 (단축키 바꾸기) |
+| Ctrl+Alt+Z | 실행 취소 기록 | Ctrl+P | 도면 인쇄 / PDF |
+| Ctrl+B / Ctrl+Alt+B | 왼쪽 / 오른쪽 패널 접기 | | |
 | Esc | 그리기 취소 → 선택 해제 | Enter / 더블클릭 | 다각형 닫기 |
 | 휠 / 핀치 | 확대 | 휠 클릭·스페이스+끌기·빈 곳 끌기 | 화면 이동 |
 | 1 / 2 / 3 | 2D 설계 / 3D 보기 / 도면 출력 | | |
+
+단축키는 설정 ▸ 단축키에서 바꿀 수 있고, 바꾸면 메뉴·리본·명령 찾기의 표시도 따라 바뀝니다.
 
 ## 폴더 구조
 
@@ -184,6 +198,30 @@ src/
       pipeline.ts      위 단계를 한 번에 (어두운 바탕 뒤집기 포함)
       checks.ts        도면 이미지 검토 (AI 없이)
     samples.ts       예제
+    keys.ts          단축키 조합 (자판 위치로 읽기, 표시)
+    fuzzy.ts         명령 찾기 검색 (한글 초성, 건너뛰기 일치)
+    history.ts       실행 취소 기록 2.0 (바뀐 곳만, 크기 한도)
+    settings.ts      설정 형식·기본값·검사
+  main.ts          시작점: 모듈을 순서대로 붙이기만 (131줄)
+  app/             앱 뼈대
+    commands.ts      명령 시스템 (등록·단축키·찾기·겹침)
+    commandUI.ts     data-cmd 단추·메뉴를 명령에 잇기 (단축키 표시, 흐림·강조)
+    appCommands.ts   어디서나 쓰는 명령 (실행 취소, 설정, 테마, 내보내기, AI)
+    context.ts       같이 쓰는 상태, 화면 갱신, 이벤트
+    keyboard.ts      키 입력 → 명령
+    menus.ts         파일·편집·보기 메뉴
+    palette.ts       명령 찾기 (Ctrl+K)
+    historyPanel.ts  실행 취소 기록 창
+    layout.ts        패널 너비·접기·좌우 바꾸기
+    settingsDialog.ts  설정 화면 (단축키 바꾸기 포함)
+    prefs.ts         설정 저장·테마·실험 기능
+    fileMenu.ts      파일 열기·저장, 3D 파일·도면 이미지 가져오기, 끌어다 놓기
+    projects.ts      내 프로젝트·버전 기록·자동 저장 연결
+    build.ts         3D 자동 생성 (0.25초 모아서)
+    edit.ts          도형 편집 동작 (삭제·복제·가운데 맞춤…)
+    statusbar.ts · shell.ts · notify.ts · dom.ts
+  panels/          tree.ts · params.ts · props.ts · findings.ts (트리, 변수, 속성, 설계 검사·AI 검토)
+  workspaces/      작업 공간 모듈 — registry.ts(탭·숫자 키·붙이기/떼기), design.ts(+designRibbon), view3d.ts, sheet.ts, example.ts(새 모듈 본보기)
   ai.ts            Claude AI 설계 검토
   worker.ts        CAD 연산 (백그라운드 스레드)
   visionWorker.ts  도면 이미지 인식 (백그라운드 스레드)
@@ -203,7 +241,7 @@ src/
   ui/sketch.ts     제도판 위의 뷰 하나 (그리기, 스냅, 치수 입력, 검사 표시)
   ui/viewer.ts     3D 보기 (three.js)
   ui/state.ts      화면 상태 (도구, 선택, 카메라, 커서)
-  main.ts          화면 연결, 단축키, 알림
+  ui/modal.ts      가운데 뜨는 창 틀
 public/            앱 아이콘, manifest.webmanifest (설치 정보)
 vite.config.ts     빌드 설정 + 오프라인용 sw.js 만들기
 tests/             vitest

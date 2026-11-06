@@ -424,7 +424,7 @@ export class SketchPane {
     if (sel) {
       const h = this.hitHandle(sel, x, y);
       if (h) {
-        store.checkpoint();
+        store.checkpoint(h.kind === "vertex" ? "꼭짓점 옮기기" : "변 휘기");
         this.drag = h.kind === "vertex" ? { kind: "vertex", shape: sel, index: h.index, moved: false } : { kind: "bend", shapeId: sel.id, index: h.index, moved: false };
         return;
       }
@@ -433,7 +433,7 @@ export class SketchPane {
     if (hit) {
       ui.sel = { view: this.view, id: hit.id };
       ui.emit();
-      store.checkpoint();
+      store.checkpoint("도형 옮기기");
       this.drag = { kind: "move", shape: hit, orig: structuredClone(hit), anchor: keyPoints(hit)[0], grab: raw, moved: false };
       this.render();
       return;
@@ -513,6 +513,7 @@ export class SketchPane {
     }
     if (!d) return;
     if ((d.kind === "move" || d.kind === "vertex" || d.kind === "bend") && !d.moved) store.dropCheckpoint();
+    else store.commit();
     void e;
   }
 
@@ -543,9 +544,10 @@ export class SketchPane {
         s.hole = inside && small;
       }
     }
+    const what = { rect: "사각형", circle: s.hole ? "원형 구멍" : "원", poly: "다각형", slot: "장공" }[s.kind];
     store.update((p) => {
       p.views[this.view].push(s);
-    });
+    }, `${what} 그리기`);
     ui.sel = { view: this.view, id: s.id };
     ui.emit();
   }
@@ -628,7 +630,7 @@ export class SketchPane {
       if (all) corners.fill(value);
       else corners[index] = value;
       s.corners = corners.some(Boolean) ? corners : undefined;
-    });
+    }, same ? "모서리 해제" : ui.cornerKind === "fillet" ? "모서리 R" : "모따기");
     ui.sel = { view: this.view, id: s.id };
     ui.emit();
   }
@@ -705,7 +707,7 @@ export class SketchPane {
     const s = store.project.views[this.view].find((x) => x.id === d.shapeId);
     if (!s) return true;
     // 성공했을 때만 실행 취소 기록을 남긴다
-    store.checkpoint();
+    store.checkpoint("치수 고치기");
     const err = setDimInput(s, d.key, text, store.project);
     if (err) store.dropCheckpoint();
     else store.changed();

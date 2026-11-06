@@ -1,5 +1,6 @@
 import { applyExpressions } from "./core/params";
 import { normalizeProject } from "./core/project";
+import { History } from "./core/history";
 import { emptyProject, type Project, type Shape2D, type ViewId } from "./core/types";
 
 const KEY = "blueprint3d.project.v1";
@@ -8,7 +9,7 @@ type Listener = () => void;
 
 const restored = load();
 
-/** 프로젝트 상태 + 실행 취소/다시 실행 + 자동 저장 */
+/** 프로젝트 상태 + 실행 취소/다시 실행(바뀐 곳만 기록) + 자동 저장 */
 class Store {
   project: Project = restored?.project ?? emptyProject();
   /** 보관함(IndexedDB)에서 이 프로젝트의 id. 빈 문자열이면 아직 정해지지 않음 */
@@ -17,32 +18,34 @@ class Store {
   readonly restored = !!restored;
   /** 바뀔 때마다 1씩 증가 (화면 갱신 판단용) */
   version = 0;
-  private undoStack: string[] = [];
-  private redoStack: string[] = [];
+  readonly history = new History<Project>({ maxEntries: 500, maxBytes: 8_000_000 });
   private listeners = new Set<Listener>();
+  /** 실행 취소·다시 실행이 될 때 (이름 알림용) */
+  onUndoRedo: ((kind: "undo" | "redo", label: string) => void) | null = null;
 
   subscribe(fn: Listener) {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
   }
 
-  /** 변경 직전에 호출해서 실행 취소 지점을 남긴다. */
-  checkpoint() {
-    this.undoStack.push(JSON.stringify(this.project));
-    if (this.undoStack.length > 100) this.undoStack.shift();
-    this.redoStack = [];
+  /** 변경 직전에 호출해서 실행 취소 지점을 남긴다. 이름은 기록 창에 보인다 */
+  checkpoint(label = "편집") {
+    this.history.begin(this.project, label);
   }
 
   /** 변화가 없었으면 마지막 실행 취소 지점을 버린다. */
   dropCheckpoint() {
-    this.undoStack.pop();
+    this.history.cancel();
+  }
+
+  /** 끌기 등이 끝났을 때: 지금까지 바뀐 것을 기록 한 칸으로 */
+  commit() {
+    this.history.commit(this.project);
   }
 
   /** 마지막 실행 취소 지점으로 되돌리고, 다시 실행 기록은 남기지 않는다. */
   revert() {
-    const s = this.undoStack.pop();
-    if (!s) return;
-    this.project = JSON.parse(s);
+    this.project = this.history.revert(this.project);
     this.changed();
   }
 
@@ -55,47 +58,56 @@ class Store {
     this.listeners.forEach((l) => l());
   }
 
-  update(fn: (p: Project) => void) {
-    this.checkpoint();
+  update(fn: (p: Project) => void, label = "편집") {
+    this.checkpoint(label);
     fn(this.project);
+    applyExpressions(this.project);
+    this.commit();
     this.changed();
   }
 
-  replace(p: Project) {
-    this.checkpoint();
+  replace(p: Project, label = "바꾸기") {
+    this.checkpoint(label);
     this.project = structuredClone(p);
+    applyExpressions(this.project);
+    this.commit();
     this.changed();
   }
 
   /** 다른 프로젝트로 바꾸기: 실행 취소 기록도 새로 시작 */
   reset(p: Project) {
-    this.undoStack = [];
-    this.redoStack = [];
+    this.history.clear();
     this.project = structuredClone(p);
     this.changed();
   }
 
   undo() {
-    const s = this.undoStack.pop();
-    if (!s) return;
-    this.redoStack.push(JSON.stringify(this.project));
-    this.project = JSON.parse(s);
+    const r = this.history.undo(this.project);
+    if (!r) return;
+    this.project = r.state;
     this.changed();
+    this.onUndoRedo?.("undo", r.label);
   }
 
   redo() {
-    const s = this.redoStack.pop();
-    if (!s) return;
-    this.undoStack.push(JSON.stringify(this.project));
-    this.project = JSON.parse(s);
+    const r = this.history.redo(this.project);
+    if (!r) return;
+    this.project = r.state;
+    this.changed();
+    this.onUndoRedo?.("redo", r.label);
+  }
+
+  /** 기록의 pos번째 상태로 한 번에 (0 = 처음) */
+  goto(pos: number) {
+    this.project = this.history.goto(this.project, pos);
     this.changed();
   }
 
   get canUndo() {
-    return this.undoStack.length > 0;
+    return this.history.canUndo;
   }
   get canRedo() {
-    return this.redoStack.length > 0;
+    return this.history.canRedo;
   }
 
   /** 지금 상태를 브라우저(localStorage)에 바로 저장 */
