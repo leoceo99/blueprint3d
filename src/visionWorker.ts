@@ -26,6 +26,7 @@ export type VisionResponse =
       inH: number;
       quad: P2[] | null;
       angle: number;
+      inverted: boolean;
       analysis: Analysis;
       ms: number;
     }
@@ -51,6 +52,7 @@ self.onmessage = (ev: MessageEvent<VisionRequest>) => {
       inH: rot.h,
       quad: r.quad,
       angle: r.angle,
+      inverted: r.inverted,
       analysis: r.analysis,
       ms: Math.round(performance.now() - t0),
     };

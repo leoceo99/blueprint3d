@@ -357,6 +357,11 @@ export function project(shape: Shape3D, view: ViewId): ProjectedView {
 
 export function buildAll(p: Project): { shape: Shape3D; result: BuildResult } {
   const { shape, notes } = buildSolid(p);
+  return { shape, result: resultFor(shape, notes) };
+}
+
+/** 3D 형상 → 화면·도면에 필요한 것 (메쉬, 3면도 투영, 크기, 부피) */
+export function resultFor(shape: Shape3D, notes: string[]): BuildResult {
   const bbox = shape.boundingBox;
   if (!bbox || !(bbox.width + bbox.height + bbox.depth > 0)) throw new BuildError("결과 형상이 비어 있습니다. 뷰끼리 서로 겹치는지 확인하세요.");
   const size = Math.max(bbox.width, bbox.height, bbox.depth);
@@ -372,20 +377,17 @@ export function buildAll(p: Project): { shape: Shape3D; result: BuildResult } {
     volume = 0;
   }
   return {
-    shape,
-    result: {
-      mesh: {
-        vertices: Array.from(m.vertices),
-        normals: Array.from(m.normals),
-        triangles: Array.from(m.triangles),
-        edges: Array.from(e.lines),
-      },
-      projections,
-      bbox: bbox.bounds as BuildResult["bbox"],
-      volume,
-      solidCount: countSolids(shape),
-      notes,
+    mesh: {
+      vertices: Array.from(m.vertices),
+      normals: Array.from(m.normals),
+      triangles: Array.from(m.triangles),
+      edges: Array.from(e.lines),
     },
+    projections,
+    bbox: bbox.bounds as BuildResult["bbox"],
+    volume,
+    solidCount: countSolids(shape),
+    notes,
   };
 }
 

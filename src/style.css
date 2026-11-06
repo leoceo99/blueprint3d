@@ -378,6 +378,12 @@ label.block input { width: 100%; font-weight: 400; }
 .sheet-badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
 .sheet-badge:empty { display: none; }
 
+/* ---------- 가져온 3D 파일 표시줄 ---------- */
+.source-bar { display: flex; align-items: center; gap: 8px; padding: 5px 12px; background: var(--accent-soft); border-bottom: 1px solid var(--border); font-size: 12px; }
+.source-bar[hidden] { display: none; }
+.source-bar .sb-label { font-weight: 700; color: var(--accent); }
+.source-bar button { min-height: 24px; padding: 0 9px; font-size: 12px; }
+
 /* ---------- 도면 이미지 가져오기 ---------- */
 .import-dlg { position: fixed; inset: 0; z-index: 60; background: var(--bg); display: flex; flex-direction: column; outline: none; }
 .import-dlg[hidden] { display: none; }
@@ -400,6 +406,33 @@ label.block input { width: 100%; font-weight: 400; }
 .imp-foot { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
 .imp-go { min-height: 36px; font-weight: 700; }
 .warn { color: var(--sev-warning); }
+
+/* ---------- 도면 검토 (AI) ---------- */
+.rv-stage { display: flex; flex-direction: column; }
+.rv-thumbs { display: flex; gap: 8px; padding: 8px 10px; flex-wrap: wrap; border-bottom: 1px solid var(--border); background: var(--surface); min-height: 40px; }
+.rv-thumb { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; border: 1px solid var(--border); background: var(--bg); }
+.rv-thumb.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.rv-thumb canvas { display: block; border-radius: 3px; background: #fff; }
+.rv-num { font-size: 11px; color: var(--text-muted); }
+.rv-del { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 9px; background: var(--surface); border: 1px solid var(--border); font-size: 12px; line-height: 16px; text-align: center; cursor: pointer; }
+.rv-empty { padding: 4px; align-self: center; }
+.rv-canvas { display: block; flex: 1; min-height: 0; cursor: pointer; }
+.rv-panel textarea { width: 100%; resize: vertical; font: 12px system-ui, sans-serif; color: var(--text); }
+.rv-chip { display: inline-block; flex: none; white-space: nowrap; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 9px; color: #fff; margin-right: 6px; }
+.rv-error { background: #dc2626; }
+.rv-warning { background: #d97706; }
+.rv-info { background: #2563eb; }
+.rv-list { display: flex; flex-direction: column; gap: 6px; }
+.rv-item { border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; cursor: pointer; background: var(--bg); }
+.rv-item.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.rv-item p { margin: 4px 0 0; }
+.rv-item-head { display: flex; align-items: center; gap: 2px; }
+.rv-fix { color: var(--accent); }
+.rv-q { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.rv-dims summary { cursor: pointer; font-size: 12px; }
+.rv-dims div { padding: 1px 0 1px 10px; }
+.rv-dtitle { cursor: pointer; }
+.rv-foot { padding: 10px 14px; }
 
 @media print {
   html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; background: #fff !important; }

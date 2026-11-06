@@ -9,6 +9,7 @@ import { buildProject, defaultChoice, type ImportChoice } from "../core/vision/t
 import type { Project, Underlay, ViewId } from "../core/types";
 import { VIEW_LABEL } from "../core/types";
 import { maskToDataUrl } from "../underlay";
+import { drawingChecks } from "../core/vision/checks";
 import type { VisionRequest, VisionResponse } from "../visionWorker";
 
 type Result = Extract<VisionResponse, { ok: true }>;
@@ -43,7 +44,7 @@ function analyze(req: Omit<VisionRequest, "id">): Promise<Result> {
 }
 
 /** 파일 → 캔버스 (이미지 또는 PDF 한 쪽) */
-async function fileToCanvas(file: File, page = 1): Promise<{ canvas: HTMLCanvasElement; pages: number }> {
+export async function fileToCanvas(file: File, page = 1): Promise<{ canvas: HTMLCanvasElement; pages: number }> {
   const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
   if (isPdf) {
     const pdfjs = await import("pdfjs-dist");
@@ -125,7 +126,10 @@ export class ImportDialog {
   private busy = false;
   private hover: P2 | null = null;
 
-  constructor(private onDone: (out: ImportOutcome) => void) {
+  constructor(
+    private onDone: (out: ImportOutcome) => void,
+    private onReview?: (file: File) => void,
+  ) {
     this.canvas = h("canvas", {}, "imp-canvas");
     this.ctx = this.canvas.getContext("2d")!;
     this.msg = h("div", {}, "imp-msg");
@@ -378,6 +382,22 @@ export class ImportDialog {
     ul.onchange = () => (this.underlayOn = ul.checked);
     opts.push(h("label", {}, "imp-check", [ul, " 이 도면을 제도판에 밑그림으로 깔기"]));
     p.append(section("4. 구멍과 설정", opts));
+
+    // 5) 검토: AI 없이 알 수 있는 것 + AI 검토로 넘기기
+    const checks = drawingChecks(an, ch, { inverted: this.res.inverted, angle: this.res.angle, quad: !!this.res.quad });
+    const SEVC = { error: "rv-error", warning: "rv-warning", info: "rv-info" } as const;
+    const LBL = { error: "오류", warning: "주의", info: "확인" } as const;
+    const checkRows: Node[] = checks.length
+      ? checks.map((c) =>
+          h("div", {}, "rv-item", [
+            h("div", {}, "rv-item-head", [h("span", { textContent: LBL[c.severity] }, `rv-chip ${SEVC[c.severity]}`), h("b", { textContent: c.title })]),
+            h("p", { textContent: c.detail }, "small"),
+          ]),
+        )
+      : [h("p", { textContent: "그림으로 알 수 있는 문제는 없어요." }, "muted small")];
+    const ai = h("button", { textContent: "✦ AI로 읽고 검토 (손글씨 치수·메모)", title: "적힌 치수와 메모를 읽고, 뷰끼리 맞는지·빠진 치수·규격 문제를 찾아 줍니다" });
+    ai.onclick = () => this.file && this.onReview?.(this.file);
+    p.append(section("5. 검토", [...checkRows, ...(this.onReview ? [ai] : [])]));
 
     const go = h("button", { textContent: "가져와서 3D 만들기" }, "primary imp-go");
     go.disabled = !used.length || (this.scaleMode === "length" && !(this.measure.a && this.measure.b && this.measure.mm > 0));

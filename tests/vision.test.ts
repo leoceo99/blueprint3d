@@ -242,3 +242,14 @@ describe("사진·스캔", () => {
     expect(fb.kind === "rect" && [fb.w, fb.h]).toEqual([80, 25]);
   });
 });
+
+describe("어두운 바탕", () => {
+  it("검은 바탕에 흰 선(태블릿 메모)도 읽는다", () => {
+    const k = 5;
+    const c = guideDrawing(k, { thick: 0.5, thin: 0.18 });
+    const dark = { ...c.g, d: c.g.d.map((v) => 1 - v * 0.95) };
+    const r = runPipeline(dark, { quad: "auto" });
+    expect(r.inverted).toBe(true);
+    expect(r.analysis.views.filter((v) => v.role).length).toBe(3);
+  });
+});

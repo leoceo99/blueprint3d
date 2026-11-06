@@ -314,11 +314,14 @@ export function buildSheet(res: BuildResult, project: Project): Sheet {
         for (const prim of parseProjection(d, layer)) prims.push(transformPrim(prim, (q) => P(v, q[0], q[1]), s));
   }
 
+  // 가져온 3D 파일이면 3D에서 찾은 구멍을, 아니면 스케치 도형을 쓴다
+  const feat: Project = res.holes && project.source ? { ...project, mode: "auto", views: res.holes } : project;
+
   // 2) 중심선과 구멍 표시
-  addCenterLines(prims, project, res, P, s);
+  addCenterLines(prims, feat, res, P, s);
 
   // 3) 치수: 구멍 위치(좌표 치수) → 전체 치수는 그 바깥
-  const holeDims = addHoleDims(prims, texts, project, V, P, box, s);
+  const holeDims = addHoleDims(prims, texts, feat, V, P, box, s);
   const fb = box("front");
   const sb = box("side");
   const offFront = holeDims.front.bottom ? 16 : 9;

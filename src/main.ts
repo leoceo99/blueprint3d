@@ -23,7 +23,9 @@ import { engine } from "./engine";
 import { pickTextFile, safeName, saveFile } from "./files";
 import { normalizeProject } from "./core/project";
 import { ImportDialog } from "./ui/importDialog";
+import { ReviewDialog } from "./ui/reviewDialog";
 import { getUnderlayData, onUnderlayReady, putUnderlay } from "./underlay";
+import { getFile, putFile } from "./fileStore";
 import { newId, store } from "./store";
 import { DraftBoard } from "./ui/board";
 import { fmt, refreshColors, shapeLabel } from "./ui/sketch";
@@ -68,6 +70,7 @@ function requestRender() {
     if (key !== panelKey) {
       panelKey = key;
       renderTree();
+      renderSourceBar();
       renderParams();
       renderProps();
       renderFindings();
@@ -1069,7 +1072,8 @@ async function waitForBuild() {
 
 async function runBuild() {
   const seq = ++buildSeq;
-  const hasAny = VIEW_IDS.some((v) => store.project.views[v].some((s) => !s.hole));
+  const source = store.project.source;
+  const hasAny = !!source || VIEW_IDS.some((v) => store.project.views[v].some((s) => !s.hole));
   if (!hasAny) {
     lastBuild = null;
     buildError = undefined;
@@ -1080,7 +1084,9 @@ async function runBuild() {
     return;
   }
   try {
-    const res = await engine.build(structuredClone(store.project));
+    const res = source
+      ? await engine.buildImported(structuredClone(source), () => getFile(source.key))
+      : await engine.build(structuredClone(store.project));
     if (seq !== buildSeq) return;
     lastBuild = res;
     buildError = undefined;
@@ -1214,33 +1220,99 @@ for (const s of SAMPLES) {
 fileMenu.querySelector<HTMLButtonElement>('[data-act="new"]')!.onclick = () => loadProject(emptyProject());
 fileMenu.querySelector<HTMLButtonElement>('[data-act="open"]')!.onclick = openProject;
 fileMenu.querySelector<HTMLButtonElement>('[data-act="save"]')!.onclick = saveProject;
+fileMenu.querySelector<HTMLButtonElement>('[data-act="import3d"]')!.onclick = () => {
+  fileMenu.hidden = true;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".step,.stp,.stl,model/step,model/stl";
+  input.onchange = () => input.files?.[0] && import3D(input.files[0]);
+  input.click();
+};
+
+// ---------------- 3D 파일 가져오기 (STEP·STL) ----------------
+const is3D = (f: File) => /\.(step|stp|stl)$/i.test(f.name);
+async function import3D(file: File) {
+  const kind = /\.stl$/i.test(file.name) ? "stl" : "step";
+  const data = await file.arrayBuffer();
+  const key = `m${Date.now().toString(36)}`;
+  await putFile(key, data);
+  const p = emptyProject();
+  p.name = file.name.replace(/\.[^.]+$/, "") || "가져온 부품";
+  p.source = { kind, name: file.name, key, turns: [0, 0, 0] };
+  loadProject(p);
+  showWorkspace("3d");
+  toast(`${file.name}을(를) 읽는 중… 방향이 다르면 위쪽 ‘X ↻ Y ↻ Z ↻’로 돌리세요. 도면은 ‘도면 출력’(3)에서.`);
+}
+function renderSourceBar() {
+  const s = store.project.source;
+  $("#sourceBar").hidden = !s;
+  if (!s) return;
+  $("#sourceName").textContent = s.name;
+  $("#sourceHint").textContent = s.kind === "stl" ? "· STL(삼각형 메쉬)" : "· STEP";
+}
+$$<HTMLButtonElement>("[data-turn]").forEach(
+  (b) =>
+    (b.onclick = () =>
+      store.update((p) => {
+        if (!p.source) return;
+        const t = [...p.source.turns] as [number, number, number];
+        const i = Number(b.dataset.turn);
+        t[i] = (t[i] + 1) % 4;
+        p.source.turns = t;
+      })),
+);
+$("#sourceClose").onclick = () => store.update((p) => delete p.source);
+
 fileMenu.querySelector<HTMLButtonElement>('[data-act="import"]')!.onclick = () => {
   fileMenu.hidden = true;
   importDlg.pickFile();
 };
 
 // ---------------- 도면 이미지 가져오기 ----------------
-const importDlg = new ImportDialog(({ project, underlay }) => {
-  if (underlay) putUnderlay(underlay.meta.key, underlay.dataUrl);
-  loadProject(project);
-  showWorkspace("design");
-  const n = VIEW_IDS.filter((v) => project.views[v].length).length;
-  toast(`도면을 가져왔어요 (뷰 ${n}개). 3D 보기(2)로 확인하고, 다른 곳은 속성 패널에서 고치세요. Ctrl+Z로 되돌릴 수 있어요.`);
+const reviewDlg = new ReviewDialog({
+  onDraft: (p) => {
+    loadProject(p);
+    showWorkspace("3d");
+    toast("AI가 읽은 치수로 3D 초안을 만들었어요. 틀린 곳은 2D 설계(1)에서 고치세요. Ctrl+Z로 되돌릴 수 있어요.");
+  },
+  openSettings: () => openSettings(),
 });
+const importDlg = new ImportDialog(
+  ({ project, underlay }) => {
+    if (underlay) putUnderlay(underlay.meta.key, underlay.dataUrl);
+    loadProject(project);
+    showWorkspace("design");
+    const n = VIEW_IDS.filter((v) => project.views[v].length).length;
+    toast(`도면을 가져왔어요 (뷰 ${n}개). 3D 보기(2)로 확인하고, 다른 곳은 속성 패널에서 고치세요. Ctrl+Z로 되돌릴 수 있어요.`);
+  },
+  (file) => {
+    importDlg.close();
+    reviewDlg.open([file]);
+  },
+);
+fileMenu.querySelector<HTMLButtonElement>('[data-act="review"]')!.onclick = () => {
+  fileMenu.hidden = true;
+  reviewDlg.open();
+};
 const isImage = (f: File) => /^image\//.test(f.type) || /\.(png|jpe?g|webp|bmp|gif|pdf)$/i.test(f.name) || f.type === "application/pdf";
 window.addEventListener("dragover", (e) => {
   if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
 });
 window.addEventListener("drop", (e) => {
-  const f = e.dataTransfer?.files?.[0];
+  const all = [...(e.dataTransfer?.files ?? [])];
+  const f = all[0];
   if (!f) return;
   e.preventDefault();
+  if (reviewDlg.isOpen || importDlg.isOpen) return;
+  // 그림 여러 장 → 도면 검토
+  if (all.length > 1 && all.every(isImage)) return void reviewDlg.open(all);
   if (isImage(f)) importDlg.open(f);
+  else if (is3D(f)) import3D(f);
   else if (/\.json$/i.test(f.name)) f.text().then(openProjectText);
-  else toast("이미지(PNG·JPG)나 PDF, 프로젝트 파일(.json)을 놓아 주세요.");
+  else toast("이미지(PNG·JPG)·PDF, 3D 파일(STEP·STL), 프로젝트 파일(.json)을 놓아 주세요.");
 });
 window.addEventListener("paste", (e) => {
-  if (isTyping() || importDlg.isOpen) return;
+  if (isTyping() || importDlg.isOpen || reviewDlg.isOpen) return;
   const item = [...(e.clipboardData?.items ?? [])].find((i) => i.kind === "file" && i.type.startsWith("image/"));
   const f = item?.getAsFile();
   if (f) {
@@ -1260,21 +1332,40 @@ function openProjectText(text: string) {
     // 프로젝트 파일에 함께 넣어 둔 밑그림 이미지
     const data = raw?.underlay?.data;
     if (raw?.underlay) delete raw.underlay.data;
+    const model = raw?.source?.data;
+    if (raw?.source) delete raw.source.data;
     const p = normalizeProject(raw);
     if (!p) throw new Error();
     if (p.underlay && typeof data === "string" && data.startsWith("data:image/")) putUnderlay(p.underlay.key, data);
-    loadProject(p);
+    if (p.source && typeof model === "string") putFile(p.source.key, fromBase64(model)).then(() => loadProject(p));
+    else loadProject(p);
   } catch {
     toast("프로젝트 파일을 읽을 수 없습니다.");
   }
 }
-function saveProject() {
+async function saveProject() {
   fileMenu.hidden = true;
-  // 밑그림 이미지도 파일에 넣어 다른 컴퓨터에서도 보이게
+  // 밑그림 이미지와 가져온 3D 파일도 프로젝트 파일에 넣어 다른 컴퓨터에서도 열리게
   const p = store.project;
   const data = p.underlay ? getUnderlayData(p.underlay.key) : null;
-  const out = data && p.underlay ? { ...p, underlay: { ...p.underlay, data } } : p;
+  let out: Record<string, unknown> = data && p.underlay ? { ...p, underlay: { ...p.underlay, data } } : { ...p };
+  if (p.source) {
+    const bytes = await getFile(p.source.key);
+    if (bytes) out = { ...out, source: { ...p.source, data: toBase64(bytes) } };
+  }
   saveFile(`${base()}.blueprint3d.json`, JSON.stringify(out, null, 2), "application/json", "json");
+}
+function toBase64(buf: ArrayBuffer): string {
+  const b = new Uint8Array(buf);
+  let s = "";
+  for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+function fromBase64(s: string): ArrayBuffer {
+  const bin = atob(s);
+  const b = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
+  return b.buffer;
 }
 function loadProject(p: Project) {
   fileMenu.hidden = true;
@@ -1290,7 +1381,7 @@ function isTyping() {
   return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
 }
 window.addEventListener("keydown", (e) => {
-  if (settings.open || importDlg.isOpen) return;
+  if (settings.open || importDlg.isOpen || reviewDlg.isOpen) return;
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === "s") {
     e.preventDefault();

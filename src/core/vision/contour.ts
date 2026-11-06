@@ -172,6 +172,8 @@ export function robustCircle(p: P2[], start: CircleFit): CircleFit | null {
     f = fitCircle(inl);
   }
   if (inl.length < 0.7 * p.length || f.r < 3) return null;
+  // 맞춘 원이 점들의 범위보다 훨씬 크면 원이 아니다
+  if (!fitsExtent(p, f.r)) return null;
   if (f.rms > Math.max(0.6, 0.015 * f.r)) return null;
   const ang = inl.map((q) => Math.atan2(q[1] - f.c[1], q[0] - f.c[0])).sort((a, b) => a - b);
   let gap = ang[0] + 2 * Math.PI - ang[ang.length - 1];
@@ -224,6 +226,22 @@ export function fitCapsule(p: P2[]): { a: P2; b: P2; r: number } | null {
     if (good < 0.6 * cap.length) return null;
   }
   return { a, b, r };
+}
+
+/** 지름이 점들의 범위와 비슷한지 (0.8~1.2배) */
+function fitsExtent(p: P2[], r: number): boolean {
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  for (const q of p) {
+    x0 = Math.min(x0, q[0]);
+    x1 = Math.max(x1, q[0]);
+    y0 = Math.min(y0, q[1]);
+    y1 = Math.max(y1, q[1]);
+  }
+  const ext = Math.max(x1 - x0, y1 - y0);
+  return 2 * r <= 1.2 * ext && 2 * r >= 0.8 * ext;
 }
 
 export interface LineFit {
@@ -321,7 +339,8 @@ export function fitContour(raw: P2[], opts: { eps?: number; minSeg?: number } = 
   });
   const n = p.length;
   const circ = fitCircle(p);
-  if (circ.r > 2 && circ.rms <= Math.max(0.6, 0.015 * circ.r) && circ.max <= Math.max(1.6, 0.05 * circ.r))
+  // 원은 점들의 범위와 크기가 비슷해야 한다 (거의 곧은 선을 아주 큰 원으로 맞추지 않게)
+  if (circ.r > 2 && fitsExtent(p, circ.r) && circ.rms <= Math.max(0.6, 0.015 * circ.r) && circ.max <= Math.max(1.6, 0.05 * circ.r))
     return { kind: "circle", c: circ.c, r: circ.r };
   const robust = robustCircle(p, circ);
   if (robust) return { kind: "circle", c: robust.c, r: robust.r };
@@ -608,7 +627,20 @@ function refine(prims: Prim[], pts: P2[]): Prim[] {
     out[i].b = v;
     out[(i + 1) % n].a = v;
   }
-  return out;
+  return out.map((pr, i) => {
+    if (pr.t !== "arc") return pr;
+    const orig = prims[i] as Extract<Prim, { t: "arc" }>;
+    // 원래 원호가 a→b로 돌던 방향 (화면 각도로 + 또는 -)
+    const ang = (q: P2) => Math.atan2(q[1] - pr.c[1], q[0] - pr.c[0]);
+    const norm = (x: number) => ((x % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const dirPlus = norm(ang(orig.m) - ang(orig.a)) < norm(ang(orig.b) - ang(orig.a));
+    const a0 = ang(pr.a);
+    let sweep = norm(ang(pr.b) - a0);
+    if (!dirPlus) sweep = sweep - 2 * Math.PI;
+    if (Math.abs(sweep) > (300 * Math.PI) / 180 || Math.abs(sweep) < 1e-3) return { t: "line", a: pr.a, b: pr.b, i0: pr.i0, i1: pr.i1 } as Prim;
+    const am = a0 + sweep / 2;
+    return { ...pr, m: [pr.c[0] + pr.r * Math.cos(am), pr.c[1] + pr.r * Math.sin(am)] as P2 };
+  });
 }
 
 /** 1차원 황금 분할 탐색 (최솟값 위치) */

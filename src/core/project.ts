@@ -87,6 +87,19 @@ export function normalizeProject(raw: unknown): Project | null {
   else delete out.params;
   if (sheet && Object.keys(sheet).length) out.sheet = sheet;
   else delete out.sheet;
+  const src = raw.source;
+  if (
+    !(
+      obj(src) &&
+      (src.kind === "step" || src.kind === "stl") &&
+      typeof src.name === "string" &&
+      typeof src.key === "string" &&
+      Array.isArray(src.turns) &&
+      src.turns.length === 3 &&
+      src.turns.every((t) => Number.isInteger(t))
+    )
+  )
+    delete out.source;
   const u = raw.underlay;
   if (!(obj(u) && typeof u.key === "string" && num(u.w) && num(u.h) && num(u.mmPerPx) && u.mmPerPx > 0 && obj(u.views))) delete out.underlay;
   return out as unknown as Project;

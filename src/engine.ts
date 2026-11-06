@@ -1,4 +1,4 @@
-import type { BuildResult, Project } from "./core/types";
+import type { BuildResult, ModelSource, Project } from "./core/types";
 import type { WorkerRequest, WorkerResponse } from "./worker";
 
 /** 무거운 CAD 연산은 Web Worker에서 실행해 화면이 멈추지 않게 한다. */
@@ -25,6 +25,19 @@ class Engine {
 
   async build(project: Project): Promise<BuildResult> {
     const r = await this.call({ type: "build", project } as any);
+    if (!r.ok) throw new Error(r.error);
+    if (r.type !== "build") throw new Error("unexpected");
+    return r.result;
+  }
+
+  /** 가져온 3D 파일로 결과 만들기. 워커가 처음 보는 파일이면 내용을 함께 보낸다 */
+  async buildImported(source: ModelSource, load: () => Promise<ArrayBuffer | null>): Promise<BuildResult> {
+    let r = await this.call({ type: "import", source } as any);
+    if (!r.ok && r.needData) {
+      const data = await load();
+      if (!data) throw new Error("가져온 3D 파일을 이 브라우저에서 찾을 수 없습니다. 파일을 다시 가져오세요.");
+      r = await this.call({ type: "import", source, data } as any);
+    }
     if (!r.ok) throw new Error(r.error);
     if (r.type !== "build") throw new Error("unexpected");
     return r.result;

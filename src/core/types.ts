@@ -63,6 +63,15 @@ export interface Underlay {
   show?: boolean;
 }
 
+/** 가져온 3D 파일 */
+export interface ModelSource {
+  kind: "step" | "stl";
+  name: string;
+  key: string;
+  /** 90° 돌리기 횟수: X축, Y축, Z축 순서 */
+  turns: [number, number, number];
+}
+
 /** 이름 붙은 변수 (예: L = 80, t = 10, e = L/10) */
 export interface Param {
   name: string;
@@ -166,6 +175,8 @@ export interface Project {
   sheet?: SheetInfo;
   /** 가져온 도면 이미지 밑그림 */
   underlay?: Underlay;
+  /** 다른 CAD에서 가져온 3D 파일. 있으면 3D·도면은 이 모델로 만든다 (파일 내용은 브라우저 저장소에 key로) */
+  source?: ModelSource;
   views: Record<ViewId, Shape2D[]>;
 }
 
@@ -225,4 +236,6 @@ export interface BuildResult {
   solidCount: number;
   /** 사용자에게 알려줄 참고 메시지 (예: 어떤 방식으로 만들었는지) */
   notes: string[];
+  /** 가져온 3D 모델에서 찾은 구멍 (뷰 좌표). 도면의 구멍 지시에 쓴다 */
+  holes?: Record<ViewId, Shape2D[]>;
 }

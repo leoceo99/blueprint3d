@@ -18,6 +18,8 @@
           <button data-act="save">저장… <kbd>Ctrl+S</kbd></button>
           <hr />
           <button data-act="import" title="사진·스캔·PDF 도면에서 뷰와 구멍을 읽어 3D로">도면 이미지 가져오기… <kbd>Ctrl+I</kbd></button>
+          <button data-act="import3d" title="다른 CAD에서 만든 STEP·STL 파일로 3면도 만들기">3D 파일 가져오기 (STEP·STL)…</button>
+          <button data-act="review" title="사진·손 스케치·도면 여러 장을 AI가 읽고 잘못된 점을 알려 줍니다">도면 검토 (AI, 사진·스케치)…</button>
           <hr />
           <div class="dd-label">예제 불러오기</div>
           <div id="samples"></div>
@@ -108,6 +110,17 @@
       </div>
     </div>
 
+    <div id="sourceBar" class="source-bar" hidden>
+      <span class="sb-label">가져온 3D 파일</span>
+      <b id="sourceName"></b>
+      <span class="muted small" id="sourceHint"></span>
+      <div class="spacer"></div>
+      <span class="muted small">방향 돌리기 (90°)</span>
+      <button data-turn="0" title="X축으로 90° 돌리기">X ↻</button>
+      <button data-turn="1" title="Y축으로 90° 돌리기">Y ↻</button>
+      <button data-turn="2" title="Z축으로 90° 돌리기">Z ↻</button>
+      <button id="sourceClose" title="가져온 3D 파일을 닫고 빈 스케치로 (Ctrl+Z로 되돌릴 수 있어요)">닫기</button>
+    </div>
     <main id="ws-main" class="workspace">
       <aside class="panel left">
         <div class="panel-head">모델 트리</div>

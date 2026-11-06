@@ -387,6 +387,23 @@ export function detect(ink: Mask): Analysis {
       for (const o of single) add(o, false);
     }
   }
+  // 뷰 밖으로 삐져나간 구멍 후보는 버린다 (지시선·글자가 엉뚱하게 맞춰진 것)
+  for (const v of views) {
+    const [vx0, vy0, vx1, vy1] = v.box;
+    const m = 0.05 * Math.max(vx1 - vx0, vy1 - vy0);
+    v.holes = v.holes.filter((hh) => hh.box[0] >= vx0 - m && hh.box[1] >= vy0 - m && hh.box[2] <= vx1 + m && hh.box[3] <= vy1 + m);
+  }
+  // 빗금이 많은 뷰: 빗금 사이 작은 고리는 구멍이 아닐 가능성이 크다
+  for (const v of views) {
+    const faces = v.holes.filter((hh) => hh.note?.startsWith("안쪽 면")).length;
+    if (faces < 5) continue;
+    const size = Math.max(v.box[2] - v.box[0], v.box[3] - v.box[1]);
+    for (const hh of v.holes)
+      if (Math.max(hh.box[2] - hh.box[0], hh.box[3] - hh.box[1]) < 0.04 * size) {
+        hh.on = false;
+        hh.note = "안쪽 면 (빗금 사이 작은 고리)";
+      }
+  }
   // 동심원 바깥쪽(카운터보어·보스일 수 있음)은 기본으로 끈다
   for (const v of views)
     for (const a of v.holes) {

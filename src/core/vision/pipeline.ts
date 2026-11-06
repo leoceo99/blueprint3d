@@ -26,6 +26,8 @@ export interface PipelineResult {
   quad: P2[] | null;
   /** 바로잡은 기울기 (도) */
   angle: number;
+  /** 어두운 바탕(태블릿 검은 화면·칠판)이라 밝기를 뒤집었는지 */
+  inverted: boolean;
   analysis: Analysis;
 }
 
@@ -46,6 +48,13 @@ export function runPipeline(input: Gray, opts: PipelineOptions = {}): PipelineRe
     const k = maxSide / Math.max(g.w, g.h);
     g = resize(g, Math.round(g.w * k), Math.round(g.h * k));
   }
+  // 바탕이 어두우면(검은 바탕에 흰 선: 태블릿 메모·칠판) 뒤집어서 흰 종이에 검은 선처럼.
+  // 사진 속 종이를 편 뒤에 판단해야 어두운 책상을 바탕으로 착각하지 않는다
+  const inverted = median(g.d) < 0.4;
+  if (inverted) {
+    g = { ...g, d: g.d.slice() };
+    for (let i = 0; i < g.d.length; i++) g.d[i] = 1 - g.d[i];
+  }
   let n = normalize(g);
   let ink = binarize(n);
   let angle = 0;
@@ -57,5 +66,14 @@ export function runPipeline(input: Gray, opts: PipelineOptions = {}): PipelineRe
     }
   }
   const analysis = detect(ink);
-  return { gray: n, ink, quad, angle, analysis };
+  return { gray: n, ink, quad, angle, inverted, analysis };
+}
+
+/** 대략의 가운데 값 (표본으로) */
+function median(d: Float32Array): number {
+  const step = Math.max(1, Math.floor(d.length / 20000));
+  const s: number[] = [];
+  for (let i = 0; i < d.length; i += step) s.push(d[i]);
+  s.sort((a, b) => a - b);
+  return s[Math.floor(s.length / 2)] ?? 1;
 }
