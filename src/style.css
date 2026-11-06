@@ -183,6 +183,16 @@ kbd {
 .corner-opts .unit { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-muted); }
 .corner-opts input { width: 54px; min-height: 22px; height: 22px; padding: 1px 4px; }
 .glabel { text-align: center; font-size: 10.5px; color: var(--text-muted); padding: 2px 0 4px; }
+/* 작은 노트북 화면(1280~1420px)에서도 리본이 한 줄에 다 보이게 */
+@media (max-width: 1420px) {
+  .ribbon { padding: 4px 4px 0; }
+  .group { padding: 0 5px; }
+  .group .tools button { width: 44px; font-size: 10.5px; }
+  .group .fields { gap: 6px; }
+  #mode { max-width: 132px; }
+  #process { max-width: 112px; }
+  #thickness { width: 60px; }
+}
 
 /* ---------- 작업 영역 ---------- */
 .workspace { flex: 1; min-height: 0; display: flex; }
@@ -355,10 +365,25 @@ label.block input { width: 100%; font-weight: 400; }
 }
 .toast[hidden] { display: none; }
 
+.sheet-body { flex: 1; min-height: 0; display: flex; }
+.sheet-settings { width: 250px; flex: none; background: var(--surface); border-right: 1px solid var(--border); overflow: auto; }
+.sheet-form { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.sheet-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-muted); }
+.sheet-form input, .sheet-form select, .sheet-form textarea { width: 100%; color: var(--text); }
+.sheet-form textarea { resize: vertical; font: 12px system-ui, sans-serif; }
+.form-sep { font-size: 11px; font-weight: 700; color: var(--text-muted); border-top: 1px solid var(--border); padding-top: 8px; margin-top: 2px; }
+.small { font-size: 11px; }
+.sheet-badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+.sheet-badge:empty { display: none; }
+
 @media print {
+  html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; background: #fff !important; }
   body > *:not(#ws-sheet) { display: none !important; }
-  #ws-sheet { display: block !important; }
-  .sheet-toolbar { display: none; }
-  .sheet-host { padding: 0; background: #fff; }
-  .sheet-host svg { width: 100%; box-shadow: none; }
+  #ws-sheet { display: block !important; height: auto !important; }
+  .sheet-toolbar, .sheet-settings { display: none !important; }
+  .sheet-body { display: block; }
+  .sheet-host { padding: 0; background: #fff; display: block; overflow: visible; }
+  /* 용지 크기(mm) 그대로 = 실제 척도로 인쇄 */
+  .sheet-host { height: auto !important; }
+  .sheet-host svg { display: block; width: auto; height: auto; max-width: none; max-height: none; box-shadow: none; border-radius: 0; }
 }

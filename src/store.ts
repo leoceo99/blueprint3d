@@ -1,4 +1,5 @@
 import { applyExpressions } from "./core/params";
+import { normalizeProject } from "./core/project";
 import { emptyProject, type Project, type Shape2D, type ViewId } from "./core/types";
 
 const KEY = "blueprint3d.project.v1";
@@ -92,8 +93,7 @@ function load(): Project | null {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
-    const p = JSON.parse(raw);
-    return p?.version === 1 ? p : null;
+    return normalizeProject(JSON.parse(raw));
   } catch {
     return null;
   }

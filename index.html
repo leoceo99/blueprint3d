@@ -167,14 +167,42 @@
     <main id="ws-sheet" class="workspace sheet-ws" hidden>
       <div class="sheet-toolbar">
         <span class="muted">3D 모델에서 자동 생성된 3각법 3면도</span>
+        <span id="sheetInfo" class="sheet-badge"></span>
         <div class="spacer"></div>
         <button id="expSvg">SVG 저장</button>
-        <button id="expDxf">DXF 저장 (AutoCAD)</button>
+        <button id="expDxf" title="실제 크기(1:1) — 선·원호·중심선·치수 레이어">DXF 저장 (AutoCAD)</button>
         <button id="expStl">STL 저장 (3D 프린팅)</button>
         <button id="expStep">STEP 저장 (CAD)</button>
-        <button id="printBtn">인쇄 / PDF</button>
+        <button id="printBtn" class="primary" title="용지 크기 그대로 인쇄하거나 PDF로 저장">인쇄 / PDF</button>
       </div>
-      <div id="sheetHost" class="sheet-host"></div>
+      <div class="sheet-body">
+        <aside class="sheet-settings" id="sheetSettings">
+          <div class="panel-head">도면 설정</div>
+          <div class="sheet-form">
+            <label>용지 (가로)
+              <select data-sheet="paper">
+                <option value="auto">자동</option><option value="A4">A4</option><option value="A3">A3</option><option value="A2">A2</option>
+              </select>
+            </label>
+            <label>척도
+              <select data-sheet="scale">
+                <option value="auto">자동</option>
+                <option>5:1</option><option>2:1</option><option>1:1</option><option>1:2</option><option>1:5</option><option>1:10</option><option>1:20</option><option>1:50</option>
+              </select>
+            </label>
+            <div class="form-sep">표제란</div>
+            <label>재질 <input data-sheet="material" placeholder="예: SM45C, AL6061" /></label>
+            <label>수량 <input data-sheet="qty" placeholder="1" /></label>
+            <label>설계 <input data-sheet="drawnBy" placeholder="이름" /></label>
+            <label>일반 공차 <input data-sheet="tolerance" placeholder="KS B ISO 2768-m" /></label>
+            <label>주기 (한 줄에 하나)
+              <textarea data-sheet="note" rows="4" placeholder="지시 없는 모따기 C0.5&#10;날카로운 모서리 제거"></textarea>
+            </label>
+            <p class="muted small">부품명은 위쪽 이름 칸을 씁니다. DXF는 실제 크기(1:1)로 저장됩니다.</p>
+          </div>
+        </aside>
+        <div id="sheetHost" class="sheet-host"></div>
+      </div>
     </main>
 
     <footer class="statusbar">

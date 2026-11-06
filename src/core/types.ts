@@ -33,6 +33,21 @@ interface ShapeBase {
   exprs?: Record<string, string>;
 }
 
+/** 출력 도면 설정 */
+export interface SheetInfo {
+  /** 용지 (가로 방향). auto면 1:1이 들어가는 가장 작은 용지 */
+  paper?: "auto" | "A4" | "A3" | "A2";
+  /** 척도 "auto" 또는 "1:1", "1:2", "2:1" … */
+  scale?: string;
+  material?: string;
+  qty?: string;
+  drawnBy?: string;
+  /** 일반 공차 (기본: KS B ISO 2768-m) */
+  tolerance?: string;
+  /** 주기 (여러 줄) */
+  note?: string;
+}
+
 /** 이름 붙은 변수 (예: L = 80, t = 10, e = L/10) */
 export interface Param {
   name: string;
@@ -132,6 +147,8 @@ export interface Project {
   thicknessExpr?: string;
   /** 변수 목록 */
   params?: Param[];
+  /** 출력 도면 설정 (용지, 척도, 표제란) */
+  sheet?: SheetInfo;
   views: Record<ViewId, Shape2D[]>;
 }
 

@@ -21,6 +21,7 @@ import {
 } from "./core/types";
 import { engine } from "./engine";
 import { pickTextFile, safeName, saveFile } from "./files";
+import { normalizeProject } from "./core/project";
 import { newId, store } from "./store";
 import { DraftBoard } from "./ui/board";
 import { fmt, refreshColors, shapeLabel } from "./ui/sketch";
@@ -991,7 +992,7 @@ $("#aiBtn").onclick = async () => {
   requestRender();
   try {
     await waitForBuild();
-    const sheet = lastBuild ? buildSheet(lastBuild, store.project.name) : null;
+    const sheet = lastBuild ? buildSheet(lastBuild, store.project) : null;
     const [imageSheet, image3d] = await Promise.all([sheet ? svgToPng(sheet.svg) : null, Promise.resolve(viewer.capture())]);
     const res = await requestReview(
       {
@@ -1122,13 +1123,49 @@ function renderSheet() {
     host.innerHTML = `<p class="empty">3D 모델이 만들어지면 정면도·평면도·우측면도가 자동으로 그려집니다.</p>`;
     return;
   }
-  lastSheet = buildSheet(lastBuild, store.project.name);
+  lastSheet = buildSheet(lastBuild, store.project);
   host.innerHTML = lastSheet.svg;
+  $("#sheetInfo").textContent = `${lastSheet.paper} · ${lastSheet.scaleLabel}`;
+  syncSheetForm();
 }
+
+// 도면 설정 (용지, 척도, 표제란): 프로젝트에 저장
+const sheetFields = $$<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("[data-sheet]");
+function syncSheetForm() {
+  const info = store.project.sheet ?? {};
+  for (const f of sheetFields) {
+    if (document.activeElement === f) continue;
+    const key = f.dataset.sheet as keyof NonNullable<Project["sheet"]>;
+    f.value = (info[key] as string | undefined) ?? (f.tagName === "SELECT" ? "auto" : "");
+  }
+}
+for (const f of sheetFields)
+  f.onchange = () => {
+    const key = f.dataset.sheet as keyof NonNullable<Project["sheet"]>;
+    const value = f.value.trim();
+    store.update((p) => {
+      const next = { ...(p.sheet ?? {}) } as Record<string, string | undefined>;
+      if (!value || value === "auto") delete next[key];
+      else next[key] = f.tagName === "TEXTAREA" ? f.value : value;
+      p.sheet = Object.keys(next).length ? (next as Project["sheet"]) : undefined;
+    });
+    renderSheet();
+  };
 const base = () => safeName(store.project.name);
 $("#expSvg").onclick = () => lastSheet && saveFile(`${base()}_도면.svg`, lastSheet.svg, "image/svg+xml", "svg");
 $("#expDxf").onclick = () => lastSheet && saveFile(`${base()}_도면.dxf`, sheetToDXF(lastSheet), "application/dxf", "dxf");
-$("#printBtn").onclick = () => lastSheet && window.print();
+$("#printBtn").onclick = () => {
+  if (!lastSheet) return toast("먼저 3D 모델을 만들어 주세요.");
+  // 용지 크기를 인쇄 설정에 알려 주면 브라우저가 그 용지로, 여백 없이, 실제 척도로 찍는다
+  let st = document.getElementById("printPage") as HTMLStyleElement | null;
+  if (!st) {
+    st = document.createElement("style");
+    st.id = "printPage";
+    document.head.appendChild(st);
+  }
+  st.textContent = `@page { size: ${lastSheet.width}mm ${lastSheet.height}mm; margin: 0; }`;
+  window.print();
+};
 async function export3D(f: "stl" | "step") {
   if (!lastBuild) return toast("먼저 3D 모델을 만들어 주세요.");
   try {
@@ -1175,8 +1212,8 @@ async function openProject() {
   const text = await pickTextFile(".json,application/json");
   if (!text) return;
   try {
-    const p = JSON.parse(text);
-    if (p?.version !== 1 || !p.views) throw new Error();
+    const p = normalizeProject(JSON.parse(text));
+    if (!p) throw new Error();
     loadProject(p);
   } catch {
     toast("프로젝트 파일을 읽을 수 없습니다.");
