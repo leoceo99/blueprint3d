@@ -114,9 +114,9 @@ function render() {
     box.append(row);
   }
 
-  // 장면 (13단계)
+  // 장면 (15단계)
   const sceneHead = el("div", { textContent: "장면 (메쉬·게임용)" }, "doc-sec");
-  box.append(sceneHead, el("div", { textContent: "13단계에서 — 게임용 모델을 담는 곳", title: "로드맵 13~16단계" }, "doc-empty"));
+  box.append(sceneHead, el("div", { textContent: "15단계에서 — 게임용 모델을 담는 곳", title: "로드맵 15~18단계" }, "doc-empty"));
 }
 
 // ---------------- 명령 ----------------
