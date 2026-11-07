@@ -4,7 +4,7 @@
  */
 import { importSTEP, type Shape3D } from "replicad";
 import { resultFor } from "./build";
-import { detectHoles } from "./holes3d";
+import { applyCones, detectHoles } from "./holes3d";
 import { meshBBox, meshComponents, meshForViewer, meshVolume, parseSTL, projectMesh, rotateQuarter, type Mesh } from "./mesh";
 import type { BuildResult, ModelSource, ProjectedView, ViewId } from "./types";
 import { VIEW_IDS } from "./types";
@@ -44,6 +44,7 @@ export function stepResult(shape: Shape3D, src: Pick<ModelSource, "name" | "turn
   const res = resultFor(shape, [`STEP 파일 ‘${src.name}’에서 가져왔습니다${turnNote(src.turns)}. 정확한 곡면 그대로 3면도를 만들었습니다.`]);
   try {
     res.holes = detectHoles(shape);
+    if (res.features) applyCones(res.holes, res.features, res.bbox);
     const n = VIEW_IDS.reduce((a, v) => a + res.holes![v].length, 0);
     if (n) res.notes.push(`X·Y·Z 방향 구멍 ${n}개를 찾아 도면에 지시를 붙였습니다.`);
   } catch {

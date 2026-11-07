@@ -5,6 +5,7 @@
  * 결과는 각 뷰의 구멍 도형(뷰 좌표) → 도면의 구멍 지시·중심선·위치 치수에 쓴다.
  */
 import { getOC, type Shape3D } from "replicad";
+import type { Features3D } from "./features3d";
 import type { Shape2D, ViewId } from "./types";
 
 interface Cyl {
@@ -113,3 +114,29 @@ export function detectHoles(shape: Shape3D): Record<ViewId, Shape2D[]> {
 }
 
 const round = (x: number) => Math.round(x * 1e4) / 1e4 + 0;
+
+/**
+ * 구멍 입구의 원뿔(카운터싱크·모따기)을 구멍에 붙인다: 머리 자리 정보와, 원뿔까지 합친 깊이(관통 여부).
+ * features3d가 찾은 원뿔을 쓴다 (11단계).
+ */
+export function applyCones(holes: Record<ViewId, Shape2D[]>, f: Features3D, bb: [[number, number, number], [number, number, number]]) {
+  const AX: Record<ViewId, 0 | 1 | 2> = { side: 0, front: 1, top: 2 };
+  for (const v of ["front", "top", "side"] as ViewId[]) {
+    const k = AX[v];
+    const thick = bb[1][k] - bb[0][k];
+    for (const h of holes[v]) {
+      if (h.kind !== "circle") continue;
+      const cone = f.cones.find(
+        (c) => c.concave && c.axis === k && Math.hypot(c.p[0] - h.cx, c.p[1] - h.cy) < 0.01 && Math.abs(Math.min(c.r0, c.r1) - h.r) < 0.02,
+      );
+      if (!cone) continue;
+      const rmax = Math.max(cone.r0, cone.r1);
+      if (!h.spec) h.spec = { size: "", purpose: "custom", head: "countersink", csDiameter: round(rmax * 2), csAngle: round(cone.semi * 2) };
+      if (h.depth !== undefined) {
+        const d = h.depth + (cone.t1 - cone.t0);
+        if (d >= thick - 1e-3) delete h.depth;
+        else h.depth = round(d);
+      }
+    }
+  }
+}

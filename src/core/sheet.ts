@@ -8,33 +8,15 @@
  *
  * 좌표: 용지 mm, 왼쪽 아래가 원점, 위가 +y. SVG로 바꿀 때만 y를 뒤집는다.
  */
-import { flatten, isDegenerate, normRect } from "./geometry2d";
-import { holeLabel } from "./standards";
+import { isDegenerate } from "./geometry2d";
+import { autoDims, checkNeeds } from "./autoDims";
+import { renderDim, type DimDraw, type Layer, type Prim, type Pt, type SheetDim, type SheetText } from "./sheetDims";
 import { projUnit } from "./params";
 import { fmtLen, MM_PER_INCH, type Unit } from "./units";
-import type { BuildResult, Project, Shape2D, SheetInfo, ViewId } from "./types";
+import type { BuildResult, Project, SheetInfo, ViewId } from "./types";
 import { VIEW_IDS, VIEW_LABEL } from "./types";
 
-type Pt = [number, number];
-
-export type Layer = "VISIBLE" | "HIDDEN" | "CENTER" | "DIM" | "FRAME";
-
-export type Prim =
-  | { layer: Layer; t: "line"; a: Pt; b: Pt }
-  /** start→end 반시계 방향(도) */
-  | { layer: Layer; t: "arc"; c: Pt; r: number; start: number; end: number }
-  /** 화살표 같은 채운 다각형 */
-  | { layer: Layer; t: "fill"; pts: Pt[] };
-
-export interface SheetText {
-  at: Pt;
-  text: string;
-  /** 글자 높이 (용지 mm) */
-  size: number;
-  rotate?: number;
-  anchor?: "start" | "middle" | "end";
-  bold?: boolean;
-}
+export type { Layer, Prim, SheetText };
 
 export interface Sheet {
   svg: string;
@@ -49,6 +31,20 @@ export interface Sheet {
   scaleLabel: string;
   /** 치수 글자의 길이 단위 (DXF도 이 단위로 내보낸다) */
   units: Unit;
+  /** 그린 치수 (자동 + 직접 놓은 것) — 화면에서 고르기·DXF 진짜 치수용 */
+  dims: DimDraw[];
+  /** 빠진 치수 (형상 특징 중 크기나 위치가 도면에 없는 것) */
+  missing: string[];
+  /** 뷰마다 용지 위치: 뷰 좌표 (u, v) → 용지 (o[0] + u·scale, o[1] + v·scale), 뷰 상자 */
+  views: Record<ViewId, { o: Pt; box: [number, number, number, number] }>;
+}
+
+/** 도면에 저장된 치수 고침 (도면마다): 직접 놓은 치수, 숨긴 자동 치수, 옮긴 자동 치수 */
+export interface DimEdits {
+  dims?: SheetDim[];
+  hide?: string[];
+  /** 자동 치수 id → 바꾼 값 (off·line·jog·ang·len·knee·text·suffix) */
+  moved?: Record<string, Partial<SheetDim>>;
 }
 
 export const PAPERS: Record<"A4" | "A3" | "A2", [number, number]> = { A4: [297, 210], A3: [420, 297], A2: [594, 420] };
@@ -64,8 +60,6 @@ export const SCALES: [number, string][] = [
   [0.02, "1:50"],
 ];
 
-const TXT = 3.5; // 치수 글자 높이 (ISO)
-const ARROW = 3;
 const r2 = (n: number) => Math.round(n * 1000) / 1000;
 const f2 = (n: number) => String(Math.round(n * 100) / 100);
 /** 치수 글자 (부품 단위). buildSheet가 시작할 때 정한다 */
@@ -275,7 +269,7 @@ export function chooseLayout(views: Record<ViewId, ViewBox>, info: SheetInfo = {
 
 // ---------------- 도면 만들기 ----------------
 
-export function buildSheet(res: BuildResult, project: Project): Sheet {
+export function buildSheet(res: BuildResult, project: Project, edits: DimEdits = {}): Sheet {
   U = projUnit(project);
   const info = project.sheet ?? {};
   const pr = res.projections;
@@ -312,14 +306,19 @@ export function buildSheet(res: BuildResult, project: Project): Sheet {
   const prims: Prim[] = [];
   const texts: SheetText[] = [];
 
-  // 1) 투영선 (숨은선 먼저, 외형선이 위에)
+  // 1) 투영선 (숨은선 먼저, 외형선이 위에). 보이는 선은 뷰 좌표로도 둔다 (치수를 어느 뷰에 잴지)
+  const vis = {} as Record<ViewId, Prim[]>;
   for (const v of VIEW_IDS) {
+    vis[v] = [];
     for (const [layer, paths] of [
       ["HIDDEN", pr[v].hidden],
       ["VISIBLE", pr[v].visible],
     ] as const)
       for (const d of paths)
-        for (const prim of parseProjection(d, layer)) prims.push(transformPrim(prim, (q) => P(v, q[0], q[1]), s));
+        for (const prim of parseProjection(d, layer)) {
+          if (layer === "VISIBLE") vis[v].push(prim);
+          prims.push(transformPrim(prim, (q) => P(v, q[0], q[1]), s));
+        }
   }
 
   // 가져온 3D 파일이면 3D에서 찾은 구멍을, 아니면 스케치 도형을 쓴다
@@ -328,16 +327,26 @@ export function buildSheet(res: BuildResult, project: Project): Sheet {
   // 2) 중심선과 구멍 표시
   addCenterLines(prims, feat, res, P, s);
 
-  // 3) 치수: 구멍 위치(좌표 치수) → 전체 치수는 그 바깥
-  const holeDims = addHoleDims(prims, texts, feat, V, P, box, s);
-  const fb = box("front");
-  const sb = box("side");
-  const offFront = holeDims.front.bottom ? 16 : 9;
-  const offLeft = holeDims.front.left ? 16 : 9;
-  const offSide = holeDims.side.bottom ? 16 : 9;
-  linearDim(prims, texts, [fb.l, fb.b], [fb.r, fb.b], "h", -offFront, fl(V.front.max[0] - V.front.min[0]));
-  linearDim(prims, texts, [fb.l, fb.b], [fb.l, fb.t], "v", -offLeft, fl(V.front.max[1] - V.front.min[1]));
-  linearDim(prims, texts, [sb.l, sb.b], [sb.r, sb.b], "h", -offSide, fl(V.side.max[0] - V.side.min[0]));
+  // 3) 치수: 자동(형상 특징 + 구멍) → 숨기기·옮기기 → 직접 놓은 치수
+  const area: [number, number, number, number] = [BORDER.left + 1.5, BORDER.bottom + 1.5, PW - BORDER.right - 1.5, PH - BORDER.top - 1.5];
+  const titleBox: [number, number, number, number] = [PW - BORDER.right - TITLE_W - 1, BORDER.bottom, PW - BORDER.right, BORDER.bottom + TITLE_H + 1];
+  const labelBoxes = VIEW_IDS.map((v): [number, number, number, number] => {
+    const b = box(v);
+    return [(b.l + b.r) / 2 - 9, b.t + 3, (b.l + b.r) / 2 + 9, b.t + 7];
+  });
+  const auto = autoDims({ feat, f3: res.features, V, vis, P: (v, q) => P(v, q[0], q[1]), s, fmt: fl, unit: U, area, keepOut: [titleBox, ...labelBoxes] });
+  // 볼트 원 (중심선)
+  for (const v of VIEW_IDS) for (const c of pcdCircles(feat, v)) prims.push({ layer: "CENTER", t: "arc", c: P(v, c.c[0], c.c[1]), r: c.r * s, start: 0, end: 360 });
+  const hidden = new Set(edits.hide ?? []);
+  const dims: SheetDim[] = [
+    ...auto.dims.filter((d) => !hidden.has(d.id)).map((d) => (edits.moved?.[d.id] ? ({ ...d, ...edits.moved[d.id], id: d.id, kind: d.kind, view: d.view } as SheetDim) : d)),
+    ...(edits.dims ?? []),
+  ];
+  const draws = dims.map((d) => renderDim(d, (q) => P(d.view, q[0], q[1]), s, fl));
+  for (const dr of draws) {
+    prims.push(...dr.prims);
+    texts.push(...dr.texts);
+  }
 
   // 4) 뷰 이름 (작게)
   for (const v of VIEW_IDS) {
@@ -348,7 +357,26 @@ export function buildSheet(res: BuildResult, project: Project): Sheet {
   // 5) 테두리와 표제란
   frame(prims, texts, PW, PH, project, info, scaleLabel(s), paper);
 
-  const sheet: Sheet = { svg: "", prims, texts, width: PW, height: PH, paper, scale: s, scaleLabel: scaleLabel(s), units: U };
+  const viewsOut = Object.fromEntries(
+    VIEW_IDS.map((v) => {
+      const b = box(v);
+      return [v, { o: origin[v], box: [b.l, b.b, b.r, b.t] as [number, number, number, number] }];
+    }),
+  ) as Sheet["views"];
+  const sheet: Sheet = {
+    svg: "",
+    prims,
+    texts,
+    width: PW,
+    height: PH,
+    paper,
+    scale: s,
+    scaleLabel: scaleLabel(s),
+    units: U,
+    dims: draws,
+    missing: checkNeeds(auto.needs, dims, fl),
+    views: viewsOut,
+  };
   sheet.svg = toSVG(sheet);
   return sheet;
 }
@@ -405,209 +433,26 @@ function addCenterLines(prims: Prim[], p: Project, res: BuildResult, P: (v: View
     }
 }
 
-type BoxFn = (v: ViewId) => { l: number; r: number; b: number; t: number };
-
-/** 구멍 위치(부품 왼쪽·아래 모서리 기준 좌표 치수)와 구멍 지시 */
-function addHoleDims(
-  prims: Prim[],
-  texts: SheetText[],
-  p: Project,
-  V: Record<ViewId, ViewBox>,
-  P: (v: ViewId, u: number, w: number) => Pt,
-  box: BoxFn,
-  s: number,
-): Record<ViewId, { bottom: boolean; left: boolean }> {
-  const used = { front: { bottom: false, left: false }, top: { bottom: false, left: false }, side: { bottom: false, left: false } };
-  // 정면도와 우측면도 지시가 같은 칸을 쓰므로 줄 번호를 같이 센다 (우측면도 먼저)
-  let calloutRows = 0;
-  for (const v of ["side", "top", "front"] as ViewId[]) {
-    const holes = p.views[v].filter(
-      (h): h is Extract<Shape2D, { kind: "circle" | "slot" }> => h.hole && !isDegenerate(h) && (h.kind === "circle" || h.kind === "slot"),
-    );
-    const pockets = p.views[v].filter((h) => h.hole && !isDegenerate(h) && (h.kind === "rect" || h.kind === "poly"));
-    if (!holes.length && !pockets.length) continue;
-    const b = box(v);
-    const minU = V[v].min[0];
-    const minV = V[v].min[1];
-    // 같은 구멍끼리 묶기 (지시 "4×M5 탭 깊이 12")
-    type Group = { label: string; members: Shape2D[]; pcd?: { c: Pt; r: number } };
-    const groups = new Map<string, Group>();
-    for (const h of holes) {
-      const label =
-        h.kind === "circle"
-          ? holeLabel(h.r * 2, h.spec, h.depth, false, U)
-          : `장공 폭 ${fl(h.w)} 중심거리 ${fl(Math.hypot(h.b[0] - h.a[0], h.b[1] - h.a[1]))}${h.depth !== undefined ? ` 깊이 ${fl(h.depth)}` : " 관통"}`;
-      const g = groups.get(label);
-      if (g) g.members.push(h);
-      else groups.set(label, { label, members: [h] });
-    }
-    // 볼트 원(PCD): 같은 원형 구멍 3개 이상이 한 원 위에 같은 간격으로
-    for (const g of groups.values()) {
-      const cs = g.members.filter((h): h is Extract<Shape2D, { kind: "circle" }> => h.kind === "circle").map((h) => [h.cx, h.cy] as Pt);
-      if (cs.length < 3 || cs.length !== g.members.length) continue;
-      const c: Pt = [cs.reduce((a, q) => a + q[0], 0) / cs.length, cs.reduce((a, q) => a + q[1], 0) / cs.length];
-      const ds = cs.map((q) => Math.hypot(q[0] - c[0], q[1] - c[1]));
-      const r = ds.reduce((a, d) => a + d, 0) / ds.length;
-      if (r < 1e-6 || ds.some((d) => Math.abs(d - r) > 0.01)) continue;
-      const angs = cs.map((q) => Math.atan2(q[1] - c[1], q[0] - c[0])).sort((a, b) => a - b);
-      const step = (2 * Math.PI) / angs.length;
-      const even = angs.every((a, i) => {
-        const next = i + 1 < angs.length ? angs[i + 1] : angs[0] + 2 * Math.PI;
-        return Math.abs(next - a - step) < 1e-3;
-      });
-      if (!even) continue;
-      g.pcd = { c, r };
-      g.label += `, PCD Ø${fl(r * 2)} 등배치`;
-      // 볼트 원 (중심선)
-      const [ccx, ccy] = P(v, c[0], c[1]);
-      prims.push({ layer: "CENTER", t: "arc", c: [ccx, ccy], r: r * s, start: 0, end: 360 });
-    }
-
-    // 위치 치수용 구멍 중심 (볼트 원은 개별 구멍 대신 원의 중심)
-    const centers: [number, number][] = [];
-    for (const g of groups.values()) {
-      if (g.pcd) {
-        const midU = (V[v].min[0] + V[v].max[0]) / 2;
-        const midV = (V[v].min[1] + V[v].max[1]) / 2;
-        if (Math.abs(g.pcd.c[0] - midU) > 0.01 || Math.abs(g.pcd.c[1] - midV) > 0.01) centers.push(g.pcd.c);
-        continue;
-      }
-      for (const h of g.members) {
-        if (h.kind === "circle") centers.push([h.cx, h.cy]);
-        else if (h.kind === "slot") centers.push(h.a, h.b);
-      }
-    }
-    const uniq = (vals: number[]) => [...new Set(vals.map((x) => Math.round(x * 100) / 100))].sort((a, c) => a - c);
-    const us = uniq(centers.map((c) => c[0])).filter((u) => u > minU + 1e-6 && u < V[v].max[0] + 1e-6);
-    const vs = uniq(centers.map((c) => c[1])).filter((w) => w > minV + 1e-6 && w < V[v].max[1] + 1e-6);
-
-    // 가로 좌표 치수: 아래쪽에 0과 각 구멍 중심
-    if (us.length) {
-      used[v].bottom = true;
-      const yb = b.b - 5;
-      ordinate(prims, texts, "h", [b.l, b.b], yb, "0");
-      let lastX = b.l;
-      for (const u of us) {
-        const [x, y] = P(v, u, centers.find((c) => Math.abs(c[0] - u) < 0.006)![1]);
-        prims.push({ layer: "DIM", t: "line", a: [x, y], b: [x, yb] });
-        if (x - lastX >= TXT * 0.9) {
-          texts.push({ at: [x + TXT * 0.35, yb - 1], text: fl(u - minU), size: TXT * 0.85, rotate: 90, anchor: "end" });
-          lastX = x;
-        }
-      }
-    }
-    // 세로 좌표 치수: 왼쪽에 0과 각 구멍 중심
-    if (vs.length) {
-      used[v].left = true;
-      const xl = b.l - 5;
-      ordinate(prims, texts, "v", [b.l, b.b], xl, "0");
-      let lastY = b.b;
-      for (const w of vs) {
-        const [x, y] = P(v, centers.find((c) => Math.abs(c[1] - w) < 0.006)![0], w);
-        prims.push({ layer: "DIM", t: "line", a: [x, y], b: [xl, y] });
-        if (y - lastY >= TXT * 0.9) {
-          texts.push({ at: [xl - 1, y - TXT * 0.35], text: fl(w - minV), size: TXT * 0.85, anchor: "end" });
-          lastY = y;
-        }
-      }
-    }
-
-    for (const h of pockets) {
-      const sz = h.kind === "rect" ? `${fl(normRect(h).w)}×${fl(normRect(h).h)} ` : "";
-      const label = `${sz}포켓${h.depth !== undefined ? ` 깊이 ${fl(h.depth)}` : " 관통"}`;
-      groups.set(`${label}#${h.id}`, { label, members: [h] });
-    }
-    // 지시는 뷰 밖으로 빼서 겹치지 않게: 평면도는 오른쪽(빈 칸), 정면도·우측면도는 위쪽
-    let k = 0;
-    for (const g of groups.values()) {
-      let knee: Pt;
-      if (v === "top") knee = [b.r + 8, b.t - 3 - k * 6];
-      else {
-        const row = calloutRows++;
-        knee = v === "front" ? [b.r + 6, b.t + 10 + row * 5.5] : [b.l + 4, b.t + 10 + row * 5.5];
-      }
-      // 지시선이 닿는 곳: 원은 지시 쪽을 향한 둘레, 그 밖은 외곽선에서 지시 글자에 가장 가까운 점
-      const ref = (h: Shape2D): Pt => {
-        if (h.kind === "circle") return P(v, h.cx, h.cy);
-        let best: Pt = P(v, ...flatten(h)[0]);
-        for (const q of flatten(h)) {
-          const t = P(v, q[0], q[1]);
-          if (Math.hypot(t[0] - knee[0], t[1] - knee[1]) < Math.hypot(best[0] - knee[0], best[1] - knee[1])) best = t;
-        }
-        return best;
-      };
-      const h = g.members.reduce((best, m) => {
-        const [x, y] = ref(m);
-        const [bx2, by2] = ref(best);
-        return Math.hypot(x - knee[0], y - knee[1]) < Math.hypot(bx2 - knee[0], by2 - knee[1]) ? m : best;
-      });
-      let at: Pt;
-      if (h.kind === "circle") {
-        const [cx, cy] = P(v, h.cx, h.cy);
-        const rr = h.r * s;
-        const a = Math.atan2(knee[1] - cy, knee[0] - cx);
-        at = [cx + rr * Math.cos(a), cy + rr * Math.sin(a)];
-      } else at = ref(h);
-      const text = (g.members.length > 1 ? `${g.members.length}×` : "") + g.label;
-      leader(prims, texts, at, knee, text);
-      k++;
-    }
+/** 같은 구멍 3개 이상이 한 원 위에 같은 간격 → 볼트 원 (중심선 원을 그린다) */
+function pcdCircles(p: Project, v: ViewId): { c: Pt; r: number }[] {
+  const out: { c: Pt; r: number }[] = [];
+  const holes = p.views[v].filter((h): h is Extract<Project["views"][ViewId][number], { kind: "circle" }> => h.hole && h.kind === "circle" && !isDegenerate(h));
+  const groups = new Map<string, typeof holes>();
+  for (const h of holes) {
+    const k = `${h.r}|${JSON.stringify(h.spec ?? null)}|${h.depth ?? ""}`;
+    groups.set(k, [...(groups.get(k) ?? []), h]);
   }
-  return used;
-}
-
-function ordinate(prims: Prim[], texts: SheetText[], dir: "h" | "v", corner: Pt, pos: number, label: string) {
-  if (dir === "h") {
-    prims.push({ layer: "DIM", t: "line", a: corner, b: [corner[0], pos] });
-    texts.push({ at: [corner[0] + TXT * 0.35, pos - 1], text: label, size: TXT * 0.85, rotate: 90, anchor: "end" });
-  } else {
-    prims.push({ layer: "DIM", t: "line", a: corner, b: [pos, corner[1]] });
-    texts.push({ at: [pos - 1, corner[1] - TXT * 0.35], text: label, size: TXT * 0.85, anchor: "end" });
+  for (const g of groups.values()) {
+    if (g.length < 3) continue;
+    const c: Pt = [g.reduce((a, h) => a + h.cx, 0) / g.length, g.reduce((a, h) => a + h.cy, 0) / g.length];
+    const ds = g.map((h) => Math.hypot(h.cx - c[0], h.cy - c[1]));
+    const r = ds.reduce((a, d) => a + d, 0) / ds.length;
+    if (r < 1e-6 || ds.some((d) => Math.abs(d - r) > 0.01)) continue;
+    const angs = g.map((h) => Math.atan2(h.cy - c[1], h.cx - c[0])).sort((a, b) => a - b);
+    const step = (2 * Math.PI) / angs.length;
+    if (angs.every((a, i) => Math.abs((i + 1 < angs.length ? angs[i + 1] : angs[0] + 2 * Math.PI) - a - step) < 1e-3)) out.push({ c, r });
   }
-}
-
-function arrowHead(prims: Prim[], tip: Pt, dir: Pt) {
-  const L = Math.hypot(dir[0], dir[1]) || 1;
-  const ux = dir[0] / L, uy = dir[1] / L;
-  const w = ARROW * 0.18;
-  prims.push({
-    layer: "DIM",
-    t: "fill",
-    pts: [tip, [tip[0] - ux * ARROW - uy * w, tip[1] - uy * ARROW + ux * w], [tip[0] - ux * ARROW + uy * w, tip[1] - uy * ARROW - ux * w]],
-  });
-}
-
-/** 지시선: 화살표 → 꺾임 → 글자 */
-function leader(prims: Prim[], texts: SheetText[], tip: Pt, knee: Pt, text: string) {
-  const tw = text.length * TXT * 0.62;
-  prims.push({ layer: "DIM", t: "line", a: tip, b: knee });
-  prims.push({ layer: "DIM", t: "line", a: knee, b: [knee[0] + tw, knee[1]] });
-  arrowHead(prims, tip, [tip[0] - knee[0], tip[1] - knee[1]]);
-  texts.push({ at: [knee[0] + 1, knee[1] + 1], text, size: TXT * 0.85, anchor: "start" });
-}
-
-/** 선형 치수 (보조선 + 치수선 + 양쪽 화살표 + 숫자) */
-function linearDim(prims: Prim[], texts: SheetText[], a: Pt, b: Pt, dir: "h" | "v", off: number, label: string) {
-  const gap = 1;
-  if (dir === "h") {
-    const y = a[1] + off;
-    const sgn = Math.sign(off) || -1;
-    prims.push({ layer: "DIM", t: "line", a: [a[0], a[1] + sgn * gap], b: [a[0], y + sgn * 1.5] });
-    prims.push({ layer: "DIM", t: "line", a: [b[0], b[1] + sgn * gap], b: [b[0], y + sgn * 1.5] });
-    prims.push({ layer: "DIM", t: "line", a: [a[0], y], b: [b[0], y] });
-    arrowHead(prims, [a[0], y], [-1, 0]);
-    arrowHead(prims, [b[0], y], [1, 0]);
-    texts.push({ at: [(a[0] + b[0]) / 2, y + 1], text: label, size: TXT, anchor: "middle" });
-  } else {
-    const x = a[0] + off;
-    const sgn = Math.sign(off) || -1;
-    prims.push({ layer: "DIM", t: "line", a: [a[0] + sgn * gap, a[1]], b: [x + sgn * 1.5, a[1]] });
-    prims.push({ layer: "DIM", t: "line", a: [b[0] + sgn * gap, b[1]], b: [x + sgn * 1.5, b[1]] });
-    prims.push({ layer: "DIM", t: "line", a: [x, a[1]], b: [x, b[1]] });
-    arrowHead(prims, [x, a[1]], [0, -1]);
-    arrowHead(prims, [x, b[1]], [0, 1]);
-    texts.push({ at: [x - 1, (a[1] + b[1]) / 2], text: label, size: TXT, rotate: 90, anchor: "middle" });
-  }
+  return out;
 }
 
 /** 테두리, 주기, 표제란 */

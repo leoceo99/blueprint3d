@@ -2,6 +2,7 @@
  * 2D 뷰(정면/평면/측면) → 3D 솔리드 → 2D 투영도.
  * replicad(OpenCascade) 위에서 동작하며, 호출 전에 setOC()가 되어 있어야 한다.
  */
+import { analyzeShape } from "./features3d";
 import {
   addHolesInFace,
   basicFaceExtrusion,
@@ -376,7 +377,14 @@ export function resultFor(shape: Shape3D, notes: string[]): BuildResult {
   } catch {
     volume = 0;
   }
+  let features: BuildResult["features"];
+  try {
+    features = analyzeShape(shape);
+  } catch {
+    features = undefined; // 형상 읽기는 도면 치수용 — 실패해도 3D는 그대로
+  }
   return {
+    features,
     mesh: {
       vertices: Array.from(m.vertices),
       normals: Array.from(m.normals),
