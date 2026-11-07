@@ -159,6 +159,48 @@ export const PROCESS_LABEL: Record<Process, string> = {
   laser: "판금 · 레이저 절단",
 };
 
+/** 구속 종류 (10단계) */
+export type ConsKind =
+  | "coincident"
+  | "horizontal"
+  | "vertical"
+  | "parallel"
+  | "perpendicular"
+  | "equal"
+  | "concentric"
+  | "tangent"
+  | "symmetric"
+  | "onLine"
+  | "midpoint"
+  | "fix"
+  | "distance"
+  | "distanceX"
+  | "distanceY"
+  | "angle";
+
+/**
+ * 구속 대상. s: 도형 id 또는 "@o"(원점)·"@x"(가로축)·"@y"(세로축).
+ * k: "c" 중심 · "v0"… 꼭짓점 · "a"/"b" 장공 끝 중심 · "e0"… 변(직선) · "o" 원 · "ra"/"rb" 장공 끝 원호
+ */
+export interface CRef {
+  s: string;
+  k: string;
+}
+
+export interface Constraint {
+  id: string;
+  kind: ConsKind;
+  refs: CRef[];
+  /** 치수 구속의 값 (mm, 각도는 °) */
+  value?: number;
+  /** 값을 식으로 (예: L/2) */
+  expr?: string;
+  /** 만들 때의 방향(부호) — 거리·접선이 반대쪽으로 뒤집히지 않게 */
+  side?: number;
+  /** 고정 구속의 위치 */
+  at?: [number, number];
+}
+
 export interface Project {
   version: 1;
   name: string;
@@ -178,6 +220,10 @@ export interface Project {
   /** 다른 CAD에서 가져온 3D 파일. 있으면 3D·도면은 이 모델로 만든다 (파일 내용은 브라우저 저장소에 key로) */
   source?: ModelSource;
   views: Record<ViewId, Shape2D[]>;
+  /** 뷰마다 구속 조건 (10단계) */
+  constraints?: Partial<Record<ViewId, Constraint[]>>;
+  /** 길이 단위 (없으면 mm). 값은 늘 mm로 저장하고 표시·입력·식의 맨 숫자만 이 단위 (10단계) */
+  units?: "inch";
 }
 
 export function emptyProject(): Project {

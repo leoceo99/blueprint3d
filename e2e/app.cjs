@@ -38,7 +38,7 @@ const fs = require('fs');
     await page.keyboard.press('Escape'); await page.click('#coords');
     await page.click('[data-menu="edit"]');
     const editItems = await page.$$eval('#menu-edit button', bs => bs.map(b => `${b.querySelector('.mi-title').textContent}${b.disabled ? '(x)' : ''}`));
-    ok('edit menu built from commands, disabled when unusable', editItems.includes('실행 취소(x)') && editItems.includes('선택한 도형 삭제(x)'), editItems.slice(0, 5).join(', '));
+    ok('edit menu built from commands, disabled when unusable', editItems.includes('실행 취소(x)') && editItems.includes('선택한 도형·구속 삭제(x)'), editItems.slice(0, 5).join(', '));
     await page.screenshot({ path: out('s8-edit-menu.png') });
     await page.click('[data-menu="view"]'); // 다른 메뉴로 바로
     const viewItems = await page.$$eval('#menu-view button', bs => bs.map(b => `${b.classList.contains('checked') ? '✓' : ''}${b.querySelector('.mi-title').textContent}`));

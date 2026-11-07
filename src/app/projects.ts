@@ -15,12 +15,21 @@ import { app, commands, emit, on, requestRender } from "./context";
 import { $, commitTyping } from "./dom";
 import { fitAll } from "./edit";
 import { closeNotice, errText, isQuota, notice, toast } from "./notify";
+import { prefs } from "./prefs";
+
 
 export let session: Session;
 let projectsDlg: ProjectsDialog;
 let versionsDlg: VersionsDialog;
 
 /** 새 문서로 열기 — 지금 문서는 ‘내 프로젝트’에 그대로 남는다 */
+/** 새 빈 부품 (설정의 “새 문서 길이 단위”를 따른다) */
+export function blankProject(): Project {
+  const p = emptyProject();
+  if (prefs.get().units === "inch") p.units = "inch";
+  return p;
+}
+
 export function openNew(p: Doc | Project) {
   commitTyping();
   session.openAsNew(p).catch(warnStorage);
@@ -66,11 +75,13 @@ function scheduleThumb() {
   if (!app.lastBuild) return;
   const id = store.projectId;
   const stamp = app.buildStamp;
-  thumbTimer = window.setTimeout(() => {
-    if (!app.lastBuild || store.projectId !== id || app.buildStamp !== stamp || document.visibilityState !== "visible") return;
+  const fresh = () => !!app.lastBuild && store.projectId === id && app.buildStamp === stamp && document.visibilityState === "visible";
+  thumbTimer = window.setTimeout(async () => {
+    if (!fresh()) return;
     const bg = getComputedStyle(document.documentElement).getPropertyValue("--canvas-bg").trim() || "#fbfcfd";
-    const url = app.viewer.snapshot(320, 240, "image/jpeg", 0.82, bg);
-    if (url) session.setThumbnail(url);
+    // 3D 보기를 아직 안 열었으면 이때 three.js를 불러온다 (첫 화면 뒤라 느려지지 않음)
+    const url = await app.viewer.snapshot(320, 240, "image/jpeg", 0.82, bg);
+    if (url && fresh()) session.setThumbnail(url);
   }, 1500);
 }
 
@@ -104,7 +115,7 @@ export function initProjects() {
   projectsDlg = new ProjectsDialog({
     currentId: () => store.projectId,
     open: openFromLibrary,
-    newProject: () => openNew(emptyProject()),
+    newProject: () => openNew(blankProject()),
     flush: () => session.flush(),
     toast,
     download: (name, data, mime, ext) => void saveFile(name, data, mime, ext),

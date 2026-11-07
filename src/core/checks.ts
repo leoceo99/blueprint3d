@@ -3,7 +3,9 @@
  * AI 검토는 이 결과를 함께 받아서 중복 없이 더 깊은 문제를 찾는다.
  */
 import { boundsOf, distToBoundary, flatten, isDegenerate, normRect, pointInShape, rectPoints, shapeCenter } from "./geometry2d";
-import { applyExpressions } from "./params";
+import { analyzeView, KIND_LABEL } from "./constraints";
+import { applyExpressions, projUnit } from "./params";
+import { fmtLen, fmtLenU, type Unit } from "./units";
 import { outerDiameter } from "./standards";
 export { distToBoundary };
 import type { BuildResult, Finding, FindingRef, Process, Project, Shape2D, ViewId } from "./types";
@@ -35,6 +37,10 @@ export const PROCESS_RULES: Record<Process, ProcessRules> = {
 };
 
 const f2 = (n: number) => String(Math.round(n * 100) / 100);
+/** 길이 표시 (부품 단위). runChecks가 시작할 때 단위를 정한다 */
+let U: Unit = "mm";
+const fl = (n: number) => fmtLen(n, U);
+const fu = (n: number) => fmtLenU(n, U);
 
 // ---------------- 기하 유틸 ----------------
 
@@ -71,12 +77,12 @@ export function selfIntersects(pts: Pt[]): Pt | null {
 }
 
 function shapeName(s: Shape2D): string {
-  if (s.kind === "circle") return `Ø${f2(s.r * 2)} 원`;
+  if (s.kind === "circle") return `Ø${fl(s.r * 2)} 원`;
   if (s.kind === "rect") {
     const r = normRect(s);
-    return `${f2(r.w)}×${f2(r.h)} 사각형`;
+    return `${fl(r.w)}×${fl(r.h)} 사각형`;
   }
-  if (s.kind === "slot") return `폭 ${f2(s.w)} 장공`;
+  if (s.kind === "slot") return `폭 ${fl(s.w)} 장공`;
   return `다각형(${s.pts.length}점)`;
 }
 
@@ -86,6 +92,7 @@ const DEPTH_AXIS: Record<ViewId, 0 | 1 | 2> = { front: 1, top: 2, side: 0 };
 // ---------------- 검사 ----------------
 
 export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidCount"> | null, buildError?: string): Finding[] {
+  U = projUnit(p);
   const rules = PROCESS_RULES[p.process ?? "cnc"];
   const out: Finding[] = [];
   const add = (f: Omit<Finding, "source">) => {
@@ -105,6 +112,40 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
       suggestion: "식이나 변수 이름을 확인하세요. 오류가 난 치수는 마지막으로 계산된 값을 그대로 씁니다.",
       refs: prob.view && prob.shapeId ? [{ view: prob.view, shapeId: prob.shapeId }] : [],
     });
+  }
+
+  // 구속 (10단계): 풀리지 않는 구속은 오류, 필요 없는(중복) 구속은 참고
+  for (const v of VIEW_IDS) {
+    const list = p.constraints?.[v];
+    if (!list?.length) continue;
+    const an = analyzeView(p, v);
+    const shapesOf = (id: string) =>
+      (list.find((c) => c.id === id)?.refs ?? []).filter((r) => !r.s.startsWith("@")).map((r) => ({ view: v, shapeId: r.s }));
+    for (const id of an.unsatisfied) {
+      const c = list.find((x) => x.id === id)!;
+      add({
+        id: `cons-bad:${v}:${id}`,
+        severity: "error",
+        category: "구속",
+        title: `지켜지지 않는 구속: ${KIND_LABEL[c.kind]}`,
+        detail: `${VIEW_LABEL[v]}의 ‘${KIND_LABEL[c.kind]}’ 구속이 다른 조건과 부딪쳐 풀리지 않아요.`,
+        suggestion: "부딪치는 구속을 지우거나 치수 값을 바꾸세요 (구속 기호를 누르고 Delete).",
+        refs: shapesOf(id),
+      });
+    }
+    for (const id of an.redundant) {
+      if (an.unsatisfied.includes(id)) continue;
+      const c = list.find((x) => x.id === id)!;
+      add({
+        id: `cons-dup:${v}:${id}`,
+        severity: "info",
+        category: "구속",
+        title: `필요 없는 구속: ${KIND_LABEL[c.kind]}`,
+        detail: `${VIEW_LABEL[v]}의 ‘${KIND_LABEL[c.kind]}’ 구속은 다른 구속으로 이미 정해져 있어요(중복). 지금은 문제없지만 나중에 값을 바꿀 때 부딪칠 수 있어요.`,
+        suggestion: "필요 없으면 지우세요.",
+        refs: shapesOf(id),
+      });
+    }
   }
 
   if (buildError)
@@ -152,9 +193,9 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
           category: "도면 일관성",
           title: `${VIEW_LABEL[a]}와 ${VIEW_LABEL[b]}의 ${axisName} 범위가 다름`,
           detail:
-            `${VIEW_LABEL[a]} ${shared} ${f2(ra[0])}~${f2(ra[1])}mm, ${VIEW_LABEL[b]} ${shared} ${f2(rb[0])}~${f2(rb[1])}mm. ` +
+            `${VIEW_LABEL[a]} ${shared} ${fl(ra[0])}~${fu(ra[1])}, ${VIEW_LABEL[b]} ${shared} ${fl(rb[0])}~${fu(rb[1])}. ` +
             (lo < hi
-              ? `두 뷰가 겹치는 ${f2(lo)}~${f2(hi)}mm 범위만 3D로 남습니다.`
+              ? `두 뷰가 겹치는 ${fl(lo)}~${fu(hi)} 범위만 3D로 남습니다.`
               : "두 뷰가 전혀 겹치지 않아 3D가 비게 됩니다."),
           suggestion: "같은 축의 치수가 뷰마다 같도록 맞추세요. 주황 점선(다른 뷰 기준선)에 맞춰 그리면 됩니다.",
           refs: [{ view: a }, { view: b }],
@@ -168,9 +209,9 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
       id: "thin-plate",
       severity: "warning",
       category: "가공성",
-      title: `판 두께 ${f2(p.thickness)}mm가 너무 얇음`,
-      detail: `현재 제조 방식의 최소 두께 기준은 ${rules.minWall}mm입니다.`,
-      suggestion: `두께를 ${rules.minWall}mm 이상으로 늘리세요.`,
+      title: `판 두께 ${fu(p.thickness)}가 너무 얇음`,
+      detail: `현재 제조 방식의 최소 두께 기준은 ${fu(rules.minWall)}입니다.`,
+      suggestion: `두께를 ${fu(rules.minWall)} 이상으로 늘리세요.`,
       refs: [],
     });
 
@@ -203,7 +244,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             id: `tiny-edge:${v}:${s.id}:${i}`,
             severity: "info",
             category: "스케치",
-            title: `아주 짧은 변 ${f2(len)}mm`,
+            title: `아주 짧은 변 ${fu(len)}`,
             detail: `${VIEW_LABEL[v]}의 ${shapeName(s)}에 실수로 찍힌 것 같은 짧은 변이 있습니다.`,
             suggestion: "의도한 것이 아니면 꼭짓점을 지우세요.",
             refs: [ref(s, a)],
@@ -221,9 +262,9 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
           id: `thin-rect:${v}:${s.id}`,
           severity: "warning",
           category: "가공성",
-          title: `너무 얇은 부분 ${f2(m)}mm`,
-          detail: `${VIEW_LABEL[v]}의 ${shapeName(s)}가 최소 벽 두께 기준(${rules.minWall}mm)보다 얇습니다.`,
-          suggestion: `${rules.minWall}mm 이상으로 두껍게 하세요.`,
+          title: `너무 얇은 부분 ${fu(m)}`,
+          detail: `${VIEW_LABEL[v]}의 ${shapeName(s)}가 최소 벽 두께 기준(${fu(rules.minWall)})보다 얇습니다.`,
+          suggestion: `${fu(rules.minWall)} 이상으로 두껍게 하세요.`,
           refs: [ref(s, [r.x + r.w / 2, r.y + r.h / 2])],
         });
     }
@@ -261,7 +302,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             severity: "info",
             category: "형상",
             title: "가장자리에 걸친 포켓 = 단차(계단)",
-            detail: `${VIEW_LABEL[v]}의 ${shapeName(h)}이 가장자리에 걸쳐 있어 깊이 ${f2(h.depth)}mm의 계단 모양으로 깎입니다.`,
+            detail: `${VIEW_LABEL[v]}의 ${shapeName(h)}이 가장자리에 걸쳐 있어 깊이 ${fu(h.depth)}의 계단 모양으로 깎입니다.`,
             suggestion: "의도한 단차라면 그대로 두세요.",
             refs: [ref(h, pt)],
           });
@@ -290,22 +331,22 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
       const size = h.kind === "circle" ? h.r * 2 : h.kind === "slot" ? h.w : Math.min(normRectOrBox(h).w, normRectOrBox(h).h);
       const t = p.thickness;
       let minEdge = rules.minWall;
-      let why = `최소 벽 두께 ${rules.minWall}mm`;
+      let why = `최소 벽 두께 ${fu(rules.minWall)}`;
       if (rules.edgeVsThickness && t * rules.edgeVsThickness > minEdge) {
         minEdge = t * rules.edgeVsThickness;
-        why = `판 두께(${f2(t)}mm) 이상`;
+        why = `판 두께(${fu(t)}) 이상`;
       }
       const footSize = foot.kind === "circle" ? foot.r * 2 : size;
       if (h.kind === "circle" && p.process !== "laser" && footSize * 0.5 > minEdge) {
         minEdge = footSize * 0.5;
-        why = `${foot !== h ? "머리 자리" : "구멍"} 지름의 0.5배(${f2(minEdge)}mm) 이상`;
+        why = `${foot !== h ? "머리 자리" : "구멍"} 지름의 0.5배(${fu(minEdge)}) 이상`;
       }
       if (wall < minEdge - 1e-6)
         add({
           id: `hole-edge:${v}:${h.id}`,
           severity: wall < rules.minWall || wall < minEdge * 0.75 ? "warning" : "info",
           category: "구멍",
-          title: `구멍과 가장자리 사이가 ${f2(wall)}mm로 좁음`,
+          title: `구멍과 가장자리 사이가 ${fu(wall)}로 좁음`,
           detail: `${VIEW_LABEL[v]}의 ${shapeName(h)} 바깥 벽이 얇아 가공 중 찢어지거나 휘기 쉽습니다. 권장: ${why}.`,
           suggestion: "구멍을 안쪽으로 옮기거나 구멍을 작게, 또는 몸체를 넓히세요.",
           refs: [ref(h, at)],
@@ -316,7 +357,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
           id: `hole-small:${v}:${h.id}`,
           severity: "warning",
           category: "구멍",
-          title: `너무 작은 구멍 ${f2(size)}mm`,
+          title: `너무 작은 구멍 ${fu(size)}`,
           detail: `현재 제조 방식의 최소 구멍 크기는 ${rules.minHole}mm입니다.`,
           suggestion: `${rules.minHole}mm 이상으로 키우세요.`,
           refs: [ref(h, samples[0])],
@@ -327,7 +368,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
           id: `depth-through:${v}:${h.id}`,
           severity: "info",
           category: "형상",
-          title: `깊이 ${f2(h.depth)}mm가 두께 ${f2(extent)}mm 이상이라 관통됨`,
+          title: `깊이 ${fu(h.depth)}가 두께 ${fu(extent)} 이상이라 관통됨`,
           detail: `${VIEW_LABEL[v]}의 ${shapeName(h)}은 깊이를 지정했지만 부품을 끝까지 뚫습니다.`,
           suggestion: "관통이 맞다면 ‘관통’으로 바꾸고, 아니라면 깊이를 줄이세요.",
           refs: [ref(h, shapeCenter(h))],
@@ -345,7 +386,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
               severity: "error",
               category: "구멍",
               title: "카운터보어 지름이 구멍보다 작음",
-              detail: `자리 지름 Ø${f2(spec.cbDiameter ?? 0)}가 구멍 Ø${f2(d)}보다 커야 볼트 머리가 들어갑니다.`,
+              detail: `자리 지름 Ø${fl(spec.cbDiameter ?? 0)}가 구멍 Ø${fl(d)}보다 커야 볼트 머리가 들어갑니다.`,
               suggestion: spec.size ? `${spec.size} 표준값으로 바꾸려면 나사 규격을 다시 고르세요.` : "자리 지름을 키우세요.",
               refs: [ref(h, [h.cx, h.cy])],
             });
@@ -355,7 +396,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
               severity: "error",
               category: "구멍",
               title: "카운터보어가 부품을 뚫고 나감",
-              detail: `자리 깊이 ${f2(spec.cbDepth)}mm가 두께 ${f2(extent)}mm 이상입니다. 볼트가 걸릴 곳이 없습니다.`,
+              detail: `자리 깊이 ${fu(spec.cbDepth)}가 두께 ${fu(extent)} 이상입니다. 볼트가 걸릴 곳이 없습니다.`,
               suggestion: "자리 깊이를 줄이거나 부품을 두껍게 하세요.",
               refs: [ref(h, [h.cx, h.cy])],
             });
@@ -366,7 +407,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             severity: "error",
             category: "구멍",
             title: "카운터싱크 지름이 구멍보다 작음",
-            detail: `바깥 지름 Ø${f2(spec.csDiameter ?? 0)}가 구멍 Ø${f2(d)}보다 커야 합니다.`,
+            detail: `바깥 지름 Ø${fl(spec.csDiameter ?? 0)}가 구멍 Ø${fl(d)}보다 커야 합니다.`,
             suggestion: "바깥 지름을 키우세요.",
             refs: [ref(h, [h.cx, h.cy])],
           });
@@ -377,9 +418,9 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
               id: `tap-engage:${v}:${h.id}`,
               severity: "info",
               category: "구멍",
-              title: `나사 깊이가 얕음 (${f2(h.depth)}mm < ${f2(nominal * 1.5)}mm)`,
+              title: `나사 깊이가 얕음 (${fu(h.depth)} < ${fu(nominal * 1.5)})`,
               detail: `${spec.size} 탭은 보통 호칭 지름의 1.5배 이상 물려야 충분히 조여집니다 (강철 기준, 알루미늄은 2배).`,
-              suggestion: `깊이를 ${f2(nominal * 1.5)}mm 이상으로 하세요.`,
+              suggestion: `깊이를 ${fu(nominal * 1.5)} 이상으로 하세요.`,
               refs: [ref(h, [h.cx, h.cy])],
             });
         }
@@ -389,7 +430,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             severity: "warning",
             category: "구멍",
             title: `깊고 가는 구멍 (깊이/지름 = ${f2(depth / d)})`,
-            detail: `Ø${f2(d)} 구멍의 깊이가 ${f2(depth)}mm입니다. 일반 드릴은 깊이가 지름의 ${rules.maxDepthRatio}배를 넘으면 휘거나 부러지기 쉽습니다.`,
+            detail: `Ø${fl(d)} 구멍의 깊이가 ${fu(depth)}입니다. 일반 드릴은 깊이가 지름의 ${rules.maxDepthRatio}배를 넘으면 휘거나 부러지기 쉽습니다.`,
             suggestion: "구멍 지름을 키우거나, 부품을 얇게 하거나, 건드릴 가공을 고려하세요.",
             refs: [ref(h, [h.cx, h.cy])],
           });
@@ -398,9 +439,9 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             id: `hole-vs-t:${v}:${h.id}`,
             severity: "warning",
             category: "구멍",
-            title: `판 두께보다 작은 구멍 Ø${f2(d)}`,
-            detail: `판금 펀칭/레이저는 구멍 지름이 판 두께(${f2(p.thickness)}mm) 이상이어야 깨끗하게 뚫립니다.`,
-            suggestion: `Ø${f2(p.thickness)} 이상으로 키우거나 후가공(드릴)을 지정하세요.`,
+            title: `판 두께보다 작은 구멍 Ø${fl(d)}`,
+            detail: `판금 펀칭/레이저는 구멍 지름이 판 두께(${fu(p.thickness)}) 이상이어야 깨끗하게 뚫립니다.`,
+            suggestion: `Ø${fl(p.thickness)} 이상으로 키우거나 후가공(드릴)을 지정하세요.`,
             refs: [ref(h, [h.cx, h.cy])],
           });
         if ((!spec || spec.purpose === "custom") && Math.abs(d * 10 - Math.round(d * 10)) > 1e-6)
@@ -408,7 +449,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             id: `hole-std:${v}:${h.id}`,
             severity: "info",
             category: "구멍",
-            title: `드릴 규격이 아닌 지름 Ø${f2(d)}`,
+            title: `드릴 규격이 아닌 지름 Ø${fl(d)}`,
             detail: "표준 드릴은 0.1mm 단위입니다. 이 지름은 리머·보링 같은 추가 가공이 필요합니다.",
             suggestion: `Ø${(Math.round(d * 10) / 10).toFixed(1)}처럼 0.1mm 단위로 바꾸세요. (예: M3 관통 Ø3.4, M4 관통 Ø4.5, M5 관통 Ø5.5, M6 관통 Ø6.6)`,
             refs: [ref(h, [h.cx, h.cy])],
@@ -438,7 +479,7 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             severity: "warning",
             category: "가공성",
             title: `깊고 좁은 포켓 (깊이/폭 = ${f2(dep / narrow)})`,
-            detail: `폭 ${f2(narrow)}mm에 깊이 ${f2(dep)}mm입니다. 엔드밀은 보통 지름의 ${rules.maxPocketRatio}배보다 깊게 깎기 어렵습니다.`,
+            detail: `폭 ${fu(narrow)}에 깊이 ${fu(dep)}입니다. 엔드밀은 보통 지름의 ${rules.maxPocketRatio}배보다 깊게 깎기 어렵습니다.`,
             suggestion: "포켓을 넓히거나 얕게 하세요.",
             refs: [ref(h, shapeCenter(h))],
           });
@@ -490,8 +531,8 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
             id: `hole-gap:${v}:${a.id}:${b.id}`,
             severity: gap < rules.minWall || gap < minGap(a, b) * 0.75 ? "warning" : "info",
             category: "구멍",
-            title: `구멍 사이 벽이 ${f2(gap)}mm로 얇음`,
-            detail: `${VIEW_LABEL[v]}의 두 구멍 사이 벽이 권장 ${f2(minGap(a, b))}mm(최소 벽 ${rules.minWall}mm, 원형 구멍은 작은 지름의 0.5배 이상)보다 얇아 가공 중 찢어지거나 변형되기 쉽습니다.`,
+            title: `구멍 사이 벽이 ${fu(gap)}로 얇음`,
+            detail: `${VIEW_LABEL[v]}의 두 구멍 사이 벽이 권장 ${fu(minGap(a, b))}(최소 벽 ${fu(rules.minWall)}, 원형 구멍은 작은 지름의 0.5배 이상)보다 얇아 가공 중 찢어지거나 변형되기 쉽습니다.`,
             suggestion: "구멍 간격을 넓히세요.",
             refs: [ref(holes[i], at), ref(holes[j])],
           });

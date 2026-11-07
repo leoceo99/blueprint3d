@@ -1,6 +1,6 @@
-import type { Finding, HoleSpec, ViewId } from "../core/types";
+import type { ConsKind, CRef, Finding, HoleSpec, ViewId } from "../core/types";
 
-export type Tool = "select" | "rect" | "circle" | "poly" | "slot" | "hole" | "corner" | "measure";
+export type Tool = "select" | "rect" | "circle" | "poly" | "slot" | "hole" | "corner" | "measure" | "constrain";
 
 /** 구멍 도구로 다음에 놓을 구멍 */
 export interface HoleSettings {
@@ -45,6 +45,13 @@ class UIState {
   flash: { view: ViewId; u: number; v: number; until: number } | null = null;
   findings: Finding[] = [];
   hoverFindingId: string | null = null;
+  /** 구속 도구: 만들 구속 종류와 지금까지 고른 대상 */
+  consKind: ConsKind = "coincident";
+  consPicks: CRef[] = [];
+  /** 고른 구속 (기호를 눌러서) */
+  selCons: { view: ViewId; id: string } | null = null;
+  /** 제도판에 구속 기호 보이기 */
+  showCons = true;
 
   private listeners = new Set<() => void>();
   subscribe(fn: () => void) {

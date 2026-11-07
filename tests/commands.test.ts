@@ -49,6 +49,8 @@ describe("검색", () => {
     expect(matchScore("ㅅㄱㅎ", "사각형")).toBeGreaterThan(0);
     expect(matchScore("ㄷㅁ", "도면 출력")).toBeGreaterThan(0);
     expect(matchScore("ㅎㅅㄱ", "사각형")).toBe(0);
+    // 제목 안 낱말의 첫머리 초성이 다른 명령 별칭의 중간보다 앞
+    expect(matchScore("ㅅㅍ", "구속: 수평")).toBeGreaterThan(matchScore("ㅅㅍ", "새 프로젝트") * 0.9);
   });
   it("앞부분 > 중간 > 건너뛰기, 띄어쓰기 무시", () => {
     expect(matchScore("실행", "실행 취소")).toBeGreaterThan(matchScore("취소", "실행 취소"));

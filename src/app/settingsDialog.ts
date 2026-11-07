@@ -4,7 +4,7 @@
  */
 import { AI_MODEL, getApiKey, setApiKey } from "../aiKey";
 import { formatCombo, keyOf } from "../core/keys";
-import { GRIDS, type Theme } from "../core/settings";
+import { gridLabel, gridsFor, type Theme } from "../core/settings";
 import { h } from "../ui/modal";
 import type { Command } from "./commands";
 import { commands, on } from "./context";
@@ -31,7 +31,10 @@ export const settingsOpen = () => dlg().open;
 function sync() {
   const s = prefs.get();
   $$<HTMLInputElement>('input[name="theme"]').forEach((r) => (r.checked = r.value === s.theme));
-  $<HTMLSelectElement>("#setGrid").value = String(s.grid);
+  $<HTMLSelectElement>("#setUnits").value = s.units;
+  const grid = $<HTMLSelectElement>("#setGrid");
+  grid.innerHTML = gridsFor(s.units).map((g) => `<option value="${g}">${gridLabel(g)}</option>`).join("");
+  grid.value = String(s.grid);
   $<HTMLInputElement>("#showExp").checked = s.showExperimental;
   $<HTMLInputElement>("#devExample").checked = s.devExample;
 }
@@ -40,7 +43,8 @@ export function initSettings() {
   $("#aiModel").textContent = AI_MODEL;
   $("#settingsBtn").dataset.cmd = "app.settings";
   const grid = $<HTMLSelectElement>("#setGrid");
-  grid.innerHTML = GRIDS.map((g) => `<option value="${g}">${g} mm</option>`).join("");
+  const units = $<HTMLSelectElement>("#setUnits");
+  units.onchange = () => prefs.set({ units: units.value === "inch" ? "inch" : "mm" });
   $$<HTMLInputElement>('input[name="theme"]').forEach((r) => (r.onchange = () => r.checked && prefs.set({ theme: r.value as Theme })));
   grid.onchange = () => prefs.set({ grid: parseFloat(grid.value) });
   $<HTMLInputElement>("#showExp").onchange = (e) => prefs.set({ showExperimental: (e.target as HTMLInputElement).checked });

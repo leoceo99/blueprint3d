@@ -27,7 +27,7 @@ describe("규칙 기반 설계 검사", () => {
     p.views.top = [rect("a", 0, 0, 50, 50), circle("h", 6, 25, 5)]; // 벽 1mm, 권장 2.5mm
     const f = runChecks(p).find((x) => x.id.startsWith("hole-edge"))!;
     expect(f.severity).toBe("warning");
-    expect(f.title).toContain("1mm");
+    expect(f.title).toContain("1 mm");
     expect(f.refs[0].shapeId).toBe("h");
   });
 
@@ -80,7 +80,7 @@ describe("규칙 기반 설계 검사", () => {
     const p = emptyProject();
     p.views.top = [rect("a", 0, 0, 60, 40), { id: "s", kind: "slot", hole: true, a: [10, 3.5], b: [30, 3.5], w: 6 }];
     const f = runChecks(p).find((x) => x.id.startsWith("hole-edge"))!;
-    expect(f.title).toContain("0.5mm");
+    expect(f.title).toContain("0.5 mm");
   });
 
   it("카운터보어: 자리 지름이 구멍보다 작거나 너무 깊으면 오류", () => {

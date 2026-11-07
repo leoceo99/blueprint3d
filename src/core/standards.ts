@@ -7,6 +7,7 @@
  * 기본값이며, 속성 패널에서 직접 고칠 수 있다.
  */
 import type { HoleSpec } from "./types";
+import { fmtLen, type Unit } from "./units";
 
 export interface ThreadRow {
   size: string;
@@ -80,18 +81,18 @@ export function outerDiameter(d: number, spec?: HoleSpec): number {
  * 자세히: "M5 관통구멍 Ø5.5 관통 · 카운터보어 Ø9.5 깊이 5.4", "M4 탭 깊이 8"
  * 짧게(트리용): "M5 관통구멍 · 카운터보어", "M4 탭 깊이 8"
  */
-export function holeLabel(d: number, spec: HoleSpec | undefined, depth: number | undefined, short = false): string {
-  const f = (n: number) => String(Math.round(n * 100) / 100);
+export function holeLabel(d: number, spec: HoleSpec | undefined, depth: number | undefined, short = false, unit?: Unit): string {
+  const f = (n: number) => fmtLen(n, unit);
   const dep = depth !== undefined ? ` 깊이 ${f(depth)}` : short ? "" : " 관통";
-  const head = !spec ? "" : short ? (spec.head === "none" ? "" : ` · ${HEAD_LABEL[spec.head]}`) : headLabel(spec);
+  const head = !spec ? "" : short ? (spec.head === "none" ? "" : ` · ${HEAD_LABEL[spec.head]}`) : headLabel(spec, unit);
   if (!spec || spec.purpose === "custom") return `Ø${f(d)} 구멍${dep}${head}`;
   if (spec.purpose === "tap") return `${spec.size} 탭${dep}${head}`;
   return `${spec.size} 관통구멍${short ? "" : ` Ø${f(d)}`}${dep}${head}`;
 }
 
-function headLabel(spec: HoleSpec): string {
-  const f = (n: number) => String(Math.round(n * 100) / 100);
+function headLabel(spec: HoleSpec, unit?: Unit): string {
+  const f = (n: number) => fmtLen(n, unit);
   if (spec.head === "counterbore") return ` · 카운터보어 Ø${f(spec.cbDiameter ?? 0)} 깊이 ${f(spec.cbDepth ?? 0)}`;
-  if (spec.head === "countersink") return ` · 카운터싱크 Ø${f(spec.csDiameter ?? 0)}×${f(spec.csAngle ?? 90)}°`;
+  if (spec.head === "countersink") return ` · 카운터싱크 Ø${f(spec.csDiameter ?? 0)}×${Math.round((spec.csAngle ?? 90) * 100) / 100}°`;
   return "";
 }

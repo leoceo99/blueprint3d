@@ -24,13 +24,17 @@ export function matchScore(query: string, target: string): number {
   if (!t) return 0;
   if (t === q) return 100;
   if (t.startsWith(q)) return 85 - Math.min(10, t.length - q.length) * 0.5;
+  // 낱말 첫머리 (예: "구속: 수평"의 "수평")
+  const words = target.toLowerCase().split(/[\s·:_\-()/,.…]+/).filter(Boolean);
+  if (words.some((w) => w.startsWith(q))) return 76;
   const i = t.indexOf(q);
   if (i >= 0) return 70 - Math.min(20, i);
   // 초성으로 찾기 (질의에 초성이 하나라도 있으면)
   if ([...q].some(isInitial)) {
     const tc = choseong(t);
     const qc = choseong(q);
-    if (tc.startsWith(qc)) return 60;
+    if (tc.startsWith(qc)) return 62;
+    if (words.some((w) => choseong(w).startsWith(qc))) return 61;
     const j = tc.indexOf(qc);
     if (j >= 0) return 50 - Math.min(20, j);
   }

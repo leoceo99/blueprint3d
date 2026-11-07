@@ -1,17 +1,18 @@
+import { ConstraintLayer, type Candidate } from "./sketchConstraints";
+import { addConstraint, setConstraintValue } from "../consActions";
+import { isDimension, matchSignature, refType, type RefType } from "../core/constraints";
+import { fmtLen, fmtLenU, fmtNum, fromDisplay } from "../core/units";
 import {
   area,
-  arcInfo,
   boundsOf,
   bulgeThrough,
   flatten,
   isDegenerate,
   normRect,
-  outline,
   pointInShape,
   rectPoints,
   rectToPoly,
   shapeCenter,
-  translated,
 } from "../core/geometry2d";
 import { holeLabel, specDiameter, threadRow } from "../core/standards";
 import { plainNumber } from "../core/expr";
@@ -20,6 +21,13 @@ import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Severity, type Shape2D, type View
 import { newId, store } from "../store";
 import type { DraftBoard } from "./board";
 import { ui } from "./state";
+import { palette } from "./sketchColors";
+
+export { palette, refreshColors } from "./sketchColors";
+import { clampScale, contains, fmt, handles, isTyping, keyPoints, setVertex, shapeLabel, translateShape, vertices, type Handle } from "./sketchShapes";
+
+// 다른 모듈이 쓰던 이름 (도형 유틸은 sketchShapes.ts로 옮김)
+export { fmt, handles, shapeLabel, vertices };
 import { underlayCanvas } from "../underlay";
 
 type Pt = [number, number];
@@ -36,12 +44,6 @@ type Drag =
   /** 변 가운데 손잡이를 끌어 변을 원호로 휘게 */
   | { kind: "bend"; shapeId: string; index: number; moved: boolean };
 
-/** 선택한 도형의 손잡이: 꼭짓점(크기 조절) 또는 변 가운데(휘기) */
-interface Handle {
-  pt: Pt;
-  kind: "vertex" | "mid";
-  index: number;
-}
 
 /** 사각형/원 그리기 중 상태 (끌어서 그리기, 또는 클릭-클릭) */
 interface Creating {
@@ -49,67 +51,6 @@ interface Creating {
   start: Pt;
   downAt: [number, number];
   dragged: boolean;
-}
-
-interface Colors {
-  bg: string;
-  gridMinor: string;
-  gridMajor: string;
-  axis: string;
-  solidFill: string;
-  solidStroke: string;
-  holeStroke: string;
-  accent: string;
-  guide: string;
-  snap: string;
-  text: string;
-  error: string;
-  warning: string;
-  info: string;
-  blindFill: string;
-  result: string;
-  boardBg: string;
-  frame: string;
-  frameLabelBg: string;
-  cornerBg: string;
-  underlayInk: string;
-}
-
-function readColors(): Colors {
-  const cs = getComputedStyle(document.documentElement);
-  const v = (n: string) => cs.getPropertyValue(n).trim();
-  return {
-    bg: v("--canvas-bg"),
-    gridMinor: v("--grid-minor"),
-    gridMajor: v("--grid-major"),
-    axis: v("--axis"),
-    solidFill: v("--solid-fill"),
-    solidStroke: v("--solid-stroke"),
-    holeStroke: v("--hole-stroke"),
-    accent: v("--accent"),
-    guide: v("--guide"),
-    snap: v("--snap"),
-    text: v("--text-muted"),
-    error: v("--sev-error"),
-    warning: v("--sev-warning"),
-    info: v("--sev-info"),
-    blindFill: v("--blind-fill"),
-    result: v("--result-line"),
-    boardBg: v("--board-bg"),
-    frame: v("--frame"),
-    frameLabelBg: v("--frame-label-bg"),
-    cornerBg: v("--corner-bg"),
-    underlayInk: v("--underlay-ink"),
-  };
-}
-
-let colors: Colors | null = null;
-export function refreshColors() {
-  colors = readColors();
-}
-export function palette(): Colors {
-  if (!colors) colors = readColors();
-  return colors;
 }
 
 /**
@@ -139,6 +80,12 @@ export class SketchPane {
   private canvas: HTMLCanvasElement;
   private dyn: HTMLInputElement;
   private dynHint: HTMLDivElement;
+  /** 구속 기호·치수 구속·대상 고르기 */
+  readonly cons: ConstraintLayer;
+  /** 구속 도구: 커서 아래 후보 */
+  private hoverCand: Candidate | null = null;
+  /** 치수 구속 값을 고치는 중 */
+  private consEdit: string | null = null;
   readonly ua: number;
   readonly va: number;
 
@@ -152,7 +99,7 @@ export class SketchPane {
     const [u, v] = VIEW_AXES[view];
     this.ua = AX[u];
     this.va = AX[v];
-    if (!colors) refreshColors();
+    this.cons = new ConstraintLayer({ view, toScreen: (u, v) => this.toScreen(u, v), region: () => this.board.regionScreenRect(view) });
 
     // 치수 직접 입력 (AutoCAD의 동적 입력처럼)
     const host = canvas.parentElement!;
@@ -166,6 +113,10 @@ export class SketchPane {
     this.dyn.addEventListener("keydown", (e) => {
       e.stopPropagation();
       if (e.key === "Enter") {
+        if (this.consEdit) {
+          if (this.applyConsEdit(this.dyn.value)) this.closeDyn();
+          return;
+        }
         if (this.dimEdit) {
           if (this.applyDimEdit(this.dyn.value)) this.closeDyn();
           return;
@@ -294,7 +245,8 @@ export class SketchPane {
 
   cancel() {
     this.closeDyn();
-    const had = this.polyDraft.length > 0 || this.creating !== null || this.measure !== null;
+    const had = this.polyDraft.length > 0 || this.creating !== null || this.measure !== null || ui.consPicks.length > 0;
+    ui.consPicks = [];
     this.polyDraft = [];
     this.creating = null;
     this.measure = null;
@@ -352,6 +304,38 @@ export class SketchPane {
       ui.emit();
     }
     const [x, y] = this.local(e);
+
+    // 구속 도구: 대상을 차례로 고르고, 다 고르면 구속을 만든다
+    if (ui.tool === "constrain") {
+      const r = this.cons.pickForTool(x, y);
+      if (r.done) {
+        const c = r.done;
+        if (addConstraint(this.view, c) && isDimension(c.kind)) {
+          ui.selCons = { view: this.view, id: c.id };
+          // 다시 그린 뒤 그 값 칸을 열어 바로 숫자를 넣게
+          requestAnimationFrame(() => {
+            const h = this.cons.hits.find((x) => x.id === c.id && x.dim);
+            if (h) this.openConsEdit(c.id, h.box);
+          });
+        }
+      }
+      ui.emit();
+      this.render();
+      if (!r.picked) this.board.startPan(x, y);
+      return;
+    }
+    // 구속 기호·치수 구속 값을 누르면 그 구속 선택 (값이면 바로 고치기)
+    if (ui.tool === "select" && !this.busy) {
+      const h = this.cons.hit(x, y);
+      if (h) {
+        ui.selCons = { view: this.view, id: h.id };
+        ui.sel = null;
+        ui.emit();
+        if (h.dim) this.openConsEdit(h.id, h.box);
+        return;
+      }
+      if (ui.selCons) ui.selCons = null;
+    }
 
     // 선택한 도형의 치수 숫자를 누르면 바로 고치기
     if (ui.tool === "select" && !this.busy) {
@@ -458,6 +442,10 @@ export class SketchPane {
     this.guides = guides;
     this.hoverShapeId = !d && ui.tool === "select" ? (this.hitShape(raw)?.id ?? null) : null;
     this.hoverCorner = ui.tool === "corner" ? this.findCorner(x, y) : null;
+    if (ui.tool === "constrain") {
+      const types = ui.consPicks.map((r) => refType(store.project, this.view, r)!) as RefType[];
+      this.hoverCand = this.cons.pick(x, y, (t) => matchSignature(ui.consKind, [...types, t]) !== "no");
+    } else this.hoverCand = null;
 
     // 다른 창에 투영선을 그릴 수 있게 3D 커서 공유
     const cur: [number | null, number | null, number | null] = [null, null, null];
@@ -677,6 +665,7 @@ export class SketchPane {
     this.dynHint.hidden = true;
     this.dyn.classList.remove("err");
     this.dimEdit = null;
+    this.consEdit = null;
     this.canvas.focus();
   }
 
@@ -701,16 +690,46 @@ export class SketchPane {
     }, 0);
   }
 
+  private openConsEdit(id: string, box: [number, number, number, number]) {
+    const k = store.project.constraints?.[this.view]?.find((x) => x.id === id);
+    if (!k) return;
+    this.consEdit = id;
+    this.dimEdit = null;
+    const cx = (box[0] + box[2]) / 2;
+    this.dyn.hidden = false;
+    this.dynHint.hidden = false;
+    this.dyn.style.left = `${Math.max(4, Math.min(cx - 60, this.w - 130))}px`;
+    this.dyn.style.top = `${Math.max(4, box[1] - 4)}px`;
+    this.dynHint.style.left = this.dyn.style.left;
+    this.dynHint.style.top = `${Math.max(4, box[1] - 4) + 32}px`;
+    this.dynHint.textContent = k.kind === "angle" ? "각도(°) 또는 식 ⏎" : "숫자 또는 식 (예: 15, L/2) ⏎";
+    this.dyn.value = k.expr ?? (k.kind === "angle" ? String(Math.round((k.value ?? 0) * 100) / 100) : fmtLen(k.value ?? 0));
+    setTimeout(() => {
+      this.dyn.focus();
+      this.dyn.select();
+    }, 0);
+  }
+
+  private applyConsEdit(text: string): boolean {
+    const id = this.consEdit;
+    if (!id) return true;
+    const err = setConstraintValue(this.view, id, text);
+    if (err) {
+      this.dyn.classList.add("err");
+      this.dynHint.textContent = `⚠ ${err}`;
+      return false;
+    }
+    return true;
+  }
+
   private applyDimEdit(text: string): boolean {
     const d = this.dimEdit;
     if (!d) return true;
     const s = store.project.views[this.view].find((x) => x.id === d.shapeId);
     if (!s) return true;
-    // 성공했을 때만 실행 취소 기록을 남긴다
-    store.checkpoint("치수 고치기");
-    const err = setDimInput(s, d.key, text, store.project);
-    if (err) store.dropCheckpoint();
-    else store.changed();
+    // 성공했을 때만 실행 취소 기록을 남긴다 (구속과 맞지 않으면 되돌려짐)
+    let err: string | null = null;
+    store.update(() => (err = setDimInput(s, d.key, text, store.project)), "치수 고치기");
     if (err) {
       this.dyn.classList.add("err");
       this.dynHint.textContent = `⚠ ${err}`;
@@ -720,8 +739,10 @@ export class SketchPane {
   }
 
   private applyDyn(text: string) {
-    const nums = text.replace("@", "").split(/[,\s<]+/).filter(Boolean).map(Number);
-    if (!nums.length || nums.some((n) => !Number.isFinite(n))) return;
+    const raw = text.replace("@", "").split(/[,\s<]+/).filter(Boolean).map(Number);
+    if (!raw.length || raw.some((n) => !Number.isFinite(n))) return;
+    // 길이는 문서 단위로 입력 (“길이<각도”의 각도만 그대로)
+    const nums = raw.map((n, i) => (text.includes("<") && i === 1 ? n : fromDisplay(n)));
     const c = this.creating;
     if (c?.shape.kind === "rect") {
       const w = nums[0];
@@ -771,7 +792,7 @@ export class SketchPane {
     if (!u || u.show === false) return;
     const vm = u.views[this.view];
     if (!vm) return;
-    const img = underlayCanvas(u.key, colors!.underlayInk);
+    const img = underlayCanvas(u.key, palette().underlayInk);
     if (!img) return;
     const f = img.width / u.w;
     const s = u.mmPerPx;
@@ -789,7 +810,7 @@ export class SketchPane {
   renderContent() {
     this.dimHits = [];
     const c = this.ctx;
-    const col = colors!;
+    const col = palette();
     const { w, h } = this;
     if (!w || !h) return;
     const reg = this.board.regionScreenRect(this.view);
@@ -835,6 +856,19 @@ export class SketchPane {
       c.stroke();
       c.globalAlpha = 1;
     }
+    // 구속으로 다 정해진 도형은 진한 선 (Fusion처럼: 파랑 = 덜 정해짐, 진한 색 = 다 정해짐)
+    for (const s of shapes) {
+      if (this.cons.stateOf(s.id) !== "full") continue;
+      this.pathShape(s);
+      c.lineWidth = 1.6;
+      c.strokeStyle = col.fullStroke;
+      // 관통 구멍은 점선 그대로 (구멍인 것이 보이게)
+      c.setLineDash(s.hole && s.depth === undefined ? [5, 3] : []);
+      c.globalAlpha = 0.85;
+      c.stroke();
+      c.globalAlpha = 1;
+      c.setLineDash([]);
+    }
     if (this.hoverShapeId && this.hoverShapeId !== sel?.id) {
       const s = shapes.find((x) => x.id === this.hoverShapeId);
       if (s) {
@@ -877,6 +911,7 @@ export class SketchPane {
       else this.label(sel);
     }
     if (draft) this.label(draft);
+    this.cons.draw(c, col, this.hoverCand);
     this.drawCornerHover();
     this.drawPolyDraft();
     this.drawMeasure();
@@ -903,7 +938,7 @@ export class SketchPane {
     const [x0, y0] = this.toScreen(0, 0);
     c.save();
     c.setTransform(this.dpr * scale, 0, 0, this.dpr * scale, this.dpr * x0, this.dpr * y0);
-    c.strokeStyle = colors!.result;
+    c.strokeStyle = palette().result;
     c.lineWidth = 1 / scale;
     c.setLineDash([4 / scale, 3 / scale]);
     c.globalAlpha = 0.6;
@@ -922,7 +957,7 @@ export class SketchPane {
     const c = this.ctx;
     const [x, y] = this.toScreen(s.cx, s.cy);
     const k = ui.camera.scale;
-    c.strokeStyle = colors!.holeStroke;
+    c.strokeStyle = palette().holeStroke;
     c.lineWidth = 1;
     if (spec.head === "counterbore" && spec.cbDiameter) {
       c.beginPath();
@@ -953,14 +988,14 @@ export class SketchPane {
     const c = this.ctx;
     const [x, y] = this.toScreen(this.hover[0], this.hover[1]);
     c.globalAlpha = 0.7;
-    c.strokeStyle = colors!.holeStroke;
+    c.strokeStyle = palette().holeStroke;
     c.lineWidth = 1.5;
     c.beginPath();
     c.arc(x, y, (d / 2) * ui.camera.scale, 0, Math.PI * 2);
     c.stroke();
     this.drawHoleDecor({ id: "", kind: "circle", hole: true, cx: this.hover[0], cy: this.hover[1], r: d / 2, spec: ui.hole.spec });
     c.globalAlpha = 1;
-    this.tag(holeLabel(d, ui.hole.spec, ui.hole.depth), x, y - (d / 2) * ui.camera.scale - 14, colors!.holeStroke);
+    this.tag(holeLabel(d, ui.hole.spec, ui.hole.depth), x, y - (d / 2) * ui.camera.scale - 14, palette().holeStroke);
   }
 
   private flaggedShapes(): Map<string, Severity> {
@@ -1006,11 +1041,11 @@ export class SketchPane {
     const [x, y] = this.toScreen(hc.pt[0], hc.pt[1]);
     c.beginPath();
     c.arc(x, y, 9, 0, Math.PI * 2);
-    c.strokeStyle = colors!.snap;
+    c.strokeStyle = palette().snap;
     c.lineWidth = 2;
     c.stroke();
     const label = ui.cornerKind === "fillet" ? `R${fmt(ui.cornerSize)}` : `C${fmt(ui.cornerSize)}`;
-    this.tag(`${label} 적용 (Shift: 전체)`, x, y - 22, colors!.snap);
+    this.tag(`${label} 적용 (Shift: 전체)`, x, y - 22, palette().snap);
   }
 
   private drawMeasure() {
@@ -1018,7 +1053,7 @@ export class SketchPane {
     if (!m) return;
     const b = m.b ?? (ui.activeView === this.view ? this.hover : null);
     const c = this.ctx;
-    const col = colors!;
+    const col = palette();
     const [ax, ay] = this.toScreen(m.a[0], m.a[1]);
     c.fillStyle = col.snap;
     c.beginPath();
@@ -1049,7 +1084,7 @@ export class SketchPane {
     const [ua, va] = VIEW_AXES[this.view];
     const len = Math.hypot(du, dv);
     const ang = (Math.atan2(dv, du) * 180) / Math.PI;
-    this.tag(`${fmt(len)} mm  ∠${fmt(ang)}°`, (ax + bx) / 2, (ay + by) / 2 - 14, col.snap);
+    this.tag(`${fmtLenU(len)}  ∠${fmtNum(ang)}°`, (ax + bx) / 2, (ay + by) / 2 - 14, col.snap);
     this.tag(`Δ${ua} ${fmt(du)} · Δ${va} ${fmt(dv)}`, (ax + bx) / 2, (ay + by) / 2 + 8, col.snap);
   }
 
@@ -1073,7 +1108,7 @@ export class SketchPane {
       at = [(b[0] + b[2]) / 2, b[3]];
     }
     const [x, y] = this.toScreen(at[0], at[1]);
-    this.tag(text, x, y - 14, colors!.accent);
+    this.tag(text, x, y - 14, palette().accent);
   }
 
   /** 치수 숫자에 보일 글자: 식이면 "L/2 = 40", 잠금이면 "🔒 40" */
@@ -1090,7 +1125,7 @@ export class SketchPane {
    */
   private dimLine(s: Shape2D, key: string, a: Pt, b: Pt, dir: "h" | "v", off: number, prefix = "") {
     const c = this.ctx;
-    const col = colors!;
+    const col = palette();
     const [ax, ay] = this.toScreen(a[0], a[1]);
     const [bx, by] = this.toScreen(b[0], b[1]);
     if (Math.hypot(bx - ax, by - ay) < 6) return;
@@ -1162,7 +1197,7 @@ export class SketchPane {
       const [x, y] = this.toScreen(s.cx, s.cy);
       const rr = s.r * ui.camera.scale;
       // 지름: 규격 구멍이면 규격 이름만 (지름은 규격이 정함)
-      if (s.spec && specDiameter(s.spec) !== null) this.tag(holeLabel(s.r * 2, s.spec, s.depth), x, y - rr - 14, colors!.accent);
+      if (s.spec && specDiameter(s.spec) !== null) this.tag(holeLabel(s.r * 2, s.spec, s.depth), x, y - rr - 14, palette().accent);
       else {
         const text = this.dimText(s, "d", "Ø");
         const c = this.ctx;
@@ -1170,13 +1205,13 @@ export class SketchPane {
         const tw = c.measureText(text).width + 12;
         const by = y - rr - 16;
         const bound = s.exprs?.d !== undefined;
-        c.fillStyle = bound ? colors!.accent : colors!.bg;
-        c.strokeStyle = bound ? colors!.accent : colors!.text;
+        c.fillStyle = bound ? palette().accent : palette().bg;
+        c.strokeStyle = bound ? palette().accent : palette().text;
         c.beginPath();
         c.roundRect(x - tw / 2, by - 10, tw, 20, 5);
         c.fill();
         c.stroke();
-        c.fillStyle = bound ? "#fff" : colors!.text;
+        c.fillStyle = bound ? "#fff" : palette().text;
         c.textAlign = "center";
         c.textBaseline = "middle";
         c.fillText(text, x, by + 0.5);
@@ -1193,13 +1228,13 @@ export class SketchPane {
       const tw = c.measureText(text).width + 12;
       const by = y - (s.w / 2) * ui.camera.scale - 16;
       const bound = s.exprs?.w !== undefined;
-      c.fillStyle = bound ? colors!.accent : colors!.bg;
-      c.strokeStyle = bound ? colors!.accent : colors!.text;
+      c.fillStyle = bound ? palette().accent : palette().bg;
+      c.strokeStyle = bound ? palette().accent : palette().text;
       c.beginPath();
       c.roundRect(x - tw / 2, by - 10, tw, 20, 5);
       c.fill();
       c.stroke();
-      c.fillStyle = bound ? "#fff" : colors!.text;
+      c.fillStyle = bound ? "#fff" : palette().text;
       c.textAlign = "center";
       c.textBaseline = "middle";
       c.fillText(text, x, by + 0.5);
@@ -1226,7 +1261,7 @@ export class SketchPane {
   /** 이 뷰의 원점 축 (회전체 모드의 정면도는 회전축 표시) */
   private drawAxes() {
     const c = this.ctx;
-    const col = colors!;
+    const col = palette();
     const [ax, ay] = this.toScreen(0, 0);
     const revolve = store.project.mode === "revolve" && this.view === "front";
     // 축은 이 뷰의 틀 안에만 (영역 끝까지 그으면 다른 뷰와 만나는 곳에서 뚝 끊겨 보인다)
@@ -1258,7 +1293,7 @@ export class SketchPane {
   private drawExtentGuides() {
     const c = this.ctx;
     const { w, h } = this;
-    c.strokeStyle = colors!.guide;
+    c.strokeStyle = palette().guide;
     c.lineWidth = 1;
     c.setLineDash([4, 4]);
     c.beginPath();
@@ -1286,7 +1321,7 @@ export class SketchPane {
   private drawPolyDraft() {
     if (!this.polyDraft.length) return;
     const c = this.ctx;
-    const col = colors!;
+    const col = palette();
     c.beginPath();
     this.polyDraft.forEach(([u, v], i) => {
       const [x, y] = this.toScreen(u, v);
@@ -1314,13 +1349,13 @@ export class SketchPane {
       const len = Math.hypot(this.hover[0] - last[0], this.hover[1] - last[1]);
       const ang = (Math.atan2(this.hover[1] - last[1], this.hover[0] - last[0]) * 180) / Math.PI;
       const [x, y] = this.toScreen((this.hover[0] + last[0]) / 2, (this.hover[1] + last[1]) / 2);
-      if (len > 0) this.tag(`${fmt(len)} mm  ∠${fmt(ang)}°`, x, y - 14, col.accent);
+      if (len > 0) this.tag(`${fmtLenU(len)}  ∠${fmtNum(ang)}°`, x, y - 14, col.accent);
     }
   }
 
   private drawFindingMarkers() {
     const c = this.ctx;
-    const col = colors!;
+    const col = palette();
     for (const f of ui.findings) {
       if (f.severity === "info" && ui.hoverFindingId !== f.id) continue;
       const r = f.refs.find((r) => r.view === this.view && r.u !== undefined && r.v !== undefined);
@@ -1344,7 +1379,7 @@ export class SketchPane {
 
   private drawCursor() {
     const c = this.ctx;
-    const col = colors!;
+    const col = palette();
     const { w, h } = this;
     // 스냅 정렬선
     if (ui.activeView === this.view && this.guides.length && (ui.tool !== "select" || this.drag)) {
@@ -1420,7 +1455,7 @@ export class SketchPane {
     const t = (left % 600) / 600;
     c.beginPath();
     c.arc(x, y, 10 + 18 * (1 - t), 0, Math.PI * 2);
-    c.strokeStyle = colors!.accent;
+    c.strokeStyle = palette().accent;
     c.lineWidth = 2.5;
     c.globalAlpha = t;
     c.stroke();
@@ -1432,128 +1467,4 @@ export class SketchPane {
     const [u, v] = VIEW_AXES[this.view];
     return `${VIEW_LABEL[this.view]} · ${u}–${v}`;
   }
-}
-
-// ---------------- 도형 유틸 ----------------
-
-function isTyping() {
-  const a = document.activeElement;
-  return !!a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT");
-}
-
-function clampScale(s: number) {
-  return Math.min(Math.max(s, 0.05), 400);
-}
-
-/** 스냅 기준이 되는 점들 */
-function keyPoints(s: Shape2D): Pt[] {
-  if (s.kind === "circle")
-    return [
-      [s.cx, s.cy],
-      [s.cx - s.r, s.cy - s.r],
-      [s.cx + s.r, s.cy + s.r],
-    ];
-  if (s.kind === "slot") {
-    const b = boundsOf([{ ...s, hole: false }])!;
-    return [s.a, s.b, [b[0], b[1]], [b[2], b[3]]];
-  }
-  // 꼭짓점 + 원호 중심
-  const pts: Pt[] = [...vertices(s)];
-  for (const seg of outline(s)) {
-    const arc = arcInfo(seg);
-    if (arc) pts.push(arc.center);
-  }
-  return pts;
-}
-
-/** 선택한 도형의 손잡이 */
-export function handles(s: Shape2D): Handle[] {
-  const out: Handle[] = vertices(s).map((pt, index) => ({ pt, kind: "vertex" as const, index }));
-  if (s.kind === "rect" || s.kind === "poly") {
-    const pts = s.kind === "rect" ? rectPoints(s) : s.pts;
-    const n = pts.length;
-    for (let i = 0; i < n; i++) {
-      const bulge = s.kind === "poly" ? (s.bulges?.[i] ?? 0) : 0;
-      const arc = arcInfo({ a: pts[i], b: pts[(i + 1) % n], bulge });
-      const mid: Pt = arc ? arc.mid : [(pts[i][0] + pts[(i + 1) % n][0]) / 2, (pts[i][1] + pts[(i + 1) % n][1]) / 2];
-      out.push({ pt: mid, kind: "mid", index: i });
-    }
-  }
-  return out;
-}
-
-export function vertices(s: Shape2D): Pt[] {
-  if (s.kind === "rect") {
-    const r = normRect(s);
-    return [
-      [r.x, r.y],
-      [r.x + r.w, r.y],
-      [r.x + r.w, r.y + r.h],
-      [r.x, r.y + r.h],
-    ];
-  }
-  if (s.kind === "circle") return [[s.cx + s.r, s.cy]];
-  if (s.kind === "slot") {
-    // 두 중심점 + 폭 손잡이 (a 쪽 옆면)
-    const L = Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) || 1;
-    const n: Pt = [-(s.b[1] - s.a[1]) / L, (s.b[0] - s.a[0]) / L];
-    const m: Pt = [(s.a[0] + s.b[0]) / 2, (s.a[1] + s.b[1]) / 2];
-    return [s.a, s.b, [m[0] + n[0] * (s.w / 2), m[1] + n[1] * (s.w / 2)]];
-  }
-  return s.pts;
-}
-
-function setVertex(s: Shape2D, i: number, p: Pt) {
-  if (s.kind === "poly") s.pts[i] = p;
-  else if (s.kind === "circle") s.r = Math.max(Math.hypot(p[0] - s.cx, p[1] - s.cy), 0.05);
-  else if (s.kind === "slot") {
-    if (i === 0) s.a = p;
-    else if (i === 1) s.b = p;
-    else {
-      // 중심선에서 떨어진 거리 × 2 = 폭
-      const L = Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]);
-      const d = L > 1e-9 ? Math.abs((s.b[0] - s.a[0]) * (p[1] - s.a[1]) - (s.b[1] - s.a[1]) * (p[0] - s.a[0])) / L : Math.hypot(p[0] - s.a[0], p[1] - s.a[1]);
-      s.w = Math.max(Math.round(d * 2 * 1e4) / 1e4, 0.1);
-    }
-  } else {
-    const opp = vertices(s)[(i + 2) % 4];
-    const r = normRect(s);
-    Object.assign(s, {
-      x: Math.min(opp[0], p[0]),
-      y: Math.min(opp[1], p[1]),
-      w: Math.abs(p[0] - opp[0]) || r.w,
-      h: Math.abs(p[1] - opp[1]) || r.h,
-    });
-  }
-}
-
-function translateShape(s: Shape2D, orig: Shape2D, du: number, dv: number) {
-  Object.assign(s, translated(orig, du, dv));
-}
-
-function contains(outer: Shape2D, inner: Shape2D): boolean {
-  return flatten(inner, Math.PI / 6).every(([u, v]) => pointInShape(u, v, outer));
-}
-
-export function fmt(n: number): string {
-  return String(Math.round(n * 100) / 100);
-}
-
-export function shapeLabel(s: Shape2D, short = false): string {
-  const base = baseLabel(s);
-  if (s.kind === "circle" && s.hole && (s.spec || s.depth !== undefined)) return holeLabel(s.r * 2, s.spec, s.depth, short);
-  if (s.hole && s.depth !== undefined) return `${base} · 포켓 깊이 ${fmt(s.depth)}`;
-  return base;
-}
-
-function baseLabel(s: Shape2D): string {
-  if (s.kind === "rect") {
-    const r = normRect(s);
-    const c = s.corners?.find(Boolean);
-    return `사각형 ${fmt(r.w)}×${fmt(r.h)}${c ? ` · ${c.kind === "fillet" ? "R" : "C"}${fmt(c.size)}` : ""}`;
-  }
-  if (s.kind === "circle") return `원 Ø${fmt(s.r * 2)}`;
-  if (s.kind === "slot") return `장공 ${fmt(Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]))}×${fmt(s.w)}`;
-  const arcs = s.bulges?.filter((b) => b).length ?? 0;
-  return `다각형 ${s.pts.length}점${arcs ? ` · 호 ${arcs}` : ""}`;
 }

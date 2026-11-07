@@ -10,6 +10,8 @@
  */
 import { flatten, isDegenerate, normRect } from "./geometry2d";
 import { holeLabel } from "./standards";
+import { projUnit } from "./params";
+import { fmtLen, MM_PER_INCH, type Unit } from "./units";
 import type { BuildResult, Project, Shape2D, SheetInfo, ViewId } from "./types";
 import { VIEW_IDS, VIEW_LABEL } from "./types";
 
@@ -45,6 +47,8 @@ export interface Sheet {
   /** 용지 mm / 실제 mm */
   scale: number;
   scaleLabel: string;
+  /** 치수 글자의 길이 단위 (DXF도 이 단위로 내보낸다) */
+  units: Unit;
 }
 
 export const PAPERS: Record<"A4" | "A3" | "A2", [number, number]> = { A4: [297, 210], A3: [420, 297], A2: [594, 420] };
@@ -64,6 +68,9 @@ const TXT = 3.5; // 치수 글자 높이 (ISO)
 const ARROW = 3;
 const r2 = (n: number) => Math.round(n * 1000) / 1000;
 const f2 = (n: number) => String(Math.round(n * 100) / 100);
+/** 치수 글자 (부품 단위). buildSheet가 시작할 때 정한다 */
+let U: Unit = "mm";
+const fl = (n: number) => fmtLen(n, U);
 
 // ---------------- 투영선 읽기 (SVG 경로 → 선분/원호, 뷰 좌표) ----------------
 
@@ -269,6 +276,7 @@ export function chooseLayout(views: Record<ViewId, ViewBox>, info: SheetInfo = {
 // ---------------- 도면 만들기 ----------------
 
 export function buildSheet(res: BuildResult, project: Project): Sheet {
+  U = projUnit(project);
   const info = project.sheet ?? {};
   const pr = res.projections;
   const views = Object.fromEntries(
@@ -327,9 +335,9 @@ export function buildSheet(res: BuildResult, project: Project): Sheet {
   const offFront = holeDims.front.bottom ? 16 : 9;
   const offLeft = holeDims.front.left ? 16 : 9;
   const offSide = holeDims.side.bottom ? 16 : 9;
-  linearDim(prims, texts, [fb.l, fb.b], [fb.r, fb.b], "h", -offFront, f2(V.front.max[0] - V.front.min[0]));
-  linearDim(prims, texts, [fb.l, fb.b], [fb.l, fb.t], "v", -offLeft, f2(V.front.max[1] - V.front.min[1]));
-  linearDim(prims, texts, [sb.l, sb.b], [sb.r, sb.b], "h", -offSide, f2(V.side.max[0] - V.side.min[0]));
+  linearDim(prims, texts, [fb.l, fb.b], [fb.r, fb.b], "h", -offFront, fl(V.front.max[0] - V.front.min[0]));
+  linearDim(prims, texts, [fb.l, fb.b], [fb.l, fb.t], "v", -offLeft, fl(V.front.max[1] - V.front.min[1]));
+  linearDim(prims, texts, [sb.l, sb.b], [sb.r, sb.b], "h", -offSide, fl(V.side.max[0] - V.side.min[0]));
 
   // 4) 뷰 이름 (작게)
   for (const v of VIEW_IDS) {
@@ -340,7 +348,7 @@ export function buildSheet(res: BuildResult, project: Project): Sheet {
   // 5) 테두리와 표제란
   frame(prims, texts, PW, PH, project, info, scaleLabel(s), paper);
 
-  const sheet: Sheet = { svg: "", prims, texts, width: PW, height: PH, paper, scale: s, scaleLabel: scaleLabel(s) };
+  const sheet: Sheet = { svg: "", prims, texts, width: PW, height: PH, paper, scale: s, scaleLabel: scaleLabel(s), units: U };
   sheet.svg = toSVG(sheet);
   return sheet;
 }
@@ -427,8 +435,8 @@ function addHoleDims(
     for (const h of holes) {
       const label =
         h.kind === "circle"
-          ? holeLabel(h.r * 2, h.spec, h.depth)
-          : `장공 폭 ${f2(h.w)} 중심거리 ${f2(Math.hypot(h.b[0] - h.a[0], h.b[1] - h.a[1]))}${h.depth !== undefined ? ` 깊이 ${f2(h.depth)}` : " 관통"}`;
+          ? holeLabel(h.r * 2, h.spec, h.depth, false, U)
+          : `장공 폭 ${fl(h.w)} 중심거리 ${fl(Math.hypot(h.b[0] - h.a[0], h.b[1] - h.a[1]))}${h.depth !== undefined ? ` 깊이 ${fl(h.depth)}` : " 관통"}`;
       const g = groups.get(label);
       if (g) g.members.push(h);
       else groups.set(label, { label, members: [h] });
@@ -449,7 +457,7 @@ function addHoleDims(
       });
       if (!even) continue;
       g.pcd = { c, r };
-      g.label += `, PCD Ø${f2(r * 2)} 등배치`;
+      g.label += `, PCD Ø${fl(r * 2)} 등배치`;
       // 볼트 원 (중심선)
       const [ccx, ccy] = P(v, c[0], c[1]);
       prims.push({ layer: "CENTER", t: "arc", c: [ccx, ccy], r: r * s, start: 0, end: 360 });
@@ -483,7 +491,7 @@ function addHoleDims(
         const [x, y] = P(v, u, centers.find((c) => Math.abs(c[0] - u) < 0.006)![1]);
         prims.push({ layer: "DIM", t: "line", a: [x, y], b: [x, yb] });
         if (x - lastX >= TXT * 0.9) {
-          texts.push({ at: [x + TXT * 0.35, yb - 1], text: f2(u - minU), size: TXT * 0.85, rotate: 90, anchor: "end" });
+          texts.push({ at: [x + TXT * 0.35, yb - 1], text: fl(u - minU), size: TXT * 0.85, rotate: 90, anchor: "end" });
           lastX = x;
         }
       }
@@ -498,15 +506,15 @@ function addHoleDims(
         const [x, y] = P(v, centers.find((c) => Math.abs(c[1] - w) < 0.006)![0], w);
         prims.push({ layer: "DIM", t: "line", a: [x, y], b: [xl, y] });
         if (y - lastY >= TXT * 0.9) {
-          texts.push({ at: [xl - 1, y - TXT * 0.35], text: f2(w - minV), size: TXT * 0.85, anchor: "end" });
+          texts.push({ at: [xl - 1, y - TXT * 0.35], text: fl(w - minV), size: TXT * 0.85, anchor: "end" });
           lastY = y;
         }
       }
     }
 
     for (const h of pockets) {
-      const sz = h.kind === "rect" ? `${f2(normRect(h).w)}×${f2(normRect(h).h)} ` : "";
-      const label = `${sz}포켓${h.depth !== undefined ? ` 깊이 ${f2(h.depth)}` : " 관통"}`;
+      const sz = h.kind === "rect" ? `${fl(normRect(h).w)}×${fl(normRect(h).h)} ` : "";
+      const label = `${sz}포켓${h.depth !== undefined ? ` 깊이 ${fl(h.depth)}` : " 관통"}`;
       groups.set(`${label}#${h.id}`, { label, members: [h] });
     }
     // 지시는 뷰 밖으로 빼서 겹치지 않게: 평면도는 오른쪽(빈 칸), 정면도·우측면도는 위쪽
@@ -634,7 +642,7 @@ function frame(prims: Prim[], texts: SheetText[], W: number, H: number, p: Proje
   cell(x0 + 130, x1, 2, "척도 · 용지", `${scale} · ${paper}`);
   cell(cols[0], cols[1], 1, "재질", info.material ?? "");
   cell(cols[1], cols[2], 1, "수량", info.qty ?? "1");
-  cell(cols[2], cols[3], 1, "투상법 · 단위", "3각법 · mm");
+  cell(cols[2], cols[3], 1, "투상법 · 단위", `3각법 · ${U === "inch" ? "inch" : "mm"}`);
   cell(cols[0], cols[1], 0, "일반 공차", info.tolerance ?? "KS B ISO 2768-m");
   cell(cols[1], cols[2], 0, "설계", info.drawnBy ?? "");
   cell(cols[2], cols[3], 0, "날짜", today);
@@ -732,12 +740,15 @@ function toSVG(sh: Sheet): string {
  * 레이어: VISIBLE(외형선), HIDDEN(숨은선), CENTER(중심선), DIM(치수), FRAME(테두리·표제란)
  */
 export function sheetToDXF(sh: Sheet): string {
-  const k = 1 / sh.scale;
+  // inch 부품은 inch 도면으로 ($INSUNITS 1 = inch, 4 = mm)
+  const inch = sh.units === "inch";
+  const k = 1 / sh.scale / (inch ? MM_PER_INCH : 1);
   const out: string[] = [];
   const g = (code: number, v: string | number) => out.push(String(code), String(v));
   const n = (v: number) => r2(v * k);
   g(0, "SECTION"); g(2, "HEADER");
-  g(9, "$INSUNITS"); g(70, 4);
+  g(9, "$INSUNITS"); g(70, inch ? 1 : 4);
+  g(9, "$MEASUREMENT"); g(70, inch ? 0 : 1);
   g(9, "$LTSCALE"); g(40, r2(k));
   g(0, "ENDSEC");
   g(0, "SECTION"); g(2, "TABLES");

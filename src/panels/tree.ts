@@ -2,6 +2,7 @@
 import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Finding, type ViewId } from "../core/types";
 import { store } from "../store";
 import { fmt, shapeLabel } from "../ui/sketch";
+import { fmtVol, unitLabel } from "../core/units";
 import { ui } from "../ui/state";
 import { app, onPanels } from "../app/context";
 import { $, esc } from "../app/dom";
@@ -67,8 +68,8 @@ function renderTree() {
   if (b) {
     const [[x0, y0, z0], [x1, y1, z1]] = b.bbox;
     r.innerHTML =
-      `<b>3D 결과</b><br/>크기 <span class="stat">${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)}</span> mm<br/>` +
-      `부피 <span class="stat">${fmt(b.volume / 1000)}</span> cm³ · 덩어리 ${b.solidCount}개<br/>` +
+      `<b>3D 결과</b><br/>크기 <span class="stat">${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)}</span> ${unitLabel()}<br/>` +
+      `부피 <span class="stat">${fmtVol(b.volume)}</span> · 덩어리 ${b.solidCount}개<br/>` +
       b.notes.map((n) => `<span>${esc(n)}</span>`).join("<br/>");
   } else r.innerHTML = `<b>3D 결과</b><br/>${esc(app.buildError ?? "도형을 그리면 자동으로 만들어집니다.")}`;
   tree.appendChild(r);

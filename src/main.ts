@@ -9,7 +9,7 @@ import { store } from "./store";
 import { DraftBoard } from "./ui/board";
 import { refreshColors } from "./ui/sketch";
 import { ui } from "./ui/state";
-import { Viewer3D } from "./ui/viewer";
+import { LazyViewer } from "./app/lazyViewer";
 import { appCommands } from "./app/appCommands";
 import { buildStats, scheduleBuild, scheduleBuildIfChanged } from "./app/build";
 import { bindCommands, refreshCommandStates } from "./app/commandUI";
@@ -24,6 +24,7 @@ import { toast } from "./app/notify";
 import { applyExp, applyTheme, isDark, onSystemTheme, prefs } from "./app/prefs";
 import { initProjects, projectCommands } from "./app/projects";
 import { initSettings, settingsOpen } from "./app/settingsDialog";
+import { initUnits, unitCommands } from "./app/unitsUI";
 import { initShell, shellCommands } from "./app/shell";
 import { initStatusbar } from "./app/statusbar";
 import { pushRecent } from "./core/settings";
@@ -40,7 +41,7 @@ import { initView3d, view3dWorkspace } from "./workspaces/view3d";
 
 // ---------------- 화면 ----------------
 app.board = new DraftBoard($<HTMLCanvasElement>("#board"));
-app.viewer = new Viewer3D($("#viewer3d"));
+app.viewer = new LazyViewer($("#viewer3d"));
 function applyLook() {
   applyTheme();
   app.viewer.setDark(isDark());
@@ -60,7 +61,7 @@ commands.onRun = (c) => {
   // 명령 찾기 자신은 ‘최근’에 넣지 않는다
   if (!c.hidden && c.id !== "app.palette") prefs.set({ recent: pushRecent(prefs.get().recent, c.id) });
 };
-commands.register([...appCommands(), ...fileCommands(), ...projectCommands(), ...docCommands(), ...layoutCommands(), ...shellCommands()]);
+commands.register([...appCommands(), ...fileCommands(), ...projectCommands(), ...docCommands(), ...layoutCommands(), ...shellCommands(), ...unitCommands()]);
 for (const ws of [designWorkspace, view3dWorkspace, sheetWorkspace]) registerWorkspace(ws);
 const syncExample = () => {
   const on = workspaces().some((w) => w.id === exampleWorkspace.id);
@@ -79,6 +80,7 @@ initParams();
 initProps();
 initFindings();
 initStatusbar();
+initUnits();
 initFileMenu();
 initMenus();
 initLayout();
@@ -104,6 +106,8 @@ on("settings", () => {
 });
 
 store.onUndoRedo = (kind, label) => toast(`${kind === "undo" ? "실행 취소" : "다시 실행"}: ${label}`);
+store.onConstraintError = (msg) => toast(msg);
+store.snapBaseline();
 ui.subscribe(requestRender);
 store.subscribe(() => {
   // 지워진 도형을 선택하고 있으면 해제
@@ -122,6 +126,8 @@ updateFindings();
 requestAnimationFrame(() => {
   fitAll();
   scheduleBuild();
+  // 첫 화면이 그려진 때 (다듬기 측정용: performance.getEntriesByName("b3d-first-frame"))
+  performance.mark("b3d-first-frame");
 });
 // 처음 빌드가 끝나면 3D 크기까지 포함해 다시 맞춤
 const firstFit = setInterval(() => {
@@ -132,4 +138,4 @@ const firstFit = setInterval(() => {
 }, 200);
 
 // 개발·시험용 (나중에 플러그인 API의 출발점)
-Object.assign(window, { blueprint3d: { commands, workspaces, registerWorkspace, unregisterWorkspace, store, buildStats } });
+Object.assign(window, { blueprint3d: { commands, workspaces, registerWorkspace, unregisterWorkspace, store, buildStats, board: app.board } });

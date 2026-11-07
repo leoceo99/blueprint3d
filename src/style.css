@@ -31,6 +31,8 @@
   --frame: #9aa8b8;
   --frame-label-bg: #dfe5ec;
   --corner-bg: #f2f4f7;
+  --cons: #7c3aed;
+  --full-stroke: #0b1a2e;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -66,6 +68,8 @@
     --frame: #3f5267;
     --frame-label-bg: #1c2835;
     --corner-bg: #0f171f;
+    --cons: #b794f6;
+    --full-stroke: #ffffff;
     color-scheme: dark;
   }
 }
@@ -76,7 +80,7 @@
   --snap: #f06595; --solid-fill: rgba(76, 141, 255, 0.17); --solid-stroke: #a7c2e6; --hole-stroke: #fb923c;
   --sev-error: #ff6b6b; --sev-warning: #f2b33d; --sev-info: #7c9cff; --ok: #3fb950; --sheet-bg: #0a1017;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.5); --blind-fill: rgba(251, 146, 60, 0.16); --result-line: #6f8399; --underlay-ink: #8fb3e3;
-  --board-bg: #0b1218; --frame: #3f5267; --frame-label-bg: #1c2835; --corner-bg: #0f171f; color-scheme: dark;
+  --board-bg: #0b1218; --frame: #3f5267; --frame-label-bg: #1c2835; --corner-bg: #0f171f; --cons: #b794f6; --full-stroke: #ffffff; color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -164,7 +168,7 @@ kbd {
   overflow-x: auto;
 }
 .ribbon[hidden] { display: none; }
-.group { display: flex; flex-direction: column; padding: 0 8px; border-right: 1px solid var(--border); flex: none; }
+.group { display: flex; flex-direction: column; padding: 0 6px; border-right: 1px solid var(--border); flex: none; }
 .group:last-child { border-right: none; }
 .group .tools { display: flex; gap: 2px; }
 .group .tools button {
@@ -185,6 +189,19 @@ kbd {
 .corner-opts .unit { display: flex; align-items: center; gap: 3px; font-size: 11px; color: var(--text-muted); }
 .corner-opts input { width: 54px; min-height: 22px; height: 22px; padding: 1px 4px; }
 .glabel { text-align: center; font-size: 10.5px; color: var(--text-muted); padding: 2px 0 4px; }
+.cons-grid { display: grid; grid-template-columns: repeat(8, 22px); grid-auto-rows: 26px; gap: 1px; align-content: center; height: 56px; }
+.cons-grid button { min-height: 0; height: 24px; width: 22px; padding: 0; font-weight: 700; font-size: 13px; color: var(--cons); border-color: transparent; background: transparent; }
+.cons-grid button:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border); }
+.cons-grid button.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.dof-badge { font-weight: 700; color: var(--cons); }
+.dof-badge.full { color: var(--ok); }
+.dof-badge.bad { color: var(--sev-error); }
+.cons-list { display: flex; flex-direction: column; gap: 2px; }
+.cons-row { display: flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 6px; cursor: pointer; border-left: 3px solid var(--cons); background: var(--surface-2); font-size: 12px; }
+.cons-row.on { background: var(--accent-soft); border-left-color: var(--accent); }
+.cons-row .cons-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cons-row button { min-height: 20px; height: 20px; padding: 0 6px; }
+.grid-sel { min-height: 20px; height: 20px; padding: 0 4px; font-size: 11px; }
 /* 작은 노트북 화면(1280~1420px)에서도 리본이 한 줄에 다 보이게 */
 @media (max-width: 1420px) {
   .ribbon { padding: 4px 4px 0; }

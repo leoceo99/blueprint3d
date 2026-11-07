@@ -8,6 +8,7 @@ import { engine } from "../engine";
 import { getFile } from "../fileStore";
 import { store } from "../store";
 import { fmt } from "../ui/sketch";
+import { fmtVol, unitLabel } from "../core/units";
 import { ui } from "../ui/state";
 import { app, emit, requestRender } from "./context";
 import { $ } from "./dom";
@@ -84,8 +85,8 @@ async function runBuild() {
       ]),
     ) as typeof ui.result;
     const [[x0, y0, z0], [x1, y1, z1]] = res.bbox;
-    setBuildStatus(`✓ 3D ${fmt(x1 - x0)}×${fmt(y1 - y0)}×${fmt(z1 - z0)} mm`, "ok");
-    $("#info3d").textContent = `${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)} mm · 부피 ${fmt(res.volume / 1000)} cm³`;
+    setBuildStatus(`✓ 3D ${fmt(x1 - x0)}×${fmt(y1 - y0)}×${fmt(z1 - z0)} ${unitLabel()}`, "ok");
+    $("#info3d").textContent = `${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)} ${unitLabel()} · 부피 ${fmtVol(res.volume)}`;
   } catch (e: any) {
     if (seq !== buildSeq) return;
     builtKey = key;

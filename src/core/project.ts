@@ -2,7 +2,34 @@
  * 저장된 프로젝트(자동 저장, 열기 파일)를 검사해서 쓸 수 있는 모양으로 고친다.
  * 망가진 도형은 빼고, 빠진 값은 기본값으로 채운다. 프로젝트로 볼 수 없으면 null.
  */
-import { VIEW_IDS, type Corner, type Param, type Project, type Shape2D, type SheetInfo, type ViewId } from "./types";
+import { VIEW_IDS, type Constraint, type ConsKind, type Corner, type Param, type Project, type Shape2D, type SheetInfo, type ViewId } from "./types";
+
+import { pruneConstraints } from "./constraints";
+
+const KINDS: ConsKind[] = ["coincident", "horizontal", "vertical", "parallel", "perpendicular", "equal", "concentric", "tangent", "symmetric", "onLine", "midpoint", "fix", "distance", "distanceX", "distanceY", "angle"];
+
+/** 저장된 구속 검사 (모양만 — 대상이 실제로 있는지는 constraints.pruneConstraints가) */
+function normalizeConstraints(raw: unknown): Project["constraints"] | undefined {
+  if (!obj(raw)) return undefined;
+  const out: Partial<Record<ViewId, Constraint[]>> = {};
+  for (const v of VIEW_IDS) {
+    const list = raw[v];
+    if (!Array.isArray(list)) continue;
+    const ok = list
+      .filter((c): c is Record<string, unknown> => obj(c) && typeof c.id === "string" && KINDS.includes(c.kind as ConsKind) && Array.isArray(c.refs))
+      .filter((c) => (c.refs as unknown[]).every((r) => obj(r) && typeof r.s === "string" && typeof r.k === "string"))
+      .map((c) => {
+        const k: Constraint = { id: c.id as string, kind: c.kind as ConsKind, refs: (c.refs as { s: string; k: string }[]).map((r) => ({ s: r.s, k: r.k })) };
+        if (num(c.value)) k.value = c.value;
+        if (typeof c.expr === "string" && c.expr.trim()) k.expr = c.expr;
+        if (c.side === 1 || c.side === -1) k.side = c.side;
+        if (pt(c.at)) k.at = c.at;
+        return k;
+      });
+    if (ok.length) out[v] = ok;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
 
 const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 const pt = (v: unknown): v is [number, number] => Array.isArray(v) && v.length === 2 && num(v[0]) && num(v[1]);
@@ -100,7 +127,14 @@ export function normalizeProject(raw: unknown): Project | null {
     )
   )
     delete out.source;
+  const cons = normalizeConstraints(raw.constraints);
+  if (cons) out.constraints = cons;
+  else delete out.constraints;
+  if (raw.units === "inch") out.units = "inch";
+  else delete out.units;
   const u = raw.underlay;
   if (!(obj(u) && typeof u.key === "string" && num(u.w) && num(u.h) && num(u.mmPerPx) && u.mmPerPx > 0 && obj(u.views))) delete out.underlay;
+  // 지운 도형을 가리키는 구속 등은 뺀다
+  pruneConstraints(out as unknown as Project);
   return out as unknown as Project;
 }

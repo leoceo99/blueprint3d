@@ -44,6 +44,16 @@
   - **가운데 맞춤**, **거의 수평·수직인 변 바로잡기**
 
 ![변수와 식으로 묶인 치수](docs/screenshot-params.png)
+
+- **구속 조건** (리본 ‘구속’, 명령 찾기 “구속”, <kbd>K</kbd> 거리 치수): 대상(점·변·원, 원점과 가로·세로 축)을 차례로 누르면
+  일치·동심·수평·수직·평행·직각·같게·접선·대칭·선 위·중점·고정, **치수 구속**(거리·가로·세로·각도, 값이나 변수 식) — 조건을 바꾸면 모양이 따라 바뀝니다
+  - 리본 끝 **자유도 N / ✓ 다 정해짐**, 다 정해진 도형은 진한 선. 구속 기호를 눌러 고르고 Delete로 지우기, 속성 패널에 도형별 구속 목록
+  - 이미 정해진 것에 또 구속하면 “중복 구속”으로 만들지 않고, 조건과 부딪치는 편집은 되돌리고 알려 줍니다
+  - 해석기는 직접 만든 최소 노름 뉴턴 방식 — 끌거나 치수를 바꾸면 바뀐 값은 그대로, 나머지는 가장 적게 움직여 조건을 지킴
+- **길이 단위 mm / inch**: 상태 표시줄의 **mm/inch** 단추(문서 전체, 모양은 그대로). 값 칸·식에 `10 mm`, `0.5 in`, `2"`처럼 단위를 붙일 수 있고, 단위 없는 숫자는 문서 단위.
+  도면 치수·표제란·DXF도 그 단위로
+
+![구속: 치수·같게·자유도](docs/screenshot-constraints.png)
 - 모델 트리, 속성 패널(숫자로 치수 수정), 실행 취소/다시 실행, 복제
 
 ### 문서: 여러 부품 · 여러 도면 (.b3d)
@@ -174,13 +184,13 @@ npm run preview  # 빌드 결과 실행 — 앱 설치·오프라인은 이걸�
 | Delete | 삭제 | Ctrl+D | 복제 |
 | Ctrl+Z / Ctrl+Shift+Z | 실행 취소 / 다시 실행 | Ctrl+Alt+N | 새 부품 (새 프로젝트) |
 | Ctrl+Shift+O | 내 프로젝트 | Ctrl+Shift+S | 지금 버전 저장 |
-| Ctrl+S / Ctrl+O | 파일로 저장 / 파일 열기 (.json) | Ctrl+I / Ctrl+V | 도면 이미지 가져오기 / 캡처 붙여넣기 (실험) |
+| Ctrl+S / Ctrl+O | 파일로 저장 / 파일 열기 (.b3d) | Ctrl+I / Ctrl+V | 도면 이미지 가져오기 / 캡처 붙여넣기 (실험) |
 | **Ctrl+K** / F1 | **명령 찾기** | Ctrl+, | 설정 (단축키 바꾸기) |
 | Ctrl+Alt+Z | 실행 취소 기록 | Ctrl+P | 도면 인쇄 / PDF |
 | Ctrl+B / Ctrl+Alt+B | 왼쪽 / 오른쪽 패널 접기 | Ctrl+Alt+] / [ | 다음 / 이전 부품 |
 | Esc | 그리기 취소 → 선택 해제 | Enter / 더블클릭 | 다각형 닫기 |
 | 휠 / 핀치 | 확대 | 휠 클릭·스페이스+끌기·빈 곳 끌기 | 화면 이동 |
-| 1 / 2 / 3 | 2D 설계 / 3D 보기 / 도면 출력 | | |
+| 1 / 2 / 3 | 2D 설계 / 3D 보기 / 도면 출력 | K | 거리 치수 구속 (구속 도구는 리본·명령 찾기) |
 
 단축키는 설정 ▸ 단축키에서 바꿀 수 있고, 바꾸면 메뉴·리본·명령 찾기의 표시도 따라 바뀝니다.
 
@@ -192,8 +202,11 @@ src/
     types.ts         데이터 모델 (프로젝트, 도형, 뷰, 검사 결과)
     build.ts         2D 뷰 → 3D 솔리드, 3D → 투영
     checks.ts        규칙 기반 설계 검사 (제조 방식별 기준)
-    expr.ts          치수 식 계산기 (안전한 파서)
-    params.ts        변수 계산, 치수를 식에 묶기·잠금, 이름 바꾸기
+    expr.ts          치수 식 계산기 (안전한 파서, 단위 10 mm·0.5 in, 단위 바꾸기에서 식 고쳐 쓰기)
+    params.ts        변수 계산, 치수를 식에 묶기·잠금, 이름 바꾸기, 부품 단위 바꾸기
+    units.ts         길이 단위 (값은 mm, 표시·입력은 mm 또는 inch)
+    solver.ts        구속 해석기 (최소 노름 뉴턴 + LM, 계수·자유도·중복 찾기)
+    constraints.ts   스케치 구속 (대상·종류 16가지 → 해석기 식, 자유도·정해진 도형, 정리)
     standards.ts     나사 구멍 규격표 (볼트 관통·탭·자리파기)
     sheet.ts         투영 → 3면도 도면 (용지·척도, 구멍 지시, 중심선, 표제란, SVG, DXF)
     project.ts       저장 파일 검사·복구 (부품 하나)
@@ -235,8 +248,9 @@ src/
     projects.ts      내 프로젝트·버전 기록·자동 저장 연결
     build.ts         3D 자동 생성 (0.25초 모아서)
     edit.ts          도형 편집 동작 (삭제·복제·가운데 맞춤…)
-    statusbar.ts · shell.ts · notify.ts · dom.ts
-  panels/          docTree.ts(문서: 부품·도면) · tree.ts · params.ts · props.ts · findings.ts (트리, 변수, 속성, 설계 검사·AI 검토)
+    statusbar.ts · unitsUI.ts(mm/inch 단추·명령) · lazyViewer.ts · shell.ts · notify.ts · dom.ts
+  panels/          docTree.ts(문서: 부품·도면) · tree.ts · params.ts · props.ts(+consPanel 구속 목록) · findings.ts (트리, 변수, 속성, 설계 검사·AI 검토)
+  consActions.ts   구속 더하기(중복 거절)·지우기·값 바꾸기
   workspaces/      작업 공간 모듈 — registry.ts(탭·숫자 키·붙이기/떼기), design.ts(+designRibbon), view3d.ts, sheet.ts, example.ts(새 모듈 본보기)
   aiKey.ts         AI 모델 이름·API 키 (가벼움 — AI SDK는 쓸 때만 내려받음)
   ai.ts            Claude AI 설계 검토
@@ -256,13 +270,14 @@ src/
   engine.ts        화면 ↔ 워커 연결
   ui/board.ts      제도판: 세 뷰 배치(3각법), 화면 이동·확대, 입력 분배, 45° 연결선
   ui/sketch.ts     제도판 위의 뷰 하나 (그리기, 스냅, 치수 입력, 검사 표시)
-  ui/viewer.ts     3D 보기 (three.js)
+  ui/sketchConstraints.ts  구속 고르기·기호·치수 구속 그리기 · sketchShapes.ts 도형 유틸·이름표 · sketchColors.ts 색
+  ui/viewer.ts     3D 보기 (three.js — app/lazyViewer.ts가 필요할 때 내려받음)
   ui/state.ts      화면 상태 (도구, 선택, 카메라, 커서)
   ui/modal.ts      가운데 뜨는 창 틀
 public/            앱 아이콘, manifest.webmanifest (설치 정보)
 vite.config.ts     빌드 설정 + 오프라인용 sw.js 만들기
 tests/             vitest 단위 시험
-e2e/               브라우저 시험 (run.cjs가 한 번에: core · app · library · document · import3d · legacy)
+e2e/               브라우저 시험 (run.cjs가 한 번에: core · app · library · document · import3d · legacy · constraints · units)
 ```
 
 ## 개발 순서

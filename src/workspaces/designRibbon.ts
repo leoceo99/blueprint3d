@@ -4,6 +4,7 @@ import { evaluateParams } from "../core/params";
 import type { Process, Project } from "../core/types";
 import { store } from "../store";
 import { fmt } from "../ui/sketch";
+import { fromDisplay, unitLabel } from "../core/units";
 import { ui } from "../ui/state";
 import { invalidatePanels, onPanels } from "../app/context";
 import { $, $$ } from "../app/dom";
@@ -45,7 +46,7 @@ export function initRibbon() {
     const text = thick.value.trim();
     const n = plainNumber(text);
     if (n !== null) {
-      if (n > 0) store.update((p) => ((p.thickness = n), (p.thicknessExpr = undefined)), "두께 고치기");
+      if (n > 0) store.update((p) => ((p.thickness = fromDisplay(n)), (p.thicknessExpr = undefined)), "두께 고치기");
       else toast("두께는 0보다 커야 합니다.");
     } else if (text) {
       // 식: 모르는 변수가 없는지 먼저 확인
@@ -60,7 +61,7 @@ export function initRibbon() {
   gridSel.value = String(ui.grid);
   gridSel.onchange = () => setGrid(parseFloat(gridSel.value));
   cornerSizeInput.onchange = () => {
-    const v = parseFloat(cornerSizeInput.value);
+    const v = fromDisplay(parseFloat(cornerSizeInput.value));
     if (v > 0) ui.cornerSize = v;
     else cornerSizeInput.value = fmt(ui.cornerSize);
   };
@@ -73,7 +74,8 @@ export function initRibbon() {
     modeSel.value = p.mode;
     procSel.value = p.process ?? "cnc";
     if (document.activeElement !== thick) thick.value = p.thicknessExpr ?? fmt(p.thickness);
-    thick.title = p.thicknessExpr ? `= ${fmt(p.thickness)} mm` : "숫자 또는 식 (예: t, L/8)";
+    thick.title = p.thicknessExpr ? `= ${fmt(p.thickness)} ${unitLabel()}` : "숫자 또는 식 (예: t, L/8, 10 mm)";
+    for (const u of $$(".ulabel")) u.textContent = unitLabel();
     $("#thicknessWrap").hidden = p.mode !== "auto";
     $$<HTMLButtonElement>("[data-corner]").forEach((b) => b.classList.toggle("on", b.dataset.corner === ui.cornerKind));
     if (document.activeElement !== cornerSizeInput) cornerSizeInput.value = fmt(ui.cornerSize);

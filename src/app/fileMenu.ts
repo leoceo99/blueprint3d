@@ -20,7 +20,7 @@ import { commands, onPanels } from "./context";
 import { $, $$, isTyping } from "./dom";
 import { toast } from "./notify";
 import { needExp } from "./prefs";
-import { openNew, session } from "./projects";
+import { blankProject, openNew, session } from "./projects";
 
 let importDlg: ImportDialog | null = null;
 let reviewDlg: ReviewDialog | null = null;
@@ -209,7 +209,7 @@ function sampleDoc() {
 
 export function fileCommands(): Command[] {
   return [
-    { id: "file.new", title: "새 문서", category: "파일", keywords: ["new", "새 부품", "새로 만들기", "새 프로젝트"], keys: ["Ctrl+Alt+N"], global: true, run: () => openNew(emptyProject()) },
+    { id: "file.new", title: "새 문서", category: "파일", keywords: ["new", "새 부품", "새로 만들기", "새 프로젝트"], keys: ["Ctrl+Alt+N"], global: true, run: () => openNew(blankProject()) },
     { id: "file.open", title: "파일 열기 (.b3d · 예전 .json)", category: "파일", keywords: ["open", "load", "불러오기", "b3d"], keys: ["Ctrl+O"], global: true, run: pickDocFile },
     { id: "file.save", title: "파일로 저장 (.b3d)", category: "파일", keywords: ["save", "export", "내보내기", "b3d"], keys: ["Ctrl+S"], global: true, run: saveProjectFile },
     { id: "file.import3d", title: "3D 파일 가져오기 (STEP·STL) — 새 문서로", category: "파일", keywords: ["import", "step", "stl", "stp", "불러오기"], run: () => pick3D(false) },

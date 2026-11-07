@@ -180,6 +180,8 @@ export function setActiveDrawing(doc: Doc, id: string) {
 /** 부품 추가 (도면 한 장도 함께). 새 부품이 열린다 */
 export function addPart(doc: Doc, from?: Project): Part {
   const p = from ? structuredClone(from) : emptyProject();
+  // 새 빈 부품은 문서의 단위를 따른다
+  if (!from && doc.parts.some((x) => x.units === "inch")) p.units = "inch";
   const { sheet, ...rest } = p;
   const id = newItemId("part");
   // 이름 없이 추가하면 순서대로: 두 번째 부품은 "부품 2"

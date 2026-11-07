@@ -84,7 +84,7 @@
               <button data-corner="fillet" data-cmd="corner.fillet" data-active-class="on" title="둥글게">R</button>
               <button data-corner="chamfer" data-cmd="corner.chamfer" data-active-class="on" title="모따기">C</button>
             </div>
-            <span class="unit"><input id="cornerSize" type="number" min="0.1" step="0.5" title="모서리 크기" />mm</span>
+            <span class="unit"><input id="cornerSize" type="number" min="0.1" step="0.5" title="모서리 크기" /><span class="ulabel">mm</span></span>
           </div>
           <button data-tool="measure" data-cmd="tool.measure" title="측정"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 13.5l11-11 4 4-11 11z"/><path d="M6 10l1.5 1.5M8.5 7.5l1.5 1.5M11 5l1.5 1.5"/></svg>측정<kbd>M</kbd></button>
         </div>
@@ -98,7 +98,7 @@
               <option value="revolve">회전체</option>
             </select>
           </label>
-          <label id="thicknessWrap" title="뷰를 1개만 그렸을 때 돌출 두께">두께 <span class="unit"><input id="thickness" type="text" spellcheck="false" />mm</span></label>
+          <label id="thicknessWrap" title="뷰를 1개만 그렸을 때 돌출 두께">두께 <span class="unit"><input id="thickness" type="text" spellcheck="false" /><span class="ulabel">mm</span></span></label>
         </div>
         <div class="glabel">3D 생성</div>
       </div>
@@ -114,17 +114,26 @@
         </div>
         <div class="glabel">검사 기준</div>
       </div>
-      <div class="group">
-        <div class="fields">
-          <label>격자
-            <select id="grid">
-              <option value="0.1">0.1 mm</option><option value="0.5">0.5 mm</option><option value="1">1 mm</option>
-              <option value="5">5 mm</option><option value="10">10 mm</option>
-            </select>
-          </label>
-          <button id="fitBtn" class="small" data-cmd="view.fit">전체 보기 <kbd></kbd></button>
+      <div class="group cons-group">
+        <div class="cons-grid">
+          <button data-cmd="cons.coincident" title="일치 — 두 점을 한 점에">•</button>
+          <button data-cmd="cons.horizontal" title="수평 — 변, 또는 두 점">H</button>
+          <button data-cmd="cons.vertical" title="수직 — 변, 또는 두 점">V</button>
+          <button data-cmd="cons.parallel" title="평행 — 두 변">∥</button>
+          <button data-cmd="cons.perpendicular" title="직각 — 두 변">⊥</button>
+          <button data-cmd="cons.equal" title="같게 — 두 변의 길이, 두 원의 지름">=</button>
+          <button data-cmd="cons.concentric" title="동심 — 두 원의 중심">◎</button>
+          <button data-cmd="cons.tangent" title="접선 — 변과 원, 두 원">T</button>
+          <button data-cmd="cons.symmetric" title="대칭 — 두 점과 축(변·가로축·세로축)">⇹</button>
+          <button data-cmd="cons.midpoint" title="가운데 — 점을 변의 가운데에">M</button>
+          <button data-cmd="cons.onLine" title="선 위에 — 점을 변(또는 원) 위에">∈</button>
+          <button data-cmd="cons.fix" title="고정 — 점을 지금 자리에">⌖</button>
+          <button data-cmd="cons.distance" title="거리 치수 — 두 점, 점과 변">⤢</button>
+          <button data-cmd="cons.distanceX" title="가로 거리 치수 — 두 점">↔</button>
+          <button data-cmd="cons.distanceY" title="세로 거리 치수 — 두 점">↕</button>
+          <button data-cmd="cons.angle" title="각도 치수 — 두 변">∠</button>
         </div>
-        <div class="glabel">보기</div>
+        <div class="glabel">구속 <span id="dofBadge" class="dof-badge"></span></div>
       </div>
     </div>
 
@@ -249,6 +258,11 @@
       <span id="coords" class="coords">X — · Y — · Z —</span>
       <span id="toolHint" class="hint"></span>
       <div class="spacer"></div>
+      <button id="unitBtn" class="toggle unit-btn" data-cmd="units.toggle" title="길이 단위 — 누르면 mm ↔ inch (모양은 그대로)">mm</button>
+      <select id="grid" class="grid-sel" title="격자 크기">
+        <option value="0.1">0.1 mm</option><option value="0.5">0.5 mm</option><option value="1">1 mm</option>
+        <option value="5">5 mm</option><option value="10">10 mm</option>
+      </select>
       <button id="snapGridBtn" class="toggle" title="격자에 붙기">격자 스냅</button>
       <button id="snapAlignBtn" class="toggle" title="다른 도형·뷰에 정렬">정렬 스냅</button>
       <button id="resultBtn" class="toggle" title="3D 결과를 각 2D 창에 흐리게 겹쳐 보기">결과 겹쳐 보기</button>
@@ -288,7 +302,7 @@
               <span class="set-v"><select disabled><option>한국어</option></select> <span class="muted small">영어는 준비 중 — 명령 찾기는 영어 이름(undo, print…)도 알아들어요</span></span>
             </div>
             <div class="set-row"><span class="set-k">길이 단위</span>
-              <span class="set-v"><select disabled><option>mm</option></select> <span class="muted small">inch는 10단계(스케치 2.0)에서 치수 체계를 바꿀 때 함께 넣어요</span></span>
+              <span class="set-v"><select id="setUnits"><option value="mm">mm</option><option value="inch">inch</option></select> <span class="muted small">새 문서에 써요. 지금 문서는 아래 상태 표시줄의 <b>mm/inch</b> 단추로 바꿔요 (모양은 그대로). 식 안에 <code>10 mm</code>, <code>0.5 in</code>처럼 단위를 붙일 수도 있어요.</span></span>
             </div>
             <div class="set-row"><span class="set-k">처음 격자</span>
               <span class="set-v"><select id="setGrid"></select> <span class="muted small">리본에서 바꾸면 여기도 따라 바뀌어요</span></span>

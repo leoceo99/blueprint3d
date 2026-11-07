@@ -1,6 +1,7 @@
 /** 상태 표시줄: 좌표, 도구 설명, 스냅 단추, 3D 상태 */
 import { store } from "../store";
 import { fmt } from "../ui/sketch";
+import { unitLabel } from "../core/units";
 import { ui, type Tool } from "../ui/state";
 import { onUnderlayReady } from "../underlay";
 import { showWorkspace } from "../workspaces/registry";
@@ -16,6 +17,7 @@ const HINTS: Record<Tool, string> = {
   slot: "한쪽 끝 중심에서 다른 쪽 끝 중심까지 끌기 · 숫자 입력: 중심거리,폭 (예: 20,6) · Shift: 수평·수직·45°",
   corner: "사각형·다각형의 꼭짓점 클릭: 모서리 R/모따기 적용 (같은 값이면 해제) · Shift+클릭: 그 도형의 모든 꼭짓점",
   measure: "두 점을 클릭해서 거리 재기 (점·중심·정렬선에 붙음) · Esc: 지우기",
+  constrain: "구속: 대상(점·변·원)을 차례로 누르세요 · 원점과 가로·세로 축도 고를 수 있어요 · Esc: 고른 것 취소",
 };
 
 export function initStatusbar() {
@@ -39,7 +41,7 @@ export function initStatusbar() {
 function renderStatus() {
   const c = ui.cursor;
   const f = (n: number | null) => (n === null ? "—" : fmt(n).padStart(7));
-  $("#coords").textContent = c ? `X ${f(c[0])}  Y ${f(c[1])}  Z ${f(c[2])} mm` : "X —  Y —  Z —";
+  $("#coords").textContent = c ? `X ${f(c[0])}  Y ${f(c[1])}  Z ${f(c[2])} ${unitLabel()}` : "X —  Y —  Z —";
   $("#toolHint").textContent = HINTS[ui.tool];
   $("#snapGridBtn").classList.toggle("on", ui.snapGrid);
   $("#snapAlignBtn").classList.toggle("on", ui.snapAlign);

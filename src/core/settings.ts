@@ -18,8 +18,8 @@ export interface PanelLayout {
 export interface Settings {
   theme: Theme;
   language: "ko" | "en";
-  /** 길이 단위 — 지금은 mm만 (inch는 10단계) */
-  units: "mm";
+  /** 새 문서의 길이 단위 (지금 문서는 상태 표시줄 단추로) */
+  units: "mm" | "inch";
   /** 처음 격자 (mm) */
   grid: number;
   /** 바꾼 단축키: 명령 id → 조합들 (빈 배열이면 단축키 없음) */
@@ -35,6 +35,16 @@ export interface Settings {
 export const PANEL_MIN = 170;
 export const PANEL_MAX = 560;
 export const GRIDS = [0.1, 0.5, 1, 5, 10];
+/** inch 문서의 격자 (mm 값): 0.05" 0.1" 1/8" 1/4" 1" */
+export const INCH_GRIDS = [1.27, 2.54, 3.175, 6.35, 25.4];
+const INCH_LABEL: Record<string, string> = { "1.27": '0.05"', "2.54": '0.1"', "3.175": '1/8"', "6.35": '1/4"', "25.4": '1"' };
+export const gridsFor = (u: "mm" | "inch") => (u === "inch" ? INCH_GRIDS : GRIDS);
+export const gridLabel = (g: number) => INCH_LABEL[String(g)] ?? `${g} mm`;
+/** 단위의 격자 목록에서 가장 가까운 것 (비율로) */
+export function nearestGrid(g: number, u: "mm" | "inch"): number {
+  const list = gridsFor(u);
+  return list.reduce((a, b) => (Math.abs(Math.log(b / g)) < Math.abs(Math.log(a / g)) ? b : a), list[0]);
+}
 
 export function defaultSettings(): Settings {
   return {
@@ -66,8 +76,8 @@ export function normalizeSettings(raw: unknown): Settings {
   return {
     theme: raw.theme === "light" || raw.theme === "dark" ? raw.theme : "system",
     language: raw.language === "en" ? "en" : "ko",
-    units: "mm",
-    grid: GRIDS.includes(raw.grid as number) ? (raw.grid as number) : d.grid,
+    units: raw.units === "inch" ? "inch" : "mm",
+    grid: GRIDS.includes(raw.grid as number) || INCH_GRIDS.includes(raw.grid as number) ? (raw.grid as number) : d.grid,
     keys,
     showExperimental: raw.showExperimental !== false,
     devExample: raw.devExample === true,

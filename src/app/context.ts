@@ -7,7 +7,7 @@ import type { BuildResult, Finding } from "../core/types";
 import { store } from "../store";
 import type { DraftBoard } from "../ui/board";
 import { ui } from "../ui/state";
-import type { Viewer3D } from "../ui/viewer";
+import type { LazyViewer } from "./lazyViewer";
 import { CommandRegistry } from "./commands";
 
 export interface AiState {
@@ -20,7 +20,7 @@ export interface AiState {
 
 export const app = {
   board: null as unknown as DraftBoard,
-  viewer: null as unknown as Viewer3D,
+  viewer: null as unknown as LazyViewer,
   /** 마지막 3D 결과 (없으면 null) */
   lastBuild: null as BuildResult | null,
   buildError: undefined as string | undefined,
@@ -85,7 +85,9 @@ export function requestRender() {
       app.workspace,
       store.version,
       `${ui.sel?.view}:${ui.sel?.id}`,
+      `${ui.selCons?.id}`,
       ui.tool,
+      ui.consKind,
       ui.findings.map((f) => f.id).join(","),
       ui.activeView,
       app.ai?.loading,

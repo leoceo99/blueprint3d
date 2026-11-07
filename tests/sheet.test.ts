@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import opencascade from "replicad-opencascadejs";
 import { setOC } from "replicad";
 import { buildAll } from "../src/core/build";
-import { applyExpressions } from "../src/core/params";
+import { applyExpressions, convertProjectUnit } from "../src/core/params";
 import { SAMPLES } from "../src/core/samples";
 import { buildSheet, chooseLayout, parseProjection, sheetToDXF } from "../src/core/sheet";
 import { emptyProject } from "../src/core/types";
@@ -94,6 +94,27 @@ describe("출력 도면", () => {
     // 개별 구멍 좌표(예: 14.02) 대신 볼트 원 중심만
     expect(texts).not.toContain("14.02");
     expect(sh.prims.some((x) => x.t === "arc" && x.layer === "CENTER" && Math.abs(x.r - 30 * sh.scale) < 1e-3)).toBe(true);
+  });
+
+  it("inch 부품: 치수 글자·표제란·DXF가 inch (모양은 같음)", () => {
+    const p = sample("가이드 블록");
+    const mmSheet = buildSheet(buildAll(p).result, p);
+    const q = structuredClone(p);
+    expect(convertProjectUnit(q, "inch")).toBe(0);
+    applyExpressions(q);
+    const res = buildAll(q).result;
+    const sh = buildSheet(res, q);
+    expect(sh.units).toBe("inch");
+    const texts = sh.texts.map((t) => t.text);
+    expect(texts).toContain("3.15"); // 전체 폭 80 mm
+    expect(texts).toContain("3각법 · inch");
+    expect(texts.some((t) => t.includes("M5 탭 깊이 0.472"))).toBe(true);
+    expect(sh.prims.length).toBe(mmSheet.prims.length);
+    const dxf = sheetToDXF(sh);
+    expect(dxf).toContain("$INSUNITS\n70\n1\n");
+    const lines = [...dxf.matchAll(/\nLINE\n8\nVISIBLE\n10\n([-\d.]+)\n20\n([-\d.]+)\n30\n0\n11\n([-\d.]+)\n21\n([-\d.]+)/g)].map((m) => m.slice(1).map(Number));
+    expect(lines.some(([x1, y1, x2, y2]) => Math.abs(Math.hypot(x2 - x1, y2 - y1) - 80 / 25.4) < 0.002)).toBe(true);
+    expect(sheetToDXF(mmSheet)).toContain("$INSUNITS\n70\n4\n");
   });
 
   it("척도를 바꾸면 DXF 좌표는 그대로(실제 크기)", () => {

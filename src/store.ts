@@ -1,7 +1,8 @@
-import { applyExpressions } from "./core/params";
+import { applyExpressions, evalSite, evaluateParams } from "./core/params";
+import { getVar, KIND_LABEL, pruneConstraints, shapeVarKeys, solveView } from "./core/constraints";
 import { activePart, docFromProject, fixView, normalizeDoc, setActiveDrawing, setActivePart, type Doc, type Part } from "./core/document";
 import { History } from "./core/history";
-import { emptyProject, type Project, type Shape2D, type ViewId } from "./core/types";
+import { emptyProject, VIEW_IDS, type Project, type Shape2D, type ViewId } from "./core/types";
 
 /** 열린 문서의 즉시 사본 (9단계부터 문서 형식) */
 const KEY = "blueprint3d.doc.v2";
@@ -28,6 +29,14 @@ class Store {
   private listeners = new Set<Listener>();
   /** 실행 취소·다시 실행이 될 때 (이름 알림용) */
   onUndoRedo: ((kind: "undo" | "redo", label: string) => void) | null = null;
+  /** 구속을 지킬 수 없어 되돌렸을 때 (안내용) */
+  onConstraintError: ((message: string, ids: string[]) => void) | null = null;
+  /** 마지막으로 구속을 푼 뒤의 도형 값 — 다음 편집에서 “사용자가 바꾼 값”을 찾는 기준 */
+  private baseline = new Map<string, number>();
+  /** 기준을 잡을 때의 구속 목록 (구속을 더하거나 지우면 다시 풀어야 함) */
+  private baseCons = "";
+  /** 마지막 편집이 구속 때문에 되돌려졌는지 */
+  rejected = false;
 
   /** 지금 편집 중인 부품 */
   get project(): Part {
@@ -57,36 +66,119 @@ class Store {
   /** 마지막 실행 취소 지점으로 되돌리고, 다시 실행 기록은 남기지 않는다. */
   revert() {
     this.doc = this.history.revert(this.doc);
+    this.snapBaseline();
     this.changed();
   }
 
-  /** 변경 후 호출: 저장하고 화면들에 알린다. */
+  /** 변경 후 호출: 구속을 지키고, 저장하고, 화면들에 알린다. */
   changed() {
     fixView(this.doc);
     // 변수·식에 묶인 치수를 다시 계산 (묶인 치수는 끌어도 원래 값으로 돌아감 = 잠금)
     applyExpressions(this.project);
+    // 끌기처럼 이어지는 편집: 풀 수 없으면 이번에 바꾼 값만 되돌린다 (도형이 더 안 움직임)
+    if (!this.solveEdit()) this.restoreBaseline();
     this.version++;
     save(this.doc, this.projectId);
     this.listeners.forEach((l) => l());
   }
 
-  /** 열린 부품 고치기 */
-  update(fn: (p: Part) => void, label = "편집") {
+  /** 열린 부품 고치기. 구속을 지킬 수 없으면 되돌리고 false */
+  update(fn: (p: Part) => void, label = "편집"): boolean {
     this.checkpoint(label);
     fn(this.project);
-    applyExpressions(this.project);
-    this.commit();
-    this.changed();
+    return this.finishEdit();
   }
 
   /** 문서 고치기 (부품 추가·삭제, 도면 등) */
-  updateDoc(fn: (d: Doc) => void, label = "편집") {
+  updateDoc(fn: (d: Doc) => void, label = "편집"): boolean {
     this.checkpoint(label);
     fn(this.doc);
     fixView(this.doc);
+    return this.finishEdit();
+  }
+
+  private finishEdit(): boolean {
     applyExpressions(this.project);
+    if (!this.solveEdit()) {
+      // 편집 전체를 되돌린다
+      this.doc = this.history.revert(this.doc);
+      this.snapBaseline();
+      this.rejected = true;
+      this.changed();
+      return false;
+    }
+    this.rejected = false;
     this.commit();
     this.changed();
+    return true;
+  }
+
+  // ---------------- 구속 (10단계) ----------------
+
+  /** 구속이 있는 뷰의 도형 값 */
+  private snapshotVars(): Map<string, number> {
+    const m = new Map<string, number>();
+    const p = this.project;
+    for (const v of VIEW_IDS) {
+      if (!p.constraints?.[v]?.length) continue;
+      for (const sh of p.views[v]) for (const k of shapeVarKeys(sh)) m.set(`${v}|${sh.id}|${k}`, getVar(sh, k));
+    }
+    return m;
+  }
+
+  /** 지금 상태를 기준으로 (실행 취소·다른 부품·새 문서 뒤) */
+  snapBaseline() {
+    this.baseline = this.snapshotVars();
+    this.baseCons = JSON.stringify(this.project.constraints ?? null);
+  }
+
+  /** 기준에서 바뀐 값은 고정하고 나머지를 풀어 구속을 지킨다. 풀 수 없으면 false (도형은 그대로) */
+  private solveEdit(): boolean {
+    const p = this.project;
+    pruneConstraints(p);
+    if (!p.constraints) {
+      this.baseline.clear();
+      return true;
+    }
+    const now = this.snapshotVars();
+    const consNow = JSON.stringify(p.constraints);
+    // 바뀐 값도, 구속도 그대로면 풀 필요 없음
+    // (식으로 값을 정한 치수 구속은 변수가 바뀌면 값도 바뀌므로 늘 다시 푼다)
+    let moved = consNow !== this.baseCons || VIEW_IDS.some((v) => p.constraints?.[v]?.some((c) => c.expr));
+    if (!moved) for (const [k, v] of now) if (this.baseline.get(k) !== v) {
+      moved = true;
+      break;
+    }
+    if (!moved) return true;
+    const values = constraintValues(p);
+    for (const v of VIEW_IDS) {
+      if (!p.constraints[v]?.length) continue;
+      const fixed = new Set<string>();
+      for (const [key, val] of now) {
+        if (!key.startsWith(`${v}|`)) continue;
+        const old = this.baseline.get(key);
+        if (old !== undefined && Math.abs(old - val) > 1e-9) fixed.add(key.slice(v.length + 1).replace("|", ":"));
+      }
+      const r = solveView(p, v, { fixed, values });
+      if (!r.ok) {
+        const names = r.conflicting.map((id) => p.constraints?.[v]?.find((c) => c.id === id)).filter(Boolean).map((c) => KIND_LABEL[c!.kind]);
+        this.onConstraintError?.(r.invalid ? `구속 조건을 지키면 ${r.invalid} — 되돌렸어요.` : `구속 조건과 맞지 않아 되돌렸어요${names.length ? ` (${[...new Set(names)].join(", ")})` : ""}.`, r.conflicting);
+        return false;
+      }
+    }
+    this.snapBaseline();
+    return true;
+  }
+
+  /** 이번에 바뀐 도형 값만 기준으로 되돌린다 (끌기 중 풀 수 없을 때) */
+  private restoreBaseline() {
+    const p = this.project;
+    for (const v of VIEW_IDS)
+      for (const sh of p.views[v])
+        for (const k of shapeVarKeys(sh)) {
+          const old = this.baseline.get(`${v}|${sh.id}|${k}`);
+          if (old !== undefined && Math.abs(old - getVar(sh, k)) > 1e-9) setShapeVar(sh, k, old);
+        }
   }
 
   /** 문서 통째로 바꾸기 (버전 되돌리기) — 실행 취소 가능 */
@@ -103,6 +195,7 @@ class Store {
   reset(d: Doc) {
     this.history.clear();
     this.doc = structuredClone(d);
+    this.snapBaseline();
     this.changed();
   }
 
@@ -111,6 +204,7 @@ class Store {
     if (id === this.doc.view.part) return;
     this.commit();
     setActivePart(this.doc, id);
+    this.snapBaseline();
     this.changed();
   }
 
@@ -124,6 +218,7 @@ class Store {
     const r = this.history.undo(this.doc);
     if (!r) return;
     this.doc = r.state;
+    this.snapBaseline();
     this.changed();
     this.onUndoRedo?.("undo", r.label);
   }
@@ -132,6 +227,7 @@ class Store {
     const r = this.history.redo(this.doc);
     if (!r) return;
     this.doc = r.state;
+    this.snapBaseline();
     this.changed();
     this.onUndoRedo?.("redo", r.label);
   }
@@ -139,6 +235,7 @@ class Store {
   /** 기록의 pos번째 상태로 한 번에 (0 = 처음) */
   goto(pos: number) {
     this.doc = this.history.goto(this.doc, pos);
+    this.snapBaseline();
     this.changed();
   }
 
@@ -156,6 +253,38 @@ class Store {
 
   shapes(view: ViewId): Shape2D[] {
     return this.project.views[view];
+  }
+}
+
+/** 치수 구속의 식 값 (변수 L 등) */
+function constraintValues(p: Project): Map<string, number> | undefined {
+  const all = VIEW_IDS.flatMap((v) => p.constraints?.[v] ?? []).filter((c) => c.expr);
+  if (!all.length) return undefined;
+  const pr = evaluateParams(p);
+  const out = new Map<string, number>();
+  for (const c of all) {
+    try {
+      const v = evalSite(p, c.expr!, c.kind === "angle" ? "angle" : "len", pr);
+      c.value = v;
+      out.set(c.id, v);
+    } catch {
+      /* 식 오류 — 저장된 값 그대로 */
+    }
+  }
+  return out;
+}
+
+function setShapeVar(s: Shape2D, key: string, v: number) {
+  if (s.kind === "rect") (s as unknown as Record<string, number>)[key] = v;
+  else if (s.kind === "circle") (s as unknown as Record<string, number>)[key] = v;
+  else if (s.kind === "slot") {
+    if (key === "w") s.w = v;
+    else if (key[0] === "a") s.a = key === "ax" ? [v, s.a[1]] : [s.a[0], v];
+    else s.b = key === "bx" ? [v, s.b[1]] : [s.b[0], v];
+  } else {
+    const i = Number(key.slice(1));
+    const q = s.pts[i];
+    s.pts[i] = key[0] === "x" ? [v, q[1]] : [q[0], v];
   }
 }
 
