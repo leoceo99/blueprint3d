@@ -4,7 +4,7 @@ import { setOC } from "replicad";
 import { buildAll } from "../src/core/build";
 import { applyExpressions, convertProjectUnit } from "../src/core/params";
 import { SAMPLES } from "../src/core/samples";
-import { buildSheet, chooseLayout, parseProjection, sheetToDXF } from "../src/core/sheet";
+import { buildSheet, chooseLayout, parseProjection, sheetToDXF, sheetTexts } from "../src/core/sheet";
 import { emptyProject } from "../src/core/types";
 
 beforeAll(async () => {
@@ -62,7 +62,7 @@ describe("출력 도면", () => {
     expect(sh.paper).toBe("A4");
     expect(sh.prims.some((x) => x.t === "arc")).toBe(true);
     expect(sh.prims.filter((x) => x.layer === "CENTER").length).toBeGreaterThan(6);
-    const texts = sh.texts.map((t) => t.text);
+    const texts = sheetTexts(sh).map((t) => t.text);
     expect(texts).toContain("2×M6 관통구멍 Ø6.6 관통 · 카운터보어 Ø11 깊이 6.5");
     expect(texts).toContain("M5 탭 깊이 12");
     expect(texts.some((t) => t.includes("포켓 깊이 8"))).toBe(true);
@@ -81,7 +81,7 @@ describe("출력 도면", () => {
   it("변수 판: 같은 구멍 4개는 '4×'로 묶이고 위치는 모서리 기준 좌표 치수", () => {
     const p = sample("변수로");
     const sh = buildSheet(buildAll(p).result, p);
-    const texts = sh.texts.map((t) => t.text);
+    const texts = sheetTexts(sh).map((t) => t.text);
     expect(texts).toContain("4×M5 관통구멍 Ø5.5 관통");
     for (const v of ["8", "92", "52"]) expect(texts).toContain(v);
   });
@@ -89,7 +89,7 @@ describe("출력 도면", () => {
   it("플랜지: 원 위에 같은 간격의 볼트 구멍은 PCD 지시 + 볼트 원 중심선", () => {
     const p = sample("플랜지");
     const sh = buildSheet(buildAll(p).result, p);
-    const texts = sh.texts.map((t) => t.text);
+    const texts = sheetTexts(sh).map((t) => t.text);
     expect(texts).toContain("6×M6 관통구멍 Ø6.6 관통, PCD Ø60 등배치");
     // 개별 구멍 좌표(예: 14.02) 대신 볼트 원 중심만
     expect(texts).not.toContain("14.02");
@@ -105,7 +105,7 @@ describe("출력 도면", () => {
     const res = buildAll(q).result;
     const sh = buildSheet(res, q);
     expect(sh.units).toBe("inch");
-    const texts = sh.texts.map((t) => t.text);
+    const texts = sheetTexts(sh).map((t) => t.text);
     expect(texts).toContain("3.15"); // 전체 폭 80 mm
     expect(texts).toContain("3각법 · inch");
     expect(texts.some((t) => t.includes("M5 탭 깊이 0.472"))).toBe(true);

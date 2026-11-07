@@ -5,7 +5,7 @@ import { buildAll } from "../src/core/build";
 import { SAMPLES } from "../src/core/samples";
 import { orientShape, readStep, readStl, stepResult, stlResult } from "../src/core/importModel";
 import { rotateQuarter } from "../src/core/mesh";
-import { buildSheet } from "../src/core/sheet";
+import { buildSheet, sheetTexts } from "../src/core/sheet";
 import { emptyProject } from "../src/core/types";
 
 beforeAll(async () => {
@@ -38,7 +38,7 @@ describe("STEP 가져오기", () => {
     const p = emptyProject();
     p.source = { kind: "step", name: "가이드.step", key: "k", turns: [0, 0, 0] };
     const sh = buildSheet(r, p);
-    const labels = sh.texts.map((t) => t.text).join(" | ");
+    const labels = sheetTexts(sh).map((t) => t.text).join(" | ");
     expect(labels).toContain("2×Ø6.6 구멍 관통 · 카운터보어 Ø11 깊이 6.5");
     expect(labels).toMatch(/Ø4\.2 구멍 깊이 9\.\d+/);
   });

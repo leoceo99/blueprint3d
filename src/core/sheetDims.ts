@@ -112,6 +112,8 @@ export interface DimDraw {
   value: number;
   text: string;
   dxf?: DxfDim;
+  /** 그린 치수의 원래 정의 */
+  def: SheetDim;
 }
 
 export const TXT = 3.5; // 치수 글자 높이 (ISO)
@@ -353,7 +355,7 @@ export function renderDim(d: SheetDim, P: (q: Pt) => Pt, s: number, fmt: (mm: nu
     const b = textBox(t);
     box = [Math.min(box[0], b[0]), Math.min(box[1], b[1]), Math.max(box[2], b[2]), Math.max(box[3], b[3])];
   }
-  return { id: d.id, view: d.view, prims, texts, box, value, text, dxf };
+  return { id: d.id, view: d.view, prims, texts, box, value, text, dxf, def: d };
 }
 
 /** 저장된 치수 정리 (열 때): 모양이 맞지 않는 것은 버린다 */

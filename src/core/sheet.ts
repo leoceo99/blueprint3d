@@ -342,11 +342,8 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
     ...auto.dims.filter((d) => !hidden.has(d.id)).map((d) => (edits.moved?.[d.id] ? ({ ...d, ...edits.moved[d.id], id: d.id, kind: d.kind, view: d.view } as SheetDim) : d)),
     ...(edits.dims ?? []),
   ];
+  // 치수는 따로 둔다 (화면에서 하나씩 고르기·옮기기, DXF의 진짜 치수) — 모든 글자는 sheetTexts(sheet)
   const draws = dims.map((d) => renderDim(d, (q) => P(d.view, q[0], q[1]), s, fl));
-  for (const dr of draws) {
-    prims.push(...dr.prims);
-    texts.push(...dr.texts);
-  }
 
   // 4) 뷰 이름 (작게)
   for (const v of VIEW_IDS) {
@@ -530,12 +527,12 @@ function esc(s: string) {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 }
 
-function toSVG(sh: Sheet): string {
-  const H = sh.height;
+/** 선·글자 묶음 → SVG 조각 (도면과 같은 모양, 용지 높이 H로 y 뒤집기) */
+export function fragmentSVG(prims: Prim[], texts: SheetText[], H: number, color = "#111"): string {
   const X = (p: Pt) => `${r2(p[0])} ${r2(H - p[1])}`;
   const byLayer: Record<Layer, string[]> = { VISIBLE: [], HIDDEN: [], CENTER: [], DIM: [], FRAME: [] };
   const fills: string[] = [];
-  for (const p of sh.prims) {
+  for (const p of prims) {
     if (p.t === "line") byLayer[p.layer].push(`M${X(p.a)}L${X(p.b)}`);
     else if (p.t === "arc") {
       const a0 = (p.start * Math.PI) / 180;
@@ -554,10 +551,10 @@ function toSVG(sh: Sheet): string {
   const group = (layer: Layer) => {
     const st = STYLE[layer];
     return byLayer[layer].length
-      ? `<path d="${byLayer[layer].join("")}" fill="none" stroke="#111" stroke-width="${st.w}" stroke-linecap="round" stroke-linejoin="round"${st.dash ? ` stroke-dasharray="${st.dash}"` : ""}/>`
+      ? `<path d="${byLayer[layer].join("")}" fill="none" stroke="${color}" stroke-width="${st.w}" stroke-linecap="round" stroke-linejoin="round"${st.dash ? ` stroke-dasharray="${st.dash}"` : ""}/>`
       : "";
   };
-  const txt = sh.texts
+  const txt = texts
     .map((t) => {
       const [x, y] = X(t.at).split(" ");
       const rot = t.rotate ? ` transform="rotate(${-t.rotate} ${x} ${y})"` : "";
@@ -566,16 +563,29 @@ function toSVG(sh: Sheet): string {
     })
     .join("");
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${sh.width}mm" height="${sh.height}mm" viewBox="0 0 ${sh.width} ${sh.height}">` +
-    `<rect width="100%" height="100%" fill="#fff"/>` +
     group("FRAME") +
     group("DIM") +
     group("CENTER") +
     group("HIDDEN") +
     group("VISIBLE") +
-    (fills.length ? `<path d="${fills.join("")}" fill="#111"/>` : "") +
-    `<g fill="#111" font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',system-ui,sans-serif">${txt}</g>` +
-    `</svg>`
+    (fills.length ? `<path d="${fills.join("")}" fill="${color}"/>` : "") +
+    (txt ? `<g fill="${color}">${txt}</g>` : "")
+  );
+}
+
+/** 도면의 모든 글자 (치수 포함) */
+export const sheetTexts = (sh: Sheet): SheetText[] => [...sh.texts, ...sh.dims.flatMap((d) => d.texts)];
+
+function toSVG(sh: Sheet): string {
+  // 치수는 하나씩 묶음(data-dim)으로 — 화면에서 고르고 옮길 수 있게
+  const dims = sh.dims.map((d) => `<g class="dim" data-dim="${esc(d.id)}">${fragmentSVG(d.prims, d.texts, sh.height)}</g>`).join("");
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${sh.width}mm" height="${sh.height}mm" viewBox="0 0 ${sh.width} ${sh.height}">` +
+    `<rect width="100%" height="100%" fill="#fff"/>` +
+    `<g font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',system-ui,sans-serif">` +
+    fragmentSVG(sh.prims, sh.texts, sh.height) +
+    dims +
+    `</g></svg>`
   );
 }
 
@@ -583,6 +593,8 @@ function toSVG(sh: Sheet): string {
  * AutoCAD 호환 DXF (R12).
  * 실제 크기(1:1)로 내보낸다: 용지 좌표를 척도로 나눈다. 글자와 테두리도 같은 비율이라 도면 모양은 그대로.
  * 레이어: VISIBLE(외형선), HIDDEN(숨은선), CENTER(중심선), DIM(치수), FRAME(테두리·표제란)
+ * 치수는 **진짜 치수(DIMENSION)**로: AutoCAD가 치수로 알아보고(고르기·옮기기·스타일), 그림은 이름 없는 블록(*D…)에 —
+ * AutoCAD는 이 블록이 없으면 파일을 열지 않는다. 지시선(구멍 지시·모따기 C)은 선 + 글자.
  */
 export function sheetToDXF(sh: Sheet): string {
   // inch 부품은 inch 도면으로 ($INSUNITS 1 = inch, 4 = mm)
@@ -591,10 +603,20 @@ export function sheetToDXF(sh: Sheet): string {
   const out: string[] = [];
   const g = (code: number, v: string | number) => out.push(String(code), String(v));
   const n = (v: number) => r2(v * k);
+  const xyz = (c: number, p: Pt) => {
+    g(c, n(p[0]));
+    g(c + 10, n(p[1]));
+    g(c + 20, 0);
+  };
+  const STYLE_NAME = "B3D";
   g(0, "SECTION"); g(2, "HEADER");
+  g(9, "$ACADVER"); g(1, "AC1009");
   g(9, "$INSUNITS"); g(70, inch ? 1 : 4);
   g(9, "$MEASUREMENT"); g(70, inch ? 0 : 1);
   g(9, "$LTSCALE"); g(40, r2(k));
+  g(9, "$DIMSCALE"); g(40, r2(k));
+  g(9, "$DIMSTYLE"); g(2, "STANDARD");
+  g(9, "$TEXTSTYLE"); g(7, STYLE_NAME);
   g(0, "ENDSEC");
   g(0, "SECTION"); g(2, "TABLES");
   g(0, "TABLE"); g(2, "LTYPE"); g(70, 3);
@@ -609,50 +631,103 @@ export function sheetToDXF(sh: Sheet): string {
     ["DIM", 3, "CONTINUOUS"],
     ["FRAME", 7, "CONTINUOUS"],
   ];
-  g(0, "TABLE"); g(2, "LAYER"); g(70, layers.length);
+  g(0, "TABLE"); g(2, "LAYER"); g(70, layers.length + 1);
+  g(0, "LAYER"); g(2, "0"); g(70, 0); g(62, 7); g(6, "CONTINUOUS");
   for (const [name, color, lt] of layers) {
     g(0, "LAYER"); g(2, name); g(70, 0); g(62, color); g(6, lt);
   }
   g(0, "ENDTAB");
+  // 글자 모양: 한글이 나오는 글꼴 (없으면 AutoCAD가 비슷한 글꼴로 바꿈)
+  g(0, "TABLE"); g(2, "STYLE"); g(70, 2);
+  g(0, "STYLE"); g(2, "STANDARD"); g(70, 0); g(40, 0); g(41, 1); g(50, 0); g(71, 0); g(42, 2.5); g(3, "txt"); g(4, "");
+  g(0, "STYLE"); g(2, STYLE_NAME); g(70, 0); g(40, 0); g(41, 1); g(50, 0); g(71, 0); g(42, 2.5); g(3, "malgun.ttf"); g(4, "");
+  g(0, "ENDTAB");
+  // 치수 스타일: 화살표 3, 글자 3.5 (용지 mm) × 척도
+  g(0, "TABLE"); g(2, "DIMSTYLE"); g(70, 1);
+  g(0, "DIMSTYLE"); g(2, "STANDARD"); g(70, 0);
+  g(3, ""); g(4, ""); g(5, ""); g(6, ""); g(7, "");
+  g(40, r2(k)); g(41, 3); g(42, 1); g(43, 7); g(44, 1.5); g(45, 0); g(46, 0); g(47, 0); g(48, 0);
+  g(140, 3.5); g(141, 0); g(142, 0); g(143, 25.4); g(144, 1); g(145, 0); g(146, 1); g(147, 1);
+  g(71, 0); g(72, 0); g(73, 0); g(74, 0); g(75, 0); g(76, 0); g(77, 1); g(78, 0);
+  g(170, 0); g(171, 2); g(172, 1); g(173, 0); g(174, 0); g(175, 0); g(176, 0); g(177, 0); g(178, 0);
+  g(0, "ENDTAB");
   g(0, "ENDSEC");
-  g(0, "SECTION"); g(2, "ENTITIES");
-  for (const p of sh.prims) {
+
+  const prim = (p: Prim, layer: string = p.layer) => {
     if (p.t === "line") {
-      g(0, "LINE"); g(8, p.layer);
-      g(10, n(p.a[0])); g(20, n(p.a[1])); g(30, 0);
-      g(11, n(p.b[0])); g(21, n(p.b[1])); g(31, 0);
+      g(0, "LINE"); g(8, layer);
+      xyz(10, p.a);
+      xyz(11, p.b);
     } else if (p.t === "arc") {
       let sweep = p.end - p.start;
       while (sweep <= 0) sweep += 360;
       if (sweep >= 359.999) {
-        g(0, "CIRCLE"); g(8, p.layer);
-        g(10, n(p.c[0])); g(20, n(p.c[1])); g(30, 0); g(40, n(p.r));
+        g(0, "CIRCLE"); g(8, layer);
+        xyz(10, p.c); g(40, n(p.r));
       } else {
-        g(0, "ARC"); g(8, p.layer);
-        g(10, n(p.c[0])); g(20, n(p.c[1])); g(30, 0); g(40, n(p.r));
+        g(0, "ARC"); g(8, layer);
+        xyz(10, p.c); g(40, n(p.r));
         g(50, r2(((p.start % 360) + 360) % 360)); g(51, r2(((p.end % 360) + 360) % 360));
       }
     } else {
       // 화살표: 3점 SOLID
       const [a, b, c] = p.pts;
-      g(0, "SOLID"); g(8, p.layer);
-      g(10, n(a[0])); g(20, n(a[1])); g(30, 0);
-      g(11, n(b[0])); g(21, n(b[1])); g(31, 0);
-      g(12, n(c[0])); g(22, n(c[1])); g(32, 0);
-      g(13, n(c[0])); g(23, n(c[1])); g(33, 0);
+      g(0, "SOLID"); g(8, layer);
+      xyz(10, a);
+      xyz(11, b);
+      xyz(12, c);
+      xyz(13, c);
     }
-  }
-  for (const t of sh.texts) {
+  };
+  const text = (t: SheetText, layer: string) => {
     const align = t.anchor === "middle" ? 1 : t.anchor === "end" ? 2 : 0;
-    g(0, "TEXT"); g(8, "DIM");
-    g(10, n(t.at[0])); g(20, n(t.at[1])); g(30, 0);
+    g(0, "TEXT"); g(8, layer);
+    xyz(10, t.at);
     g(40, n(t.size)); g(1, dxfText(t.text));
-    if (t.rotate) g(50, t.rotate);
+    if (t.rotate) g(50, r2(t.rotate));
+    g(7, STYLE_NAME);
     if (align) {
       g(72, align);
-      g(11, n(t.at[0])); g(21, n(t.at[1])); g(31, 0);
+      xyz(11, t.at);
     }
+  };
+
+  // 치수 그림 블록 (*D1, *D2 …)
+  const real = sh.dims.filter((d) => d.dxf);
+  g(0, "SECTION"); g(2, "BLOCKS");
+  real.forEach((d, i) => {
+    const name = `*D${i + 1}`;
+    g(0, "BLOCK"); g(8, "0"); g(2, name); g(70, 1); g(10, 0); g(20, 0); g(30, 0); g(3, name);
+    for (const p of d.prims) prim(p, "DIM");
+    for (const t of d.texts) text(t, "DIM");
+    g(0, "ENDBLK"); g(8, "0");
+  });
+  g(0, "ENDSEC");
+
+  g(0, "SECTION"); g(2, "ENTITIES");
+  for (const p of sh.prims) prim(p);
+  for (const t of sh.texts) text(t, "DIM");
+  // 지시선은 선 + 글자
+  for (const d of sh.dims.filter((x) => !x.dxf)) {
+    for (const p of d.prims) prim(p, "DIM");
+    for (const t of d.texts) text(t, "DIM");
   }
+  real.forEach((d, i) => {
+    const x = d.dxf!;
+    g(0, "DIMENSION"); g(8, "DIM");
+    g(2, `*D${i + 1}`);
+    g(3, "STANDARD");
+    xyz(10, x.p10);
+    xyz(11, x.p11);
+    // 종류 + 32(이 치수만 쓰는 블록) + 64(가로 거리 좌표 치수)
+    g(70, x.type + 32 + (x.type === 6 && x.xOrd ? 64 : 0));
+    g(1, dxfText(x.text));
+    if (x.p13) xyz(13, x.p13);
+    if (x.p14) xyz(14, x.p14);
+    if (x.p15) xyz(15, x.p15);
+    if (x.type === 0) g(50, x.angle ?? 0);
+    if (x.type === 3 || x.type === 4) g(40, n(Math.hypot(x.p11[0] - x.p15![0], x.p11[1] - x.p15![1])));
+  });
   g(0, "ENDSEC");
   g(0, "EOF");
   return out.join("\n") + "\n";

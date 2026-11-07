@@ -31,6 +31,8 @@ export const app = {
   ai: null as AiState | null,
   /** 지금 작업 공간 id */
   workspace: "design",
+  /** 도면 출력 화면의 도구 안내 (상태 표시줄) */
+  sheetHint: "",
 };
 
 /** 앱의 모든 명령 */

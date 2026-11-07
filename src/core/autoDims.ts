@@ -7,7 +7,7 @@
  * 그리고 “무엇이 치수로 있어야 하는지(needs)”를 함께 돌려줘서 빠진 치수를 찾는다(checkNeeds).
  */
 import { flatten, isDegenerate, normRect } from "./geometry2d";
-import { isFull, PERP, type Axis, type CylFeat, type Features3D, type P3 } from "./features3d";
+import { isFull, PERP, type Axis, type CylFeat, type Features3D, type P3 } from "./featureTypes";
 import { renderDim, textBox, overlaps, type Prim, type Pt, type SheetDim, type SheetText } from "./sheetDims";
 import { holeLabel } from "./standards";
 import type { Project, Shape2D, ViewId } from "./types";

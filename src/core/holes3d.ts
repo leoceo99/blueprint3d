@@ -5,7 +5,7 @@
  * 결과는 각 뷰의 구멍 도형(뷰 좌표) → 도면의 구멍 지시·중심선·위치 치수에 쓴다.
  */
 import { getOC, type Shape3D } from "replicad";
-import type { Features3D } from "./features3d";
+import type { Features3D } from "./featureTypes";
 import type { Shape2D, ViewId } from "./types";
 
 interface Cyl {

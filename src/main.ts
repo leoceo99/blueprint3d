@@ -138,4 +138,4 @@ const firstFit = setInterval(() => {
 }, 200);
 
 // 개발·시험용 (나중에 플러그인 API의 출발점)
-Object.assign(window, { blueprint3d: { commands, workspaces, registerWorkspace, unregisterWorkspace, store, buildStats, board: app.board } });
+Object.assign(window, { blueprint3d: { commands, workspaces, registerWorkspace, unregisterWorkspace, store, buildStats, board: app.board, app } });

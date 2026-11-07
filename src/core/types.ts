@@ -285,5 +285,5 @@ export interface BuildResult {
   /** 가져온 3D 모델에서 찾은 구멍 (뷰 좌표). 도면의 구멍 지시에 쓴다 */
   holes?: Record<ViewId, Shape2D[]>;
   /** 형상 특징 (높이·필렛·모따기·보스·원뿔) — 도면 자동 치수에 쓴다 (11단계) */
-  features?: import("./features3d").Features3D;
+  features?: import("./featureTypes").Features3D;
 }

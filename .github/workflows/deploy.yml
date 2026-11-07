@@ -25,6 +25,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # DXF 검사 도구 (tests/dxf.test.ts — 없으면 그 시험만 건너뜀)
+      - run: pip install ezdxf
       - run: npm test
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3

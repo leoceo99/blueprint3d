@@ -210,10 +210,18 @@
 
     <main id="ws-sheet" class="workspace sheet-ws" hidden>
       <div class="sheet-toolbar">
-        <label class="drawing-pick">도면 <select id="drawingSel" aria-label="볼 도면"></select></label>
+        <select id="drawingSel" class="drawing-pick" aria-label="볼 도면" title="볼 도면"></select>
         <button id="addDrawing" class="small" title="편집 중인 부품의 도면을 하나 더">＋ 도면</button>
         <button id="delDrawing" class="small ghost" title="보고 있는 도면 지우기 (실행 취소 가능)">지우기</button>
         <span id="sheetInfo" class="sheet-badge"></span>
+        <div class="dim-tools" role="group" aria-label="치수">
+          <button class="small" data-cmd="sheet.select">선택</button>
+          <button class="small" data-cmd="sheet.dim">치수</button>
+          <select id="dimKind" title="치수 종류">
+            <option value="auto">자동 (가로·세로)</option><option value="h">가로</option><option value="v">세로</option><option value="aligned">평행</option><option value="angle">각도</option>
+          </select>
+          <button class="small ghost" data-cmd="sheet.dimDelete">치수 지우기</button>
+        </div>
         <div class="spacer"></div>
         <button id="expSvg">SVG 저장</button>
         <button id="expDxf" title="실제 크기(1:1) — 선·원호·중심선·치수 레이어">DXF 저장 (AutoCAD)</button>
@@ -223,6 +231,8 @@
       </div>
       <div class="sheet-body">
         <aside class="sheet-settings" id="sheetSettings">
+          <div class="panel-head">치수 검사</div>
+          <div id="dimCheck" class="dim-check"></div>
           <div class="panel-head">도면 설정</div>
           <div class="sheet-form" id="sheetForm">
             <label>이 도면에 그릴 부품 <select id="drawingPart"></select></label>

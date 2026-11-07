@@ -3,13 +3,14 @@
  * 도면 설정(부품·용지·척도·표제란)은 도면에 저장. 편집 중이 아닌 부품의 도면도 그 부품을 따로 3D로 만들어 그린다.
  */
 import { activeDrawing, addDrawing, drawingsOf, geometryKey, partOf, removeDrawing, type Drawing } from "../core/document";
-import { buildSheet, sheetToDXF, type Sheet } from "../core/sheet";
+import { buildSheet, sheetToDXF, type DimEdits, type Sheet } from "../core/sheet";
+import { attachEditor, deleteSelected, sheetEdit, type DimKind, type EditorHost } from "./sheetEdit";
 import type { SheetInfo } from "../core/types";
 import { safeName, saveFile } from "../files";
 import { store } from "../store";
 import { buildPart } from "../app/build";
 import type { Command } from "../app/commands";
-import { app, commands, on } from "../app/context";
+import { app, commands, on, requestRender } from "../app/context";
 import { $, $$, esc } from "../app/dom";
 import { toast } from "../app/notify";
 import type { Workspace } from "./registry";
@@ -26,7 +27,7 @@ export async function sheetOf(d: Drawing): Promise<Sheet | null> {
   const part = partOf(store.doc, d.partId);
   if (!part) return null;
   const build = await buildPart(part);
-  return build ? buildSheet(build, { ...part, sheet: d.sheet }) : null;
+  return build ? buildSheet(build, { ...part, sheet: d.sheet }, d.edits ?? {}) : null;
 }
 
 /** 지금 편집 중인 부품의 도면 설정 (AI 검토 등에서 쓰는 도면) */
@@ -66,6 +67,65 @@ async function renderSheet(force = false) {
   }
   host.innerHTML = sh.svg;
   $("#sheetInfo").textContent = `${sh.paper} · ${sh.scaleLabel}`;
+  const svg = host.querySelector("svg");
+  if (svg) attachEditor(svg, sh, d.edits ?? {}, editorHost);
+  renderCheck(sh, d);
+}
+
+/** 치수 편집기가 도면을 고칠 때 */
+const editorHost: EditorHost = {
+  edit: (fn, label) =>
+    editDrawing((d) => {
+      const e: DimEdits = structuredClone(d.edits ?? {});
+      fn(e);
+      if (!e.dims?.length) delete e.dims;
+      if (!e.hide?.length) delete e.hide;
+      if (!e.moved || !Object.keys(e.moved).length) delete e.moved;
+      if (Object.keys(e).length) d.edits = e;
+      else delete d.edits;
+    }, label),
+  toast,
+  changed: () => {
+    syncTools();
+    requestRender();
+  },
+};
+
+/** 치수 검사: 빠진 치수, 숨긴 자동 치수 */
+function renderCheck(sh: Sheet | null, d: Drawing | null) {
+  const box = $("#dimCheck");
+  if (!sh || !d) {
+    box.innerHTML = "";
+    return;
+  }
+  const hidden = d.edits?.hide?.length ?? 0;
+  const moved = Object.keys(d.edits?.moved ?? {}).length;
+  const manual = d.edits?.dims?.length ?? 0;
+  const head = sh.missing.length
+    ? `<div class="dim-check-head bad">⚠ 빠진 치수 ${sh.missing.length}개</div><ul>${sh.missing.map((m) => `<li>${esc(m)}</li>`).join("")}</ul>`
+    : `<div class="dim-check-head ok">✓ 모든 형상에 크기·위치 치수가 있어요</div>`;
+  const stats = `<div class="muted small">자동 치수 ${sh.dims.length - manual}개${manual ? ` · 직접 놓은 치수 ${manual}개` : ""}${hidden ? ` · 숨긴 것 ${hidden}개` : ""}${moved ? ` · 옮긴 것 ${moved}개` : ""}</div>`;
+  box.innerHTML = head + stats + (hidden || moved ? `<button class="small" id="dimRestore">자동 치수 처음대로</button>` : "");
+  box.querySelector<HTMLButtonElement>("#dimRestore")?.addEventListener("click", () => commands.run("sheet.dimRestore"));
+}
+
+function syncTools() {
+  $<HTMLSelectElement>("#dimKind").value = sheetEdit.kind;
+  $("#sheetHost").classList.toggle("tool-dim", sheetEdit.tool === "dim");
+  app.sheetHint =
+    sheetEdit.tool === "dim"
+      ? sheetEdit.kind === "angle"
+        ? "선 두 개를 누르고, 각도 글자 자리를 누르세요 · Esc 취소"
+        : "점 두 개(선 끝·원 중심) 또는 원·원호를 누르고, 치수선 자리를 누르세요 · Esc 취소"
+      : "치수를 눌러 고르고 끌어서 옮기기 · 두 번 누르면 글자 덧붙이기 · Delete 지우기";
+}
+
+function setTool(t: "select" | "dim") {
+  sheetEdit.tool = t;
+  if (t === "dim") sheetEdit.selected = null;
+  void renderSheet(true);
+  syncTools();
+  requestRender();
 }
 
 /** 도면 고르기·부품 고르기·이름·설정 칸을 지금 도면에 맞춘다 */
@@ -156,6 +216,40 @@ const cmds: Command[] = [
       if (r) await saveFile(`${drawingBase(r.d)}.dxf`, sheetToDXF(r.sh), "application/dxf", "dxf");
     },
   },
+  { id: "sheet.select", title: "도면: 선택 (치수 고르기·옮기기)", category: "도면", keywords: ["select", "선택"], keys: ["V"], checked: () => sheetEdit.tool === "select", run: () => setTool("select") },
+  { id: "sheet.dim", title: "도면: 치수 놓기 (재기)", category: "도면", keywords: ["dimension", "measure", "치수", "재기"], keys: ["D"], checked: () => sheetEdit.tool === "dim", run: () => setTool("dim") },
+  ...(["auto", "h", "v", "aligned", "angle"] as DimKind[]).map((k) => ({
+    id: `sheet.dim.${k}`,
+    title: `도면 치수: ${{ auto: "자동 (가로·세로)", h: "가로", v: "세로", aligned: "평행", angle: "각도" }[k]}`,
+    category: "도면",
+    keywords: ["dimension", "치수"],
+    checked: () => sheetEdit.tool === "dim" && sheetEdit.kind === k,
+    run: () => {
+      sheetEdit.kind = k;
+      setTool("dim");
+    },
+  })),
+  {
+    id: "sheet.dimDelete",
+    title: "고른 치수 지우기 (자동 치수는 숨기기)",
+    category: "도면",
+    keywords: ["delete dimension", "치수 지우기"],
+    keys: ["Delete", "Backspace"],
+    enabled: () => !!sheetEdit.selected,
+    run: () => deleteSelected(app.lastSheet, activeDrawing(store.doc)?.edits ?? {}, editorHost),
+  },
+  {
+    id: "sheet.dimRestore",
+    title: "자동 치수 처음대로 (숨긴·옮긴 것 되돌리기)",
+    category: "도면",
+    keywords: ["restore dimensions", "치수 되살리기"],
+    enabled: () => !!(activeDrawing(store.doc)?.edits?.hide?.length || Object.keys(activeDrawing(store.doc)?.edits?.moved ?? {}).length),
+    run: () =>
+      editorHost.edit((e) => {
+        delete e.hide;
+        delete e.moved;
+      }, "자동 치수 처음대로"),
+  },
   { id: "sheet.print", title: "도면 인쇄 / PDF", category: "내보내기", keywords: ["print", "pdf", "인쇄"], keys: ["Ctrl+P"], when: any, global: true, run: printSheet },
   {
     id: "doc.addDrawing",
@@ -187,6 +281,7 @@ export const sheetWorkspace: Workspace = {
   hint: "문서의 도면 — 부품마다 3각법 3면도, 용지·척도·표제란, SVG·DXF·인쇄",
   show() {
     $("#ws-sheet").hidden = false;
+    $("#toolHint").hidden = false;
     void renderSheet(true);
   },
   hide() {
@@ -201,6 +296,9 @@ export function initSheet() {
   $("#printBtn").dataset.cmd = "sheet.print";
   $("#addDrawing").dataset.cmd = "doc.addDrawing";
   $("#delDrawing").dataset.cmd = "doc.deleteDrawing";
+  const kindSel = $<HTMLSelectElement>("#dimKind");
+  kindSel.onchange = () => commands.run(`sheet.dim.${kindSel.value}`);
+  syncTools();
   on("built", () => {
     if (app.workspace === "sheet") void renderSheet();
   });

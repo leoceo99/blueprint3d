@@ -7,6 +7,8 @@
  * 이름은 겹쳐도 되고, 참조는 id로 한다 (Blender의 ID·Onshape의 탭 참조처럼).
  * 예전 프로젝트 JSON(부품 1개)은 부품 1개 + 도면 1장 문서로 자동 변환된다.
  */
+import { normalizeDims, type SheetDim } from "./sheetDims";
+import type { DimEdits } from "./sheet";
 import { normalizeProject } from "./project";
 import { emptyProject, type Project, type SheetInfo } from "./types";
 import { diffSummary, fileKeys, summarize } from "./versions";
@@ -20,6 +22,8 @@ export interface Drawing {
   partId: string;
   /** 용지·척도·표제란 */
   sheet?: SheetInfo;
+  /** 치수 고침: 직접 놓은 치수, 숨긴·옮긴 자동 치수 (11단계) */
+  edits?: DimEdits;
 }
 
 /** 15단계(메쉬 편집)부터 쓰는 장면 — 지금은 자리만 */
@@ -115,7 +119,8 @@ export function normalizeDoc(raw: unknown): Doc | null {
   for (const d of Array.isArray(raw.drawings) ? raw.drawings : []) {
     if (!obj(d) || typeof d.partId !== "string" || !partIds.has(d.partId)) continue;
     const s = cleanSheet(d.sheet);
-    drawings.push({ id: uniq(d.id, "drawing"), name: typeof d.name === "string" && d.name.trim() ? d.name : "도면", partId: d.partId, ...(s ? { sheet: s } : {}) });
+    const e = cleanEdits(d.edits);
+    drawings.push({ id: uniq(d.id, "drawing"), name: typeof d.name === "string" && d.name.trim() ? d.name : "도면", partId: d.partId, ...(s ? { sheet: s } : {}), ...(e ? { edits: e } : {}) });
   }
   // 부품 안에 남아 있던 도면 설정은 그 부품의 도면으로
   for (const [pid, s] of legacySheets) {
@@ -283,4 +288,32 @@ export function docDiff(a: Doc, b: Doc): string {
 /** 3D 모양을 정하는 것만 모은 열쇠 — 같으면 3D를 다시 만들 필요가 없다 (이름·표제란·제조 방식은 빠짐) */
 export function geometryKey(p: Project): string {
   return JSON.stringify([p.views, p.mode, p.thickness, p.thicknessExpr ?? null, p.params ?? null, p.source ?? null]);
+}
+
+/** 저장된 치수 고침 정리 (깨진 것은 버림) */
+export function cleanEdits(raw: unknown): DimEdits | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: DimEdits = {};
+  const dims = normalizeDims(r.dims);
+  if (dims.length) out.dims = dims;
+  if (Array.isArray(r.hide)) {
+    const hide = r.hide.filter((x): x is string => typeof x === "string");
+    if (hide.length) out.hide = hide;
+  }
+  if (r.moved && typeof r.moved === "object" && !Array.isArray(r.moved)) {
+    const moved: Record<string, Partial<SheetDim>> = {};
+    for (const [k, v] of Object.entries(r.moved as Record<string, unknown>)) {
+      if (!v || typeof v !== "object") continue;
+      const m: Record<string, unknown> = {};
+      for (const [f, x] of Object.entries(v as Record<string, unknown>)) {
+        if (["off", "line", "jog", "ang", "len", "rad"].includes(f) && typeof x === "number" && Number.isFinite(x)) m[f] = x;
+        else if (f === "knee" && Array.isArray(x) && x.length === 2 && x.every((n) => typeof n === "number" && Number.isFinite(n))) m[f] = x;
+        else if ((f === "text" || f === "suffix") && typeof x === "string") m[f] = x;
+      }
+      if (Object.keys(m).length) moved[k] = m as Partial<SheetDim>;
+    }
+    if (Object.keys(moved).length) out.moved = moved;
+  }
+  return Object.keys(out).length ? out : undefined;
 }

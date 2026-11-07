@@ -42,7 +42,7 @@ function renderStatus() {
   const c = ui.cursor;
   const f = (n: number | null) => (n === null ? "—" : fmt(n).padStart(7));
   $("#coords").textContent = c ? `X ${f(c[0])}  Y ${f(c[1])}  Z ${f(c[2])} ${unitLabel()}` : "X —  Y —  Z —";
-  $("#toolHint").textContent = HINTS[ui.tool];
+  $("#toolHint").textContent = app.workspace === "sheet" ? app.sheetHint : HINTS[ui.tool];
   $("#snapGridBtn").classList.toggle("on", ui.snapGrid);
   $("#snapAlignBtn").classList.toggle("on", ui.snapAlign);
   $("#resultBtn").classList.toggle("on", ui.showResult);
