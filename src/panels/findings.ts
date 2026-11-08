@@ -2,7 +2,6 @@
 import { getApiKey } from "../aiKey";
 import { boundsOf } from "../core/geometry2d";
 import { runChecks } from "../core/checks";
-import { buildSheet } from "../core/sheet";
 import type { Finding } from "../core/types";
 import { store } from "../store";
 import { ui } from "../ui/state";
@@ -119,7 +118,7 @@ export async function toggleAiReview() {
   requestRender();
   try {
     await waitForBuild();
-    const sheet = app.lastBuild ? buildSheet(app.lastBuild, { ...store.project, sheet: activeSheetInfo() }) : null;
+    const sheet = app.lastBuild ? (await import("../core/sheet")).buildSheet(app.lastBuild, { ...store.project, sheet: activeSheetInfo() }) : null;
     const [imageSheet, image3d] = await Promise.all([sheet ? svgToPng(sheet.svg) : null, app.viewer.capture()]);
     // AI SDK는 처음 검토할 때 내려받는다
     const { requestReview } = await import("../ai");

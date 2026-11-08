@@ -3,8 +3,8 @@
  * 도면 설정(부품·용지·척도·표제란)은 도면에 저장. 편집 중이 아닌 부품의 도면도 그 부품을 따로 3D로 만들어 그린다.
  */
 import { activeDrawing, addDrawing, drawingsOf, geometryKey, partOf, removeDrawing, type Drawing } from "../core/document";
-import { buildSheet, sheetToDXF, type DimEdits, type Sheet } from "../core/sheet";
-import { attachEditor, deleteSelected, sheetEdit, type DimKind, type EditorHost } from "./sheetEdit";
+import type { DimEdits, Sheet } from "../core/sheet";
+import { sheetEdit, type DimKind, type EditorHost } from "./sheetState";
 import type { SheetInfo } from "../core/types";
 import { safeName, saveFile } from "../files";
 import { store } from "../store";
@@ -27,7 +27,10 @@ export async function sheetOf(d: Drawing): Promise<Sheet | null> {
   const part = partOf(store.doc, d.partId);
   if (!part) return null;
   const build = await buildPart(part);
-  return build ? buildSheet(build, { ...part, sheet: d.sheet }, d.edits ?? {}) : null;
+  if (!build) return null;
+  // 도면 코드(자동 치수·치수 편집)는 도면을 처음 그릴 때 내려받는다
+  const { buildSheet } = await import("../core/sheet");
+  return buildSheet(build, { ...part, sheet: d.sheet }, d.edits ?? {});
 }
 
 /** 지금 편집 중인 부품의 도면 설정 (AI 검토 등에서 쓰는 도면) */
@@ -68,7 +71,7 @@ async function renderSheet(force = false) {
   host.innerHTML = sh.svg;
   $("#sheetInfo").textContent = `${sh.paper} · ${sh.scaleLabel}`;
   const svg = host.querySelector("svg");
-  if (svg) attachEditor(svg, sh, d.edits ?? {}, editorHost);
+  if (svg) (await import("./sheetEdit")).attachEditor(svg, sh, d.edits ?? {}, editorHost);
   renderCheck(sh, d);
 }
 
@@ -213,7 +216,7 @@ const cmds: Command[] = [
     when: any,
     run: async () => {
       const r = await sheetNow();
-      if (r) await saveFile(`${drawingBase(r.d)}.dxf`, sheetToDXF(r.sh), "application/dxf", "dxf");
+      if (r) await saveFile(`${drawingBase(r.d)}.dxf`, (await import("../core/sheet")).sheetToDXF(r.sh), "application/dxf", "dxf");
     },
   },
   { id: "sheet.select", title: "도면: 선택 (치수 고르기·옮기기)", category: "도면", keywords: ["select", "선택"], keys: ["V"], checked: () => sheetEdit.tool === "select", run: () => setTool("select") },
@@ -236,7 +239,7 @@ const cmds: Command[] = [
     keywords: ["delete dimension", "치수 지우기"],
     keys: ["Delete", "Backspace"],
     enabled: () => !!sheetEdit.selected,
-    run: () => deleteSelected(app.lastSheet, activeDrawing(store.doc)?.edits ?? {}, editorHost),
+    run: async () => (await import("./sheetEdit")).deleteSelected(app.lastSheet, activeDrawing(store.doc)?.edits ?? {}, editorHost),
   },
   {
     id: "sheet.dimRestore",

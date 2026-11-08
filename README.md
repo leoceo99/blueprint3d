@@ -105,7 +105,7 @@
 
 ### 다른 CAD의 3D 파일 → 2D 도면
 - **파일 ▸ 3D 파일 가져오기 (STEP·STL)** 또는 끌어다 놓기 → 3D 보기·3면도·DXF·인쇄가 그대로
-- **STEP**은 정확한 곡면으로 숨은선까지, 구멍(관통·깊이·카운터보어)을 찾아 도면에 지시를 붙임. **STL**은 메쉬에서 꺾인 모서리·윤곽선을 골라 숨은선 처리
+- **STEP**은 정확한 곡면으로 숨은선까지 그리고, **형상을 읽어 치수를 다 붙임**: 단차·높이 위치, 구멍(관통·깊이·카운터보어·카운터싱크), 보스·축 Ø, 모서리 R(필렛), 모따기 C, 장공, 회전체 모서리 R. **STL**은 메쉬에서 꺾인 모서리·윤곽선을 골라 숨은선 처리
 - 다른 CAD와 위쪽 방향이 다르면 위쪽 표시줄 **X ↻ Y ↻ Z ↻**로 90°씩 돌리기. 프로젝트 파일에 3D 파일도 함께 저장
 
 ![STEP 파일로 만든 도면: 구멍 지시까지](docs/screenshot-step.png)
@@ -119,11 +119,16 @@
 
 ### 3D → 2D (도면 출력)
 - 3각법 3면도 자동 생성: 외형선, 숨은선, 중심선, 전체 치수
+- **자동 치수 2.0**: 3D 형상을 읽어 단차·높이는 그 선이 보이는 뷰에 좌표 치수(겹치면 비켜 놓기), R·C·Ø·구멍 지시는 글자·뷰와 겹치지 않는 자리에. 깊이로 정해지는 바닥은 참고 치수 “(17)”
+- **치수 검사**: 모든 형상에 크기·위치 치수가 있는지 확인해 빠진 것을 왼쪽 ‘치수 검사’에 보여 줌
+- **치수 직접 놓기·재기** (<kbd>D</kbd>): 점 두 개 → 가로·세로·평행 치수, 원·원호 → Ø·R, 선 두 개 → 각도. 선택(<kbd>V</kbd>)해서 끌어 옮기기, 두 번 눌러 글자 덧붙이기(±0.1, H7), <kbd>Delete</kbd> 지우기(자동 치수는 숨김) — 도면마다 저장, 실행 취소, 손가락·펜으로도
 - **구멍 지시와 위치 치수**: “4×M5 관통구멍 Ø5.5 관통”, “M5 탭 깊이 12”, 카운터보어·포켓 깊이, 왼쪽 아래 기준 좌표 치수
 - **볼트 원(PCD)**: 원 위에 같은 간격으로 놓인 구멍은 “6×M6 … PCD Ø60 등배치”와 볼트 원 중심선
 - **용지·척도**: A4/A3/A2, 5:1~1:50 (자동이면 1:1이 들어가는 가장 작은 용지)
 - **표제란**: 부품명, 척도, 재질, 수량, 3각법·mm, 일반 공차(KS B ISO 2768-m), 설계자, 날짜, 주기 — 왼쪽 ‘도면 설정’에서 고침
-- 내보내기: **인쇄/PDF**(용지 한 장에 실제 척도), **DXF**(AutoCAD — 실제 크기 1:1, 원호, 레이어, 한글 안 깨짐), **SVG**, **STL**(3D 프린팅), **STEP**(다른 CAD)
+- 내보내기: **인쇄/PDF**(용지 한 장에 실제 척도), **DXF**(AutoCAD — 실제 크기 1:1, 원호, 레이어, 한글 안 깨짐, **치수는 AutoCAD 진짜 치수(DIMENSION)** — AutoCAD에서 DWG로 저장해도 치수로 남음), **SVG**, **STL**(3D 프린팅), **STEP**(다른 CAD)
+
+![도면 치수: 자동 치수 + 치수 검사 + 직접 놓은 치수](docs/screenshot-dims.png)
 
 ![깊이·카운터보어·가로 탭](docs/screenshot-depth.png)
 
@@ -191,6 +196,7 @@ npm run preview  # 빌드 결과 실행 — 앱 설치·오프라인은 이걸�
 | Esc | 그리기 취소 → 선택 해제 | Enter / 더블클릭 | 다각형 닫기 |
 | 휠 / 핀치 | 확대 | 휠 클릭·스페이스+끌기·빈 곳 끌기 | 화면 이동 |
 | 1 / 2 / 3 | 2D 설계 / 3D 보기 / 도면 출력 | K | 거리 치수 구속 (구속 도구는 리본·명령 찾기) |
+| D / V (도면 출력) | 치수 놓기 / 선택(끌어 옮기기) | Delete (도면 출력) | 고른 치수 지우기 (자동 치수는 숨김) |
 
 단축키는 설정 ▸ 단축키에서 바꿀 수 있고, 바꾸면 메뉴·리본·명령 찾기의 표시도 따라 바뀝니다.
 
@@ -208,7 +214,10 @@ src/
     solver.ts        구속 해석기 (최소 노름 뉴턴 + LM, 계수·자유도·중복 찾기)
     constraints.ts   스케치 구속 (대상·종류 16가지 → 해석기 식, 자유도·정해진 도형, 정리)
     standards.ts     나사 구멍 규격표 (볼트 관통·탭·자리파기)
-    sheet.ts         투영 → 3면도 도면 (용지·척도, 구멍 지시, 중심선, 표제란, SVG, DXF)
+    sheet.ts         투영 → 3면도 도면 (용지·척도, 중심선, 표제란, SVG, DXF + 진짜 치수)
+    sheetDims.ts     도면 치수 모델 (가로·세로·평행·좌표·지름·반지름·각도·지시선) 그리기 + DXF 정의점
+    autoDims.ts      자동 치수 2.0 (형상 특징 → 좌표 치수·지시, 겹치지 않는 자리 찾기, 빠짐 검사)
+    features3d.ts    3D 형상 읽기 (평면·원통·원뿔·원환 → 높이·구멍·보스·R·모따기) — 워커, 자료형은 featureTypes.ts
     project.ts       저장 파일 검사·복구 (부품 하나)
     document.ts      문서 모델 (부품·도면·장면, 예전 프로젝트 변환, 부품·도면 추가·삭제, 요약·비교)
     b3d.ts           .b3d 파일(zip) 읽기·쓰기, 예전 .json 읽기, 전체 백업 zip
@@ -251,7 +260,7 @@ src/
     statusbar.ts · unitsUI.ts(mm/inch 단추·명령) · lazyViewer.ts · shell.ts · notify.ts · dom.ts
   panels/          docTree.ts(문서: 부품·도면) · tree.ts · params.ts · props.ts(+consPanel 구속 목록) · findings.ts (트리, 변수, 속성, 설계 검사·AI 검토)
   consActions.ts   구속 더하기(중복 거절)·지우기·값 바꾸기
-  workspaces/      작업 공간 모듈 — registry.ts(탭·숫자 키·붙이기/떼기), design.ts(+designRibbon), view3d.ts, sheet.ts, example.ts(새 모듈 본보기)
+  workspaces/      작업 공간 모듈 — registry.ts(탭·숫자 키·붙이기/떼기), design.ts(+designRibbon), view3d.ts, sheet.ts(+sheetEdit 치수 편집, sheetState), example.ts(새 모듈 본보기)
   aiKey.ts         AI 모델 이름·API 키 (가벼움 — AI SDK는 쓸 때만 내려받음)
   ai.ts            Claude AI 설계 검토
   worker.ts        CAD 연산 (백그라운드 스레드)
@@ -277,7 +286,8 @@ src/
 public/            앱 아이콘, manifest.webmanifest (설치 정보)
 vite.config.ts     빌드 설정 + 오프라인용 sw.js 만들기
 tests/             vitest 단위 시험
-e2e/               브라우저 시험 (run.cjs가 한 번에: core · app · library · document · import3d · legacy · constraints · units)
+e2e/               브라우저 시험 (run.cjs가 한 번에: core · app · library · document · import3d · legacy · constraints · units · dims)
+scripts/check_dxf.py  DXF 검사 (ezdxf로 읽기·검사, 치수 요약) — 단위 시험이 씀
 ```
 
 ## 개발 순서

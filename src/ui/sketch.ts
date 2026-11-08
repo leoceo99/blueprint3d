@@ -1186,13 +1186,17 @@ export class SketchPane {
 
   /** 선택한 도형의 크기·위치 치수 (원점 기준) */
   private drawDims(s: Shape2D) {
+    // 위치를 이미 거리 구속(치수)이 정하면 같은 값의 선택 치수는 그리지 않는다 (겹쳐 보이지 않게)
+    const cons = (store.project.constraints?.[this.view] ?? []).filter((c) => c.refs.some((r) => r.s === s.id));
+    const hasX = cons.some((c) => c.kind === "distanceX" || (c.kind === "fix" && c.refs.length === 1));
+    const hasY = cons.some((c) => c.kind === "distanceY" || (c.kind === "fix" && c.refs.length === 1));
     if (s.kind === "rect") {
       const r = normRect(s);
       this.dimLine(s, "w", [r.x, r.y + r.h], [r.x + r.w, r.y + r.h], "h", -22);
       this.dimLine(s, "h", [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], "v", 26);
       // 위치: 원점(가로 0, 세로 0)에서 왼쪽 아래 모서리까지
-      if (Math.abs(r.x) > 1e-6) this.dimLine(s, "x", [0, r.y], [r.x, r.y], "h", 22);
-      if (Math.abs(r.y) > 1e-6) this.dimLine(s, "y", [r.x, 0], [r.x, r.y], "v", -26);
+      if (Math.abs(r.x) > 1e-6 && !hasX) this.dimLine(s, "x", [0, r.y], [r.x, r.y], "h", 22);
+      if (Math.abs(r.y) > 1e-6 && !hasY) this.dimLine(s, "y", [r.x, 0], [r.x, r.y], "v", -26);
     } else if (s.kind === "circle") {
       const [x, y] = this.toScreen(s.cx, s.cy);
       const rr = s.r * ui.camera.scale;
@@ -1217,8 +1221,8 @@ export class SketchPane {
         c.fillText(text, x, by + 0.5);
         this.dimHits.push({ box: [x - tw / 2, by - 10, x + tw / 2, by + 10], shapeId: s.id, key: "d" });
       }
-      if (Math.abs(s.cx) > 1e-6) this.dimLine(s, "cx", [0, s.cy - s.r], [s.cx, s.cy - s.r], "h", 22);
-      if (Math.abs(s.cy) > 1e-6) this.dimLine(s, "cy", [s.cx - s.r, 0], [s.cx - s.r, s.cy], "v", -26);
+      if (Math.abs(s.cx) > 1e-6 && !hasX) this.dimLine(s, "cx", [0, s.cy - s.r], [s.cx, s.cy - s.r], "h", 22);
+      if (Math.abs(s.cy) > 1e-6 && !hasY) this.dimLine(s, "cy", [s.cx - s.r, 0], [s.cx - s.r, s.cy], "v", -26);
     } else if (s.kind === "slot") {
       // 폭은 숫자 칸으로, 위치는 첫 번째 중심 기준
       const [x, y] = this.toScreen(s.a[0], s.a[1]);
@@ -1239,8 +1243,8 @@ export class SketchPane {
       c.textBaseline = "middle";
       c.fillText(text, x, by + 0.5);
       this.dimHits.push({ box: [x - tw / 2, by - 10, x + tw / 2, by + 10], shapeId: s.id, key: "w" });
-      if (Math.abs(s.a[0]) > 1e-6) this.dimLine(s, "ax", [0, s.a[1] - s.w / 2], [s.a[0], s.a[1] - s.w / 2], "h", 22);
-      if (Math.abs(s.a[1]) > 1e-6) this.dimLine(s, "ay", [s.a[0] - s.w / 2, 0], [s.a[0] - s.w / 2, s.a[1]], "v", -26);
+      if (Math.abs(s.a[0]) > 1e-6 && !hasX) this.dimLine(s, "ax", [0, s.a[1] - s.w / 2], [s.a[0], s.a[1] - s.w / 2], "h", 22);
+      if (Math.abs(s.a[1]) > 1e-6 && !hasY) this.dimLine(s, "ay", [s.a[0] - s.w / 2, 0], [s.a[0] - s.w / 2, s.a[1]], "v", -26);
     }
   }
 

@@ -120,6 +120,13 @@ describe("명령 시스템", () => {
     expect(reg.isCustom("edit.undo")).toBe(true);
     expect(reg.conflicts("r").map((c) => c.id).sort()).toEqual(["tool.rect", "view.reset3d"]);
     expect(reg.conflicts("Ctrl+S", "file.save")).toEqual([]);
+    // 서로 다른 작업 공간에서만 쓰는 명령은 같은 키라도 겹침이 아님
+    reg.register([
+      { id: "a.v", title: "a", category: "x", keys: ["V"], scope: "design", run: () => {} },
+      { id: "b.v", title: "b", category: "x", keys: ["V"], scope: "sheet", run: () => {} },
+      { id: "c.v", title: "c", category: "x", keys: ["V"], run: () => {} },
+    ]);
+    expect(reg.conflicts("V", "a.v").map((c) => c.id).sort()).toEqual(["c.v"]);
   });
 
   it("찾기: 숨은 것 제외, 최근 쓴 것 먼저, 쓸 수 없는 것은 뒤로", () => {

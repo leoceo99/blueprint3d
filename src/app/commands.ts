@@ -28,6 +28,8 @@ export interface Command {
   global?: boolean;
   /** 명령 찾기 목록에서 숨김 */
   hidden?: boolean;
+  /** 이 명령이 속한 작업 공간 (작업 공간 모듈이 붙임) — 다른 작업 공간의 같은 단축키는 겹침이 아님 */
+  scope?: string;
 }
 
 export class CommandRegistry {
@@ -116,11 +118,12 @@ export class CommandRegistry {
     return hits.find((c) => this.enabled(c)) ?? hits[0];
   }
 
-  /** 같은 단축키를 쓰는 다른 명령들 */
+  /** 같은 단축키를 쓰는 다른 명령들 (서로 다른 작업 공간에서만 쓰는 명령은 동시에 쓰이지 않으므로 빼고) */
   conflicts(combo: string, exceptId?: string): Command[] {
     const n = normalizeCombo(combo);
     if (!n) return [];
-    return this.list().filter((c) => c.id !== exceptId && this.keysOf(c.id).includes(n));
+    const scope = exceptId ? this.cmds.get(exceptId)?.scope : undefined;
+    return this.list().filter((c) => c.id !== exceptId && this.keysOf(c.id).includes(n) && !(scope && c.scope && c.scope !== scope));
   }
 
   /** 명령 찾기: 빈 칸이면 최근 쓴 것 → 나머지. 지금 쓸 수 없는 것은 뒤로 */

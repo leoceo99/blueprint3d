@@ -32,7 +32,8 @@ export const currentWorkspace = () => current;
 
 export function registerWorkspace(ws: Workspace): () => void {
   list.set(ws.id, ws);
-  const cmds = (ws.commands ?? []).map((c) => (c.when ? c : { ...c, when: () => app.workspace === ws.id }));
+  // 조건(when)이 없는 명령은 이 작업 공간에서만 — 그 표시(scope)로 다른 작업 공간의 같은 단축키와 겹치지 않음
+  const cmds = (ws.commands ?? []).map((c) => (c.when ? c : { ...c, scope: c.scope ?? ws.id, when: () => app.workspace === ws.id }));
   offs.set(ws.id, commands.register(cmds));
   refresh();
   return () => unregisterWorkspace(ws.id);
