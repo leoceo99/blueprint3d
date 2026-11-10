@@ -14,7 +14,8 @@ import { $, el, esc, keyCell } from "../app/dom";
 import { addCopies, centerShape, partCenter, selectedShape, setHole, straightenSelected } from "../app/edit";
 import { toast } from "../app/notify";
 import { constraintRows, selectedConstraintProps } from "./consPanel";
-import { renderFeaturePanel } from "./featurePanel";
+/** 3D 설계의 피처 칸은 그 화면을 처음 열 때 내려받는다 (13.8) */
+let featurePanel: typeof import("./featurePanel") | null = null;
 
 export function initProps() {
   onPanels(renderProps);
@@ -89,7 +90,12 @@ function renderProps() {
   const s = selectedShape();
   const lastBuild = app.lastBuild;
   if (app.workspace === "3d") {
-    renderFeaturePanel(box);
+    if (featurePanel) featurePanel.renderFeaturePanel(box);
+    else
+      void import("./featurePanel").then((m) => {
+        featurePanel = m;
+        invalidatePanels();
+      });
     return;
   }
   if ((!s || !ui.sel) && ui.tool === "hole") {

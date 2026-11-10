@@ -356,6 +356,15 @@ export function cameraFor(view: ViewId): ProjectionCamera {
   return new ProjectionCamera([0, 0, 0], [1, 0, 0], [0, 1, 0]);
 }
 
+export function projectAll(shape: Shape3D): Record<ViewId, ProjectedView> {
+  const out = {} as Record<ViewId, ProjectedView>;
+  for (const v of VIEW_IDS) out[v] = project(shape, v);
+  return out;
+}
+
+const emptyProjections = (): Record<ViewId, ProjectedView> =>
+  Object.fromEntries(VIEW_IDS.map((v) => [v, { visible: [], hidden: [], bounds: null }])) as unknown as Record<ViewId, ProjectedView>;
+
 /** 스케치 평면(법선 n, 가로 x)에 비춘 모습 — 스케치의 (가로, 세로) 좌표 그대로 (13단계 스케치 밑그림) */
 export function projectOnPlane(shape: Shape3D, n: [number, number, number], x: [number, number, number]): ProjectedView {
   return project(shape, new ProjectionCamera([0, 0, 0], n, x));
@@ -460,15 +469,16 @@ export function buildAll(p: Project): { shape: Shape3D; result: BuildResult } {
 }
 
 /** 3D 형상 → 화면·도면에 필요한 것 (메쉬, 3면도 투영, 크기, 부피) */
-export function resultFor(shape: Shape3D, notes: string[]): BuildResult {
+export function resultFor(shape: Shape3D, notes: string[], opts: { proj?: boolean } = {}): BuildResult {
   const bbox = shape.boundingBox;
   if (!bbox || !(bbox.width + bbox.height + bbox.depth > 0)) throw new BuildError("결과 형상이 비어 있습니다. 뷰끼리 서로 겹치는지 확인하세요.");
   const size = Math.max(bbox.width, bbox.height, bbox.depth);
   const tol = Math.max(0.005, size / 2000);
   const m = shape.mesh({ tolerance: tol, angularTolerance: 0.2 });
   const e = shape.meshEdges({ tolerance: tol, angularTolerance: 0.2 });
-  const projections = {} as Record<ViewId, ProjectedView>;
-  for (const v of VIEW_IDS) projections[v] = project(shape, v);
+  // 3면도 투영(숨은선 계산)은 무거워서, 3D 설계 화면에서는 건너뛰고 필요할 때 projectAll로 (13.8)
+  const proj = opts.proj !== false;
+  const projections = proj ? projectAll(shape) : emptyProjections();
   // 부피·무게 중심: 형상 엔진으로 정확히 (13.7), 안 되면 메쉬로
   let volume = 0;
   let com: [number, number, number] | undefined;
@@ -515,6 +525,7 @@ export function resultFor(shape: Shape3D, notes: string[]): BuildResult {
   return {
     features,
     topo,
+    ...(proj ? {} : { noProj: true }),
     ...(com ? { com } : {}),
     mesh: {
       vertices: Array.from(m.vertices),

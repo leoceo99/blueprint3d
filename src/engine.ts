@@ -24,8 +24,8 @@ class Engine {
   }
 
   /** keep: false면 내보내기용 모델(지금 편집 중인 부품)은 그대로 두고 결과만 */
-  async build(project: Project, keep = true): Promise<BuildResult> {
-    const r = await this.call({ type: "build", project, keep } as any);
+  async build(project: Project, keep = true, proj = true): Promise<BuildResult> {
+    const r = await this.call({ type: "build", project, keep, proj } as any);
     if (!r.ok) throw Object.assign(new Error(r.error), r.featureLog ? { featureLog: r.featureLog } : {});
     if (r.type !== "build") throw new Error("unexpected");
     return r.result;
@@ -42,6 +42,13 @@ class Engine {
     if (!r.ok) throw new Error(r.error);
     if (r.type !== "build") throw new Error("unexpected");
     return r.result;
+  }
+
+  /** 지금 모델(마지막으로 keep한 것)의 3면도 투영 */
+  async projections(): Promise<BuildResult["projections"] | null> {
+    const r = await this.call({ type: "projections" } as any);
+    if (!r.ok || r.type !== "projections") return null;
+    return r.projections;
   }
 
   /** 지금 모델을 평면(법선 n, 가로 x)에 비춘 모습 — 모델이 없으면 null */

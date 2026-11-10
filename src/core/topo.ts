@@ -2,7 +2,7 @@
  * 형상의 면·모서리 지문 만들기와 참조 다시 찾기 (13단계, 워커에서).
  * 지문의 순서는 shape.faces / shape.edges 순서와 같다 (3D 화면의 고르기와 이어짐).
  */
-import { getOC, measureArea, type Edge, type Face, type Shape3D } from "replicad";
+import { getOC, measureArea, measureShapeSurfaceProperties, type Edge, type Face, type Shape3D } from "replicad";
 import { circle3 } from "./features3d";
 import type { EdgeSig, FaceSig, P3 } from "./featureModel";
 import { matchEdges, matchFaces, modelSize } from "./refMatch";
@@ -18,16 +18,25 @@ const FACE_T: Record<string, FaceSig["t"]> = { PLANE: "plane", CYLINDRE: "cylind
 
 export function faceSig(face: Face): FaceSig {
   const t = FACE_T[face.geomType] ?? "other";
-  const c = v3(face.center);
+  // 넓이와 무게 중심을 한 번에 (face.center와 measureArea를 따로 부르면 같은 적분을 두 번 함 — 13.8)
+  let c: P3;
   let a = 0;
   try {
-    a = r6(measureArea(face));
+    const sp = measureShapeSurfaceProperties(face);
+    a = r6(sp.area);
+    c = sp.centerOfMass.map(r6) as P3;
+    sp.delete?.();
   } catch {
-    a = 0;
+    c = v3(face.center);
+    try {
+      a = r6(measureArea(face));
+    } catch {
+      a = 0;
+    }
   }
   const sig: FaceSig = { t, c, a };
   try {
-    if (t === "plane") sig.n = unit(v3(face.normalAt(face.center)));
+    if (t === "plane") sig.n = unit(v3(face.normalAt(c)));
     else if (t === "cylinder") {
       const oc = getOC();
       const ad = new oc.BRepAdaptor_Surface(face.wrapped, false);

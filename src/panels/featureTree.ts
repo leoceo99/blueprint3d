@@ -156,10 +156,14 @@ function render() {
   $("#featCount").textContent = feats.length ? `${feats.length}` : "";
 }
 
+let started = false;
 export function initFeatureTree() {
+  if (started) return;
+  started = true;
   onPanels(() => {
     if (app.workspace === "3d") render();
   });
+  render();
 }
 
 export const renderFeatureTree = render;

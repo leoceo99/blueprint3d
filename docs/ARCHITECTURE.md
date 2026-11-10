@@ -2,7 +2,7 @@
 
 통합 3D 제작 도구로 커지기 위한 지금의 구조와 목표 구조. 계획은 [ROADMAP.md](ROADMAP.md).
 
-## 1. 지금 구조 (12단계까지)
+## 1. 지금 구조 (13단계까지)
 
 ```
 브라우저
@@ -18,8 +18,9 @@
 ├─ 설치형 앱 (src-tauri, Rust) 같은 웹 코드를 창에 띄우고, 파일 읽기·쓰기 · 연 파일 받기(한 번만 실행) · DWG 변환기 실행만 맡음
 │                             화면 쪽 연결은 app/native.ts (앱이 아니면 아무것도 안 함, Tauri 코드는 앱에서만 내려받음)
 ├─ 순수 로직 (core/*)          3면도→3D 규칙, 검사, 변수·식(단위 포함, expr·params·units), 구속(constraints) + 해석기(solver), 도면 만들기, 이미지 인식, STL·STEP
+│                             피처(featureModel: 스케치 평면·피처 자료·스케치 자리 / refMatch: 기하 지문 다시 찾기 / materials)
 └─ 백그라운드 스레드
-   ├─ worker.ts               OpenCascade(WASM): 3D 만들기, 투영, 내보내기, STEP 읽기
+   ├─ worker.ts               OpenCascade(WASM): 3D 만들기(3면도 + 피처 목록, 앞 피처 결과 기억), 투영(필요할 때), 면·모서리 지문, 내보내기, STEP 읽기
    └─ visionWorker.ts         도면 이미지 인식
 ```
 

@@ -10,7 +10,7 @@ import { store } from "../store";
 import { fmt } from "../ui/sketch";
 import { fmtVol, unitLabel } from "../core/units";
 import { ui } from "../ui/state";
-import { app, emit, requestRender } from "./context";
+import { app, emit, on, requestRender } from "./context";
 import { $ } from "./dom";
 
 let buildTimer = 0;
@@ -76,23 +76,15 @@ async function runBuild() {
   try {
     const res = source
       ? await engine.buildImported(structuredClone(source), () => getFile(source.key))
-      : await engine.build(structuredClone(projectToBuild()));
+      : // 3D 설계 화면에서는 3면도 투영을 건너뛴다 (필요해지면 ensureProjections) — 13.8
+        await engine.build(structuredClone(projectToBuild()), true, app.workspace !== "3d");
     if (seq !== buildSeq) return;
     builtKey = key;
     app.lastBuild = res;
     app.buildError = undefined;
     app.featureLog = res.featureLog ?? [];
     app.viewer.setMesh(res.mesh);
-    ui.result = Object.fromEntries(
-      VIEW_IDS.map((v) => [
-        v,
-        {
-          visible: res.projections[v].visible.map((d) => new Path2D(d)),
-          hidden: res.projections[v].hidden.map((d) => new Path2D(d)),
-          bounds: res.projections[v].bounds,
-        },
-      ]),
-    ) as typeof ui.result;
+    setUiResult(res);
     const [[x0, y0, z0], [x1, y1, z1]] = res.bbox;
     setBuildStatus(`✓ 3D ${fmt(x1 - x0)}×${fmt(y1 - y0)}×${fmt(z1 - z0)} ${unitLabel()}`, "ok");
     $("#info3d").textContent = `${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)} ${unitLabel()} · 부피 ${fmtVol(res.volume)}`;
@@ -114,6 +106,44 @@ async function runBuild() {
     }
   }
   finishBuild();
+}
+
+/** 2D 설계 밑그림용 3면도 투영 (Path2D로 미리) */
+function setUiResult(res: BuildResult) {
+  ui.result = res.noProj
+    ? null
+    : (Object.fromEntries(
+        VIEW_IDS.map((v) => [
+          v,
+          {
+            visible: res.projections[v].visible.map((d) => new Path2D(d)),
+            hidden: res.projections[v].hidden.map((d) => new Path2D(d)),
+            bounds: res.projections[v].bounds,
+          },
+        ]),
+      ) as typeof ui.result);
+}
+
+let projecting: Promise<void> | null = null;
+/** 투영 없이 만든 결과면 지금 모델의 투영을 받아 채운다 (2D 설계·도면으로 갈 때) */
+export function ensureProjections(): Promise<void> {
+  const res = app.lastBuild;
+  if (!res?.noProj) return Promise.resolve();
+  return (projecting ??= (async () => {
+    try {
+      const pr = await engine.projections();
+      if (pr && app.lastBuild === res) {
+        res.projections = pr;
+        delete res.noProj;
+        setUiResult(res);
+        app.buildStamp++;
+        emit("built");
+        requestRender();
+      }
+    } finally {
+      projecting = null;
+    }
+  })());
 }
 
 function finishBuild() {
@@ -142,11 +172,11 @@ const others = new Map<string, { key: string; result: Promise<BuildResult | null
  */
 export function buildPart(part: Part): Promise<BuildResult | null> {
   // 편집 중인 부품: 화면의 3D 결과를 그대로 (다시 만들어지면 "built" 이벤트로 도면도 다시)
-  if (part.id === store.project.id) return Promise.resolve(app.lastBuild);
+  if (part.id === store.project.id) return app.lastBuild?.noProj ? ensureProjections().then(() => app.lastBuild) : Promise.resolve(app.lastBuild);
   const key = geometryKey(part);
   const hit = others.get(part.id);
   if (hit && hit.key === key) return hit.result;
-  const hasAny = !!part.source || VIEW_IDS.some((v) => part.views[v].some((s) => !s.hole));
+  const hasAny = !!part.source || !!part.features?.length || VIEW_IDS.some((v) => part.views[v].some((s) => !s.hole));
   const src = part.source;
   const result: Promise<BuildResult | null> = !hasAny
     ? Promise.resolve(null)
@@ -154,3 +184,8 @@ export function buildPart(part: Part): Promise<BuildResult | null> {
   others.set(part.id, { key, result });
   return result;
 }
+
+// 3D 설계에서 다른 화면으로 가면 투영을 채운다
+on("workspace", (ws) => {
+  if (ws !== "3d") void ensureProjections();
+});

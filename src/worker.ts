@@ -2,15 +2,17 @@
 import opencascade from "replicad-opencascadejs";
 import wasmUrl from "replicad-opencascadejs/wasm?url";
 import { setOC, type Shape3D } from "replicad";
-import { BuildError, projectOnPlane } from "./core/build";
-import { buildAllPart, FeatureBuildError } from "./core/featureBuild";
+import { BuildError, projectAll, projectOnPlane } from "./core/build";
+import { buildAllPart, clearBuildCache, FeatureBuildError, newBuildCache, type BuildCache } from "./core/featureBuild";
 import { orientShape, readStep, readStl, stepResult, stlResult } from "./core/importModel";
 import { meshToSTL, rotateQuarter, type Mesh } from "./core/mesh";
 import type { ModelSource, Project } from "./core/types";
 
 export type WorkerRequest =
   /** keep: false면 결과만 돌려주고 내보내기용 모델은 그대로 둔다 (다른 부품의 도면 등) */
-  | { id: number; type: "build"; project: Project; keep?: boolean }
+  | { id: number; type: "build"; project: Project; keep?: boolean; proj?: boolean }
+  /** 지금 모델의 3면도 투영 (투영 없이 만든 뒤 2D 설계·도면에서 필요할 때 — 13.8) */
+  | { id: number; type: "projections" }
   /** 가져온 3D 파일로 결과 만들기. data는 이 워커가 그 key를 처음 볼 때만 보낸다 */
   | { id: number; type: "import"; source: ModelSource; data?: ArrayBuffer; keep?: boolean }
   | { id: number; type: "export"; format: "stl" | "step" }
@@ -21,12 +23,32 @@ export type WorkerResponse =
   | { id: number; ok: true; type: "build"; result: import("./core/types").BuildResult }
   | { id: number; ok: true; type: "export"; data: ArrayBuffer }
   | { id: number; ok: true; type: "projectPlane"; view: import("./core/types").ProjectedView | null }
+  | { id: number; ok: true; type: "projections"; projections: import("./core/types").BuildResult["projections"] | null }
   | { id: number; ok: false; error: string; userError: boolean; needData?: boolean; featureLog?: import("./core/featureModel").FeatureStatus[] };
 
 const ready = (async () => {
   const oc = await (opencascade as any)({ locateFile: () => wasmUrl });
   setOC(oc);
 })();
+
+/** 부품마다 앞 피처 결과 기억 (13.8) — 최근 4개 부품만 */
+const caches = new Map<string, BuildCache>();
+function cacheFor(id: string): BuildCache {
+  let c = caches.get(id);
+  if (c) {
+    caches.delete(id);
+    caches.set(id, c);
+    return c;
+  }
+  c = newBuildCache();
+  caches.set(id, c);
+  while (caches.size > 4) {
+    const [old, oc] = caches.entries().next().value as [string, BuildCache];
+    clearBuildCache(oc);
+    caches.delete(old);
+  }
+  return c;
+}
 
 /** 지금 화면에 있는 모델 (내보내기용) */
 let current: Shape3D | null = null;
@@ -39,7 +61,8 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
   try {
     await ready;
     if (msg.type === "build") {
-      const { shape, result } = buildAllPart(msg.project);
+      const pid = (msg.project as { id?: string }).id ?? "_";
+      const { shape, result } = buildAllPart(msg.project, { proj: msg.proj, cache: msg.project.features?.length ? cacheFor(pid) : undefined });
       if (msg.keep === false) shape?.delete?.();
       else setCurrent(shape, null);
       post({ id: msg.id, ok: true, type: "build", result });
@@ -65,6 +88,8 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         if (msg.keep !== false) setCurrent(null, mesh);
         post({ id: msg.id, ok: true, type: "build", result });
       }
+    } else if (msg.type === "projections") {
+      post({ id: msg.id, ok: true, type: "projections", projections: current ? projectAll(current) : null });
     } else if (msg.type === "projectPlane") {
       post({ id: msg.id, ok: true, type: "projectPlane", view: current ? projectOnPlane(current, msg.n, msg.x) : null });
     } else {

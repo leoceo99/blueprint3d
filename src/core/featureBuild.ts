@@ -287,9 +287,9 @@ function applyFeature(f: Feature, shape: Shape3D | null, ctx: Ctx, warn: string[
 }
 
 /** 부품 → 3D + 화면·도면에 필요한 것 (워커의 “build”) */
-export function buildAllPart(p: Project): { shape: Shape3D; result: import("./types").BuildResult } {
-  const { shape, notes, log } = buildPart(p);
-  const result = resultFor(shape!, notes);
+export function buildAllPart(p: Project, opts: { proj?: boolean; cache?: BuildCache } = {}): { shape: Shape3D; result: import("./types").BuildResult } {
+  const { shape, notes, log } = buildPart(p, opts.cache);
+  const result = resultFor(shape!, notes, opts);
   if (log.length) result.featureLog = log;
   return { shape: shape!, result };
 }
@@ -300,34 +300,135 @@ export interface PartBuild {
   log: FeatureStatus[];
 }
 
-/** 부품 계산: 3면도 몸체(있으면) + 피처. 피처가 없으면 지금까지와 똑같이 3면도만 */
-export function buildPart(p: Project): PartBuild {
+/**
+ * 앞 피처 결과 기억 (13.8): 피처를 하나 고치면 그 앞까지는 기억해 둔 몸체에서 이어 계산한다.
+ * 단계마다 열쇠 = (앞 단계 열쇠 + 이 피처의 내용) — 앞쪽이 하나라도 바뀌면 그 뒤는 모두 다시.
+ * 기억한 몸체는 이 기억만 갖고 있고, 돌려주는 몸체는 늘 복사본이라 밖에서 지워도 괜찮다.
+ */
+export interface BuildCache {
+  baseKey: string;
+  base: Shape3D | null;
+  baseNotes: string[];
+  steps: CacheStep[];
+}
+interface CacheStep {
+  key: string;
+  shape: Shape3D | null;
+  status: FeatureStatus;
+  frame?: PlaneFrame;
+  sketch?: SketchFeature;
+  tool?: { tool: Shape3D; op: BodyOp };
+  counted: boolean;
+}
+
+export const newBuildCache = (): BuildCache => ({ baseKey: "", base: null, baseNotes: [], steps: [] });
+
+/** 기억한 몸체를 모두 지움 (부품을 닫을 때) */
+export function clearBuildCache(c: BuildCache) {
+  c.base?.delete?.();
+  dropSteps(c, 0);
+  c.baseKey = "";
+  c.base = null;
+}
+
+function dropSteps(c: BuildCache, from: number) {
+  const seen = new Set<Shape3D>();
+  for (const st of c.steps.slice(from)) {
+    // 몸체가 그대로인 단계(스케치·꺼짐·오류)는 앞 단계와 같은 물체 — 한 번만 지움
+    if (st.shape && !seen.has(st.shape) && st.shape !== c.base && !c.steps.slice(0, from).some((x) => x.shape === st.shape)) {
+      seen.add(st.shape);
+      st.shape.delete?.();
+    }
+    st.tool?.tool.delete?.();
+  }
+  c.steps.length = Math.min(c.steps.length, from);
+}
+
+/** 짧은 문자열 열쇠 (FNV-1a 두 갈래 → 16자리) */
+function hashKey(s: string): string {
+  let a = 0x811c9dc5;
+  let b = 0x01000193 ^ s.length;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c, 0x5bd1e995) >>> 0;
+  }
+  return a.toString(16).padStart(8, "0") + b.toString(16).padStart(8, "0");
+}
+
+/** 부품 계산: 3면도 몸체(있으면) + 피처. 피처가 없으면 지금까지와 똑같이 3면도만. cache를 주면 앞 피처 결과를 다시 씀 */
+export function buildPart(p: Project, cache?: BuildCache): PartBuild {
   const feats = p.features ?? [];
   if (!feats.length) {
+    if (cache) clearBuildCache(cache);
     const r = buildSolid(p);
     return { shape: r.shape, notes: r.notes, log: [] };
   }
   const notes: string[] = [];
   let shape: Shape3D | null = null;
-  if (hasViewBody(p)) {
-    const r = buildSolid(p);
-    shape = r.shape;
-    notes.push(...r.notes);
+  const baseKey = hasViewBody(p) ? hashKey(JSON.stringify([p.views, p.mode, p.thickness])) : "-";
+  if (cache && cache.baseKey === baseKey) {
+    shape = cache.base;
+    notes.push(...cache.baseNotes);
+  } else {
+    if (cache) clearBuildCache(cache);
+    if (hasViewBody(p)) {
+      const r = buildSolid(p);
+      shape = r.shape;
+      notes.push(...r.notes);
+    }
+    if (cache) Object.assign(cache, { baseKey, base: shape, baseNotes: [...notes], steps: [] });
   }
   const ctx: Ctx = { frames: new Map(), tools: new Map(), sketches: new Map() };
   const limit = p.rollback ?? feats.length;
   const log: FeatureStatus[] = [];
   let ok = 0;
+  let key = baseKey;
+  let reusing = !!cache;
   feats.forEach((f, i) => {
     if (i >= limit) return void log.push({ id: f.id, state: "rolled" });
-    if (f.suppressed) return void log.push({ id: f.id, state: "off" });
-    const warn: string[] = [];
-    try {
-      shape = applyFeature(f, shape, ctx, warn);
-      log.push(warn.length ? { id: f.id, state: "warn", message: warn.join(" · ") } : { id: f.id, state: "ok" });
-      if (f.kind !== "sketch") ok++;
-    } catch (e) {
-      log.push({ id: f.id, state: "error", message: msg(e) });
+    key = hashKey(key + "|" + JSON.stringify(f));
+    const hit = reusing ? cache!.steps[i] : undefined;
+    if (hit && hit.key === key) {
+      // 기억한 단계: 몸체·평면·도구를 그대로
+      shape = hit.shape;
+      if (hit.frame) ctx.frames.set(f.id, hit.frame);
+      if (hit.sketch) ctx.sketches.set(f.id, hit.sketch);
+      if (hit.tool) ctx.tools.set(f.id, { tool: hit.tool.tool.clone(), op: hit.tool.op });
+      log.push(hit.status);
+      if (hit.counted) ok++;
+      return;
+    }
+    if (reusing && cache) {
+      dropSteps(cache, i);
+      reusing = false;
+    }
+    let status: FeatureStatus;
+    let counted = false;
+    if (f.suppressed) status = { id: f.id, state: "off" };
+    else {
+      const warn: string[] = [];
+      try {
+        shape = applyFeature(f, shape, ctx, warn);
+        status = warn.length ? { id: f.id, state: "warn", message: warn.join(" · ") } : { id: f.id, state: "ok" };
+        counted = f.kind !== "sketch";
+      } catch (e) {
+        status = { id: f.id, state: "error", message: msg(e) };
+      }
+    }
+    if (counted) ok++;
+    log.push(status);
+    if (cache) {
+      const t = ctx.tools.get(f.id);
+      cache.steps[i] = {
+        key,
+        shape,
+        status,
+        counted,
+        ...(ctx.frames.has(f.id) ? { frame: ctx.frames.get(f.id) } : {}),
+        ...(ctx.sketches.has(f.id) ? { sketch: structuredClone(ctx.sketches.get(f.id)!) } : {}),
+        ...(t ? { tool: { tool: t.tool.clone(), op: t.op } } : {}),
+      };
     }
   });
   for (const t of ctx.tools.values()) t.tool.delete?.();
@@ -337,5 +438,6 @@ export function buildPart(p: Project): PartBuild {
   }
   const errs = log.filter((x) => x.state === "error").length;
   notes.push(`피처 ${ok}개를 계산했어요${errs ? ` (오류 ${errs}개 — 피처 목록에서 확인)` : ""}.`);
-  return { shape, notes, log };
+  // 기억한 몸체는 기억만 갖고, 밖에는 복사본을
+  return { shape: cache ? (shape as Shape3D).clone() : shape, notes, log };
 }

@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import opencascade from "replicad-opencascadejs";
 import { setOC } from "replicad";
 import { buildAllPart, buildPart } from "../src/core/featureBuild";
+import { resultFor } from "../src/core/build";
 import { frameOf, normalizeFeatures, toPlane, toWorld, type Feature, type FaceSig } from "../src/core/featureModel";
 import { applyExpressions } from "../src/core/params";
 import { normalizeProject } from "../src/core/project";
@@ -227,5 +228,42 @@ describe("피처 계산", () => {
     expect(back.rollback).toBe(1);
     const bad = normalizeFeatures([{ id: "x", kind: "extrude" }, { id: "y", kind: "nope" }, null], () => null, () => undefined);
     expect(bad).toBeUndefined();
+  });
+});
+
+describe("앞 피처 결과 기억 (13.8)", () => {
+  it("뒤 피처만 바꾸면 기억한 앞 결과로 이어 계산 — 결과는 기억 없이 계산한 것과 같음", async () => {
+    const { buildPart, newBuildCache, clearBuildCache } = await import("../src/core/featureBuild");
+    const p = part([
+      sketchXY("s1", [rect(0, 0, 60, 40)]),
+      { id: "e1", name: "e", kind: "extrude", sketch: "s1", op: "add", extent: "dist", dist: 20 },
+      sketchXY("s2", [circle(15, 20, 3), circle(45, 20, 3)], 20),
+      { id: "c1", name: "c", kind: "extrude", sketch: "s2", op: "cut", extent: "through", dist: 10, flip: true },
+      { id: "p1", name: "p", kind: "pattern", mode: "linear", of: ["c1"], axis: "Y", count: 2, spacing: 10, angle: 360 },
+    ]);
+    const cache = newBuildCache();
+    const v = (q: Project, c?: any) => {
+      const r = buildPart(q, c);
+      const out = resultFor(r.shape!, []).volume;
+      r.shape!.delete();
+      return out;
+    };
+    const first = v(p, cache);
+    expect(cache.steps).toHaveLength(5);
+    const keys = cache.steps.map((s) => s.key);
+    // 패턴 간격만 바꿈 → 앞 4단계 열쇠 그대로, 마지막만 새로
+    (p.features![4] as any).spacing = 12;
+    const second = v(p, cache);
+    expect(cache.steps.slice(0, 4).map((s) => s.key)).toEqual(keys.slice(0, 4));
+    expect(cache.steps[4].key).not.toBe(keys[4]);
+    expect(second).toBeCloseTo(v(structuredClone(p)), 3);
+    expect(second).toBeCloseTo(first, 3);
+    // 앞쪽(바닥판 두께)을 바꾸면 그 뒤가 모두 새로
+    (p.features![1] as any).dist = 30;
+    const third = v(p, cache);
+    expect(cache.steps[1].key).not.toBe(keys[1]);
+    expect(third).toBeCloseTo(v(structuredClone(p)), 3);
+    clearBuildCache(cache);
+    expect(cache.steps).toHaveLength(0);
   });
 });

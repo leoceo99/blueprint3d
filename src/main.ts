@@ -8,7 +8,6 @@ import { VIEW_IDS } from "./core/types";
 import { sketchOf, slotShapes } from "./core/featureModel";
 import { initSketchMode, leaveSketch } from "./app/sketchMode";
 import { syncEditState } from "./app/featureEdit";
-import { initFeatureTree } from "./panels/featureTree";
 import { initPick3d } from "./app/pick3d";
 import { store } from "./store";
 import { DraftBoard } from "./ui/board";
@@ -80,8 +79,11 @@ syncExample();
 initDesign();
 initView3d();
 initSketchMode();
-initFeatureTree();
 initPick3d();
+// 피처 목록은 3D 설계를 처음 열 때 내려받는다 (13.8)
+on("workspace", (ws) => {
+  if (ws === "3d") void import("./panels/featureTree").then((m) => m.initFeatureTree());
+});
 initSheet();
 initDocTree();
 initTree();
