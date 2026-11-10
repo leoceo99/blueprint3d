@@ -681,3 +681,11 @@ body.ws-3d .tree-head, body.ws-3d #tree { display: none; }
 body.sketch-mode .board-tools { display: none; }
 body.sketch-mode .ribbon .g-3d { display: none; }
 .tree-item.cons .name { color: var(--text-muted); font-style: italic; }
+.feat-rollback { display: flex; align-items: center; gap: 6px; margin: 2px 8px; padding: 1px 6px; border-top: 2px solid var(--accent); color: var(--accent); font-size: 11px; font-weight: 700; cursor: grab; user-select: none; }
+.feat-rollback span { flex: 1; }
+.feat-rollback.at-end { border-top-style: dashed; opacity: 0.6; }
+.feat-rollback.at-end button { display: none; }
+.feat-rollback button { padding: 0 4px; min-height: 18px; font-size: 11px; }
+.feat-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.feat-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+.props-body .sec-head { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }

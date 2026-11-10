@@ -6,14 +6,60 @@ import { BASE_PLANE_LABEL, FEATURE_ICON, FEATURE_LABEL, hasViewBody, type BasePl
 import { store } from "../store";
 import { app, onPanels } from "../app/context";
 import { $, el, esc } from "../app/dom";
-import { createSketch, deleteFeature, editFeature, fedit, renameFeature, toggleSuppress } from "../app/featureEdit";
+import { createSketch, deleteFeature, editFeature, fedit, moveFeature, renameFeature, setRollback, toggleSuppress } from "../app/featureEdit";
 import { showWorkspace } from "../workspaces/registry";
 
 const STATE_TITLE = { ok: "", warn: "주의", error: "오류", off: "꺼짐", rolled: "되감기 아래 (계산 안 함)" };
 
 let renaming: string | null = null;
 
-function row(f: Feature): HTMLElement {
+/** 끌어서 놓기: 피처 → 그 자리로 옮기기, 되감기 막대 → 그 자리까지 계산 */
+const DRAG_FEAT = "application/x-b3d-feature";
+const DRAG_BAR = "application/x-b3d-rollback";
+let dragKind: "feat" | "bar" | null = null;
+
+/** 놓는 자리: 이 줄의 위쪽 절반이면 이 줄 앞, 아래쪽이면 뒤 */
+function dropIndex(e: DragEvent, rowEl: HTMLElement, index: number): number {
+  const r = rowEl.getBoundingClientRect();
+  return e.clientY < r.top + r.height / 2 ? index : index + 1;
+}
+
+function clearMarks() {
+  for (const x of document.querySelectorAll(".feat-row.drop-before, .feat-row.drop-after")) x.classList.remove("drop-before", "drop-after");
+}
+
+function wireDrop(target: HTMLElement, index: number) {
+  target.addEventListener("dragover", (e) => {
+    if (!dragKind) return;
+    e.preventDefault();
+    clearMarks();
+    target.classList.add(dropIndex(e, target, index) === index ? "drop-before" : "drop-after");
+  });
+  target.addEventListener("dragleave", () => target.classList.remove("drop-before", "drop-after"));
+  target.addEventListener("drop", (e) => {
+    e.preventDefault();
+    clearMarks();
+    const at = dropIndex(e, target, index);
+    const id = e.dataTransfer?.getData(DRAG_FEAT);
+    if (dragKind === "bar" || e.dataTransfer?.getData(DRAG_BAR)) setRollback(at);
+    else if (id) moveFeature(id, at);
+    dragKind = null;
+  });
+}
+
+function rollbackBar(): HTMLElement {
+  const bar = el("div", { innerHTML: "<span>◀ 여기까지 계산</span><button class='ghost tiny' title='끝까지 계산'>끝까지 ▼</button>", title: "끌어서 옮기면 그 위의 피처까지만 계산해요 (아래 피처는 잠시 꺼짐). 새 피처는 이 자리에 들어가요" }, "feat-rollback");
+  bar.draggable = true;
+  bar.addEventListener("dragstart", (e) => {
+    dragKind = "bar";
+    e.dataTransfer?.setData(DRAG_BAR, "1");
+  });
+  bar.addEventListener("dragend", () => ((dragKind = null), clearMarks()));
+  (bar.querySelector("button") as HTMLButtonElement).onclick = () => setRollback(Infinity);
+  return bar;
+}
+
+function row(f: Feature, index: number): HTMLElement {
   const st = app.featureLog.find((x) => x.id === f.id);
   const state = f.suppressed ? "off" : (st?.state ?? "ok");
   const r = el("div", {}, `feat-row ${state}` + (fedit.sel === f.id ? " sel" : "") + (fedit.id === f.id ? " editing" : ""));
@@ -50,6 +96,9 @@ function row(f: Feature): HTMLElement {
     acts.append(b);
   };
   btn(f.suppressed ? "◌" : "◉", f.suppressed ? "켜기" : "끄기 (계산에서 빼기)", () => toggleSuppress(f.id));
+  btn("▲", "위로", () => moveFeature(f.id, index - 1));
+  btn("▼", "아래로", () => moveFeature(f.id, index + 2));
+  btn("⤓", "여기까지만 계산 (되감기)", () => setRollback(index + 1));
   btn("✎", "이름 바꾸기", () => {
     renaming = f.id;
     render();
@@ -61,6 +110,13 @@ function row(f: Feature): HTMLElement {
     render();
   };
   r.ondblclick = () => editFeature(f.id);
+  r.draggable = renaming !== f.id;
+  r.addEventListener("dragstart", (e) => {
+    dragKind = "feat";
+    e.dataTransfer?.setData(DRAG_FEAT, f.id);
+  });
+  r.addEventListener("dragend", () => ((dragKind = null), clearMarks()));
+  wireDrop(r, index);
   return r;
 }
 
@@ -85,7 +141,17 @@ function render() {
     box.append(r);
   }
   const feats = p.features ?? [];
-  for (const f of feats) box.append(row(f));
+  const bar = p.rollback ?? feats.length;
+  feats.forEach((f, i) => {
+    if (i === bar) box.append(rollbackBar());
+    box.append(row(f, i));
+  });
+  if (feats.length && bar >= feats.length) {
+    // 끝에 있는 막대: 위로 끌어 되감기
+    const end = rollbackBar();
+    end.classList.add("at-end");
+    box.append(end);
+  }
   if (!feats.length && !hasViewBody(p)) box.append(el("div", { innerHTML: "아직 피처가 없어요. 위의 평면을 누르거나 <b>✎ 스케치</b>로 시작하세요." }, "tree-empty"));
   $("#featCount").textContent = feats.length ? `${feats.length}` : "";
 }

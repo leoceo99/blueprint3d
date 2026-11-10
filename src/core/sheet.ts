@@ -8,6 +8,7 @@
  *
  * 좌표: 용지 mm, 왼쪽 아래가 원점, 위가 +y. SVG로 바꿀 때만 y를 뒤집는다.
  */
+import { materialSheet } from "./materials";
 import { isDegenerate } from "./geometry2d";
 import { autoDims, checkNeeds } from "./autoDims";
 import { renderDim, type DimDraw, type Layer, type Prim, type Pt, type SheetDim, type SheetText } from "./sheetDims";
@@ -482,7 +483,7 @@ function frame(prims: Prim[], texts: SheetText[], W: number, H: number, p: Proje
   const today = new Date().toISOString().slice(0, 10);
   cell(x0, x0 + 130, 2, "부품명", p.name, true);
   cell(x0 + 130, x1, 2, "척도 · 용지", `${scale} · ${paper}`);
-  cell(cols[0], cols[1], 1, "재질", info.material ?? "");
+  cell(cols[0], cols[1], 1, "재질", info.material || materialSheet(p));
   cell(cols[1], cols[2], 1, "수량", info.qty ?? "1");
   cell(cols[2], cols[3], 1, "투상법 · 단위", `3각법 · ${U === "inch" ? "inch" : "mm"}`);
   cell(cols[0], cols[1], 0, "일반 공차", info.tolerance ?? "KS B ISO 2768-m");

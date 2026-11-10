@@ -7,6 +7,7 @@ import { evalExpr, plainNumber } from "../core/expr";
 import {
   FEATURE_LABEL,
   FEATURE_VALUES,
+  featureDeps,
   nextFeatureName,
   setFeatureValue,
   sketchOf,
@@ -269,6 +270,52 @@ export function toggleSuppress(id: string) {
     if (g.suppressed) delete g.suppressed;
     else g.suppressed = true;
   }, f.suppressed ? `${f.name} 켜기` : `${f.name} 끄기`);
+}
+
+/**
+ * 피처를 to번째 자리로 (to는 옮기기 전 목록 기준으로 “이 번호 앞에”). 쓰는 스케치보다 위로,
+ * 이 피처를 쓰는 피처보다 아래로는 못 간다. 옮겼으면 true
+ */
+export function moveFeature(id: string, to: number): boolean {
+  const list = store.project.features ?? [];
+  const from = list.findIndex((x) => x.id === id);
+  if (from < 0) return false;
+  const dest = to > from ? to - 1 : to;
+  if (dest === from) return false;
+  const f = list[from];
+  const order = list.filter((x) => x.id !== id);
+  order.splice(dest, 0, f);
+  const pos = new Map(order.map((x, i) => [x.id, i]));
+  const dep = featureDeps(f).find((d) => (pos.get(d) ?? -1) > dest);
+  if (dep) {
+    toast(`‘${list.find((x) => x.id === dep)?.name}’보다 위로는 못 옮겨요 (그것을 써요)`);
+    return false;
+  }
+  const user = order.find((x) => featureDeps(x).includes(id) && pos.get(x.id)! < dest);
+  if (user) {
+    toast(`‘${user.name}’보다 아래로는 못 옮겨요 (이 피처를 써요)`);
+    return false;
+  }
+  finishEdit();
+  store.update((q) => {
+    const l = q.features ?? [];
+    const i = l.findIndex((x) => x.id === id);
+    const [g] = l.splice(i, 1);
+    l.splice(dest, 0, g);
+  }, `${f.name} 옮기기`);
+  return true;
+}
+
+/** 되감기 막대: 앞에서부터 n개만 계산 (끝이면 막대 없음) */
+export function setRollback(n: number) {
+  const len = store.project.features?.length ?? 0;
+  const next = n >= len ? undefined : Math.max(0, n);
+  if (next === store.project.rollback) return;
+  finishEdit();
+  store.update((q) => {
+    if (next === undefined) delete q.rollback;
+    else q.rollback = next;
+  }, next === undefined ? "끝까지 계산" : `되감기: ${next}개까지`);
 }
 
 export function renameFeature(id: string, name: string) {

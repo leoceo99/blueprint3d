@@ -19,6 +19,7 @@ import {
 import { HEAD_LABEL, PURPOSE_LABEL, specDiameter, THREADS, withTableHead } from "../core/standards";
 import type { HoleSpec } from "../core/types";
 import { fmtNum, fmtVol, unitLabel } from "../core/units";
+import { densityOf, fmtMass, massOf, MATERIALS } from "../core/materials";
 import { store } from "../store";
 import { fmt } from "../ui/sketch";
 import { app, emit } from "../app/context";
@@ -242,8 +243,9 @@ function featureFields(f: Feature): HTMLElement[] {
       );
       if (f.profile.kind === "circle") {
         const pr = f.profile;
-        const num = (label: string, v: number | undefined, onSet: (n: number | undefined) => void) => {
+        const num = (key: string, label: string, v: number | undefined, onSet: (n: number | undefined) => void) => {
           const i = el("input", { type: "text", value: v === undefined ? "" : fmt(v), placeholder: "없음" });
+          i.dataset.key = key;
           i.onchange = () => {
             const n = parseFloat(i.value);
             onSet(Number.isFinite(n) && n > 0 ? n : undefined);
@@ -252,8 +254,8 @@ function featureFields(f: Feature): HTMLElement[] {
           w.append(i, unitTag("len"));
           return [keyCell(label), w];
         };
-        out.push(...num("바깥 지름", pr.d, (n) => n && set((g) => (g.profile.d = n))));
-        out.push(...num("속 지름 (관)", pr.inner, (n) => set((g) => (n && n < g.profile.d ? (g.profile.inner = n) : delete g.profile.inner))));
+        out.push(...num("pd", "바깥 지름", pr.d, (n) => n && set((g) => (g.profile.d = n))));
+        out.push(...num("pinner", "속 지름 (관)", pr.inner, (n) => set((g) => (n && n < g.profile.d ? (g.profile.inner = n) : delete g.profile.inner))));
       } else {
         out.push(keyCell("단면 스케치"), sketchSelect(f, f.profile.sketch, (id) => set((g) => (g.profile.sketch = id))));
         out.push(el("div", { textContent: "단면 스케치의 원점이 경로 시작점에 놓여요" }, "hint full"));
@@ -310,6 +312,42 @@ function partInfo(box: HTMLElement) {
     ? "피처를 <b>두 번 누르면</b> 고칠 수 있어요. 위 단추로 피처를 더하세요."
     : "<b>시작하기</b>: ① <kbd>스케치</kbd> → 평면 고르기 → 도형 그리기 → ✓ 스케치 끝내기 ② <kbd>돌출</kbd>로 두께 주기<br/>3면도로 그리고 싶으면 <kbd>1</kbd> 2D 설계.";
   box.innerHTML = `<div class="props-empty">${info}<br/><br/>${start}<br/><br/>마우스 왼쪽 끌기: 돌리기 · 오른쪽 끌기: 이동 · 휠: 확대</div>`;
+  box.append(...materialRows());
+}
+
+/** 재질 → 무게·무게 중심 (13.7) */
+function materialRows(): HTMLElement[] {
+  const p = store.project;
+  const out: HTMLElement[] = [el("div", { innerHTML: "<b>재질 · 무게</b>" }, "full sec-head")];
+  const opts: [string, string][] = [["", "고르기…"], ...Object.entries(MATERIALS).map(([k, m]) => [k, `${m.label} (${m.density})`] as [string, string]), ["custom", "직접 (밀도 입력)"]];
+  const sel = select(opts, p.material ?? "", (v) =>
+    store.update((q) => {
+      if (v) q.material = v;
+      else delete q.material;
+      if (v === "custom") q.density ??= 1;
+      else delete q.density;
+    }, "재질"),
+  );
+  sel.id = "matSel";
+  out.push(keyCell("재질"), sel);
+  if (p.material === "custom") {
+    const d = el("input", { type: "text", value: String(p.density ?? 1), title: "밀도 g/cm³" });
+    d.id = "matDensity";
+    d.onchange = () => {
+      const n = parseFloat(d.value);
+      if (n > 0) store.update((q) => (q.density = n), "밀도");
+    };
+    const w = el("span", {}, "unit");
+    w.append(d, el("span", { textContent: "g/cm³" }, "ulabel"));
+    out.push(keyCell("밀도"), w);
+  }
+  const b = app.lastBuild;
+  const rho = densityOf(p);
+  if (b && rho) {
+    out.push(keyCell("무게"), el("span", { textContent: fmtMass(massOf(b.volume, rho)), id: "massOut" }, "stat"));
+  }
+  if (b?.com) out.push(keyCell("무게 중심"), el("span", { textContent: `(${b.com.map((x) => fmt(x)).join(", ")}) ${unitLabel()}`, id: "comOut" }, "stat"));
+  return out;
 }
 
 /** 3D 설계의 오른쪽 패널 */

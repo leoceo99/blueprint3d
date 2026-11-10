@@ -13,6 +13,7 @@ import {
   drawProjection,
   makeCompound,
   makeProjectedEdges,
+  measureShapeVolumeProperties,
   Plane,
   ProjectionCamera,
   type Drawing,
@@ -468,11 +469,20 @@ export function resultFor(shape: Shape3D, notes: string[]): BuildResult {
   const e = shape.meshEdges({ tolerance: tol, angularTolerance: 0.2 });
   const projections = {} as Record<ViewId, ProjectedView>;
   for (const v of VIEW_IDS) projections[v] = project(shape, v);
+  // 부피·무게 중심: 형상 엔진으로 정확히 (13.7), 안 되면 메쉬로
   let volume = 0;
+  let com: [number, number, number] | undefined;
   try {
-    volume = measureVolume(shape);
+    const vp = measureShapeVolumeProperties(shape);
+    volume = Math.abs(vp.volume);
+    com = vp.centerOfMass.map((x) => Math.round(x * 1e6) / 1e6 + 0) as [number, number, number];
+    vp.delete?.();
   } catch {
-    volume = 0;
+    try {
+      volume = measureVolume(shape);
+    } catch {
+      volume = 0;
+    }
   }
   let features: BuildResult["features"];
   try {
@@ -505,6 +515,7 @@ export function resultFor(shape: Shape3D, notes: string[]): BuildResult {
   return {
     features,
     topo,
+    ...(com ? { com } : {}),
     mesh: {
       vertices: Array.from(m.vertices),
       normals: Array.from(m.normals),

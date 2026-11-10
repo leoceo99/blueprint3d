@@ -232,6 +232,10 @@ export interface Project {
   features?: import("./featureModel").Feature[];
   /** 되감기: 앞에서부터 이 개수의 피처만 계산 (없으면 전부) */
   rollback?: number;
+  /** 재질 (13.7): MATERIALS의 키, 또는 "custom"이면 density */
+  material?: string;
+  /** 밀도 g/cm³ (재질이 custom일 때) */
+  density?: number;
 }
 
 export function emptyProject(): Project {
@@ -298,6 +302,8 @@ export interface BuildResult {
   holes?: Record<ViewId, Shape2D[]>;
   /** 형상 특징 (높이·필렛·모따기·보스·원뿔) — 도면 자동 치수에 쓴다 (11단계) */
   features?: import("./featureTypes").Features3D;
+  /** 무게 중심 (mm, 13.7) */
+  com?: [number, number, number];
   /** 피처마다 계산 결과 (13단계) */
   featureLog?: import("./featureModel").FeatureStatus[];
   /** 면·모서리 지문 (3D 화면에서 고르기 — mesh.faceGroups·edgeGroups의 순서와 같음, 13단계) */

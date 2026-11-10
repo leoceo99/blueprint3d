@@ -6,6 +6,7 @@ import { VIEW_IDS, type Constraint, type ConsKind, type Corner, type Param, type
 
 import { pruneConstraints } from "./constraints";
 import { normalizeFeatures } from "./featureModel";
+import { normalizeMaterial } from "./materials";
 
 const KINDS: ConsKind[] = ["coincident", "horizontal", "vertical", "parallel", "perpendicular", "equal", "concentric", "tangent", "symmetric", "onLine", "midpoint", "fix", "distance", "distanceX", "distanceY", "angle"];
 
@@ -140,6 +141,7 @@ export function normalizeProject(raw: unknown): Project | null {
   else delete out.constraints;
   if (raw.units === "inch") out.units = "inch";
   else delete out.units;
+  normalizeMaterial(out);
   const feats = normalizeFeatures(raw.features, normalizeShape, normalizeConsList);
   if (feats) out.features = feats;
   else delete out.features;
