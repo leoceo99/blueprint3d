@@ -8,12 +8,18 @@
 import type { DimEdits, Sheet } from "../core/sheet";
 import { fragmentSVG } from "../core/sheet";
 import { renderDim, type DimDraw, type Pt, type SheetDim } from "../core/sheetDims";
-import type { ViewId } from "../core/types";
-import { VIEW_IDS } from "../core/types";
+import type { ViewId as StdView } from "../core/types";
+/** 뷰: 기본 3면도 또는 도면 추가 뷰 id */
+type ViewId = string;
 import { fmtLen } from "../core/units";
 import { panBy } from "./sheetZoom";
 
 import { sheetEdit, type EditorHost } from "./sheetState";
+import { nextLabel, type DrawingView } from "../core/sheetViews";
+
+const isStdView = (v: string) => v === "front" || v === "top" || v === "side";
+let viewSeq = 0;
+const newViewId = () => `v${Date.now().toString(36).slice(-5)}${(viewSeq++).toString(36)}`;
 
 interface Target {
   pts: { p: Pt; kind: "end" | "mid" | "center" }[];
@@ -34,13 +40,15 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   overlay.setAttribute("class", "dim-overlay");
   overlay.setAttribute("font-family", "'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',system-ui,sans-serif");
   svg.appendChild(overlay);
-  svg.classList.toggle("tool-dim", sheetEdit.tool === "dim");
+  svg.classList.toggle("tool-dim", sheetEdit.tool !== "select");
   const tg = targets(sh);
   const manual = new Set((edits.dims ?? []).map((d) => d.id));
 
   // ---- 좌표 ----
-  const toPaper = (v: ViewId, q: Pt): Pt => [sh.views[v].o[0] + q[0] * s, sh.views[v].o[1] + q[1] * s];
-  const toView = (v: ViewId, P: Pt): Pt => [(P[0] - sh.views[v].o[0]) / s, (P[1] - sh.views[v].o[1]) / s];
+  /** 그 뷰의 척도 (상세도는 도면 척도의 k배) */
+  const sv = (v: ViewId) => sh.views[v]?.s ?? s;
+  const toPaper = (v: ViewId, q: Pt): Pt => [sh.views[v].o[0] + q[0] * sv(v), sh.views[v].o[1] + q[1] * sv(v)];
+  const toView = (v: ViewId, P: Pt): Pt => [(P[0] - sh.views[v].o[0]) / sv(v), (P[1] - sh.views[v].o[1]) / sv(v)];
   const paperOf = (e: PointerEvent | MouseEvent): Pt => {
     const m = svg.getScreenCTM();
     if (!m) return [0, 0];
@@ -56,7 +64,7 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
     return px / (m?.a || 1);
   };
   const viewAt = (P: Pt): ViewId | null => {
-    for (const v of VIEW_IDS) {
+    for (const v of Object.keys(sh.views)) {
       const b = sh.views[v].box;
       if (P[0] >= b[0] - 4 && P[0] <= b[2] + 4 && P[1] >= b[1] - 4 && P[1] <= b[3] + 4) return v;
     }
@@ -74,8 +82,15 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   /** 빈 곳 끌기 = 화면 이동 (확대했을 때, 손가락) */
   let pan: { x: number; y: number; pointer: number } | null = null;
   let preview: SheetDim | null = null;
+  /** 단면·보조·상세 도구: 첫 점 (뷰 좌표) */
+  let vpick: { v: ViewId; q: Pt } | null = null;
+  let vhover: Pt | null = null;
+  /** 추가 뷰 옮기기 */
+  let vdrag: { id: string; start: Pt; now: Pt; pointer: number } | null = null;
 
   const reset = () => {
+    vpick = null;
+    vhover = null;
     picks = [];
     circle = null;
     lines = [];
@@ -90,7 +105,7 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
     for (const p of picks) html += mark(toPaper(p.v, p.q), 0.8);
     if (circle) {
       const C = toPaper(circle.v, circle.c);
-      html += `<circle cx="${C[0]}" cy="${H - C[1]}" r="${circle.r * s}" fill="none" stroke="var(--accent, #2563eb)" stroke-width="0.4"/>`;
+      html += `<circle cx="${C[0]}" cy="${H - C[1]}" r="${circle.r * sv(circle.v)}" fill="none" stroke="var(--accent, #2563eb)" stroke-width="0.4"/>`;
     }
     for (const l of lines) {
       const A = toPaper(l.v, l.a);
@@ -98,6 +113,21 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
       html += `<path d="M${A[0]} ${H - A[1]}L${B[0]} ${H - B[1]}" stroke="var(--accent, #2563eb)" stroke-width="0.5"/>`;
     }
     if (hoverSnap) html += mark(hoverSnap);
+    // 단면·보조: 절단선 미리 보기, 상세: 원 미리 보기
+    if (vpick && vhover) {
+      const A = toPaper(vpick.v, vpick.q);
+      const accent = "var(--accent, #2563eb)";
+      if (sheetEdit.tool === "detail") html += `<circle cx="${A[0]}" cy="${H - A[1]}" r="${Math.hypot(vhover[0] - A[0], vhover[1] - A[1])}" fill="none" stroke="${accent}" stroke-width="0.4" stroke-dasharray="1.5 1"/>`;
+      else html += `<path d="M${A[0]} ${H - A[1]}L${vhover[0]} ${H - vhover[1]}" stroke="${accent}" stroke-width="0.5" stroke-dasharray="4 1 1 1"/>`;
+    }
+    // 고른 추가 뷰 (옮기는 중이면 옮긴 자리)
+    const selV = sheetEdit.selectedView && sh.views[sheetEdit.selectedView];
+    if (selV) {
+      const dx = vdrag ? vdrag.now[0] - vdrag.start[0] : 0;
+      const dy = vdrag ? vdrag.now[1] - vdrag.start[1] : 0;
+      const b = selV.box;
+      html += `<rect x="${b[0] - 2 + dx}" y="${H - b[3] - 2 - dy}" width="${b[2] - b[0] + 4}" height="${b[3] - b[1] + 4}" fill="none" stroke="var(--accent, #2563eb)" stroke-width="0.4" stroke-dasharray="2 1"/>`;
+    }
     overlay.innerHTML = html;
     for (const g of svg.querySelectorAll("g.dim.sel")) g.classList.remove("sel");
     if (sheetEdit.selected) group(sheetEdit.selected)?.classList.add("sel");
@@ -171,7 +201,7 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
     if (circle) {
       const C = toPaper(circle.v, circle.c);
       const ang = (Math.atan2(P[1] - C[1], P[0] - C[0]) * 180) / Math.PI;
-      return { id, view: circle.v, kind: circle.full ? "diameter" : "radius", c: circle.c, r: circle.r, ang, len: Math.max(2, Math.hypot(P[0] - C[0], P[1] - C[1]) - circle.r * s) };
+      return { id, view: circle.v, kind: circle.full ? "diameter" : "radius", c: circle.c, r: circle.r, ang, len: Math.max(2, Math.hypot(P[0] - C[0], P[1] - C[1]) - circle.r * sv(circle.v)) };
     }
     if (picks.length < 2) return null;
     const [p1, p2] = picks;
@@ -210,7 +240,7 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
     if (def.kind === "ordinate") return def.axis === "u" ? { line: def.line + dy, jog: (def.jog ?? 0) + dx } : { line: def.line + dx, jog: (def.jog ?? 0) + dy };
     if (def.kind === "radius" || def.kind === "diameter") {
       const C = toPaper(def.view, def.c);
-      return { ang: (Math.atan2(P1[1] - C[1], P1[0] - C[0]) * 180) / Math.PI, len: Math.max(2, Math.hypot(P1[0] - C[0], P1[1] - C[1]) - def.r * s) };
+      return { ang: (Math.atan2(P1[1] - C[1], P1[0] - C[0]) * 180) / Math.PI, len: Math.max(2, Math.hypot(P1[0] - C[0], P1[1] - C[1]) - def.r * sv(def.view)) };
     }
     if (def.kind === "angle") {
       const O = toPaper(def.view, def.o);
@@ -228,10 +258,61 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   };
 
   // ---- 입력 ----
+  /** 추가 뷰 (기본 3면도가 아닌 것) 중 그 점이 안에 있는 것 */
+  const extraAt = (P: Pt): string | null => {
+    for (const [id, v] of Object.entries(sh.views)) {
+      if (isStdView(id)) continue;
+      const b = v.box;
+      if (P[0] >= b[0] - 2 && P[0] <= b[2] + 2 && P[1] >= b[1] - 2 && P[1] <= b[3] + 2) return id;
+    }
+    return null;
+  };
+  /** 절단선 두 번째 점: Shift 또는 5° 안쪽이면 수평·수직으로 */
+  const lockLine = (a: Pt, b: Pt, shift: boolean): Pt => {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const ang = Math.abs((Math.atan2(dy, dx) * 180) / Math.PI) % 90;
+    if (shift || ang < 5 || ang > 85) return Math.abs(dx) >= Math.abs(dy) ? [b[0], a[1]] : [a[0], b[1]];
+    return b;
+  };
+
   const onDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
     const P = paperOf(e);
     const tol = tolOf(e);
+    if (sheetEdit.tool === "section" || sheetEdit.tool === "aux" || sheetEdit.tool === "detail") {
+      e.preventDefault();
+      const snap = nearestPt(P, tol) ?? P;
+      const v = viewAt(snap);
+      if (!vpick) {
+        if (!v) return host.toast("뷰 안을 누르세요.");
+        if (sheetEdit.tool !== "detail" && !isStdView(v)) return host.toast("단면·보조 투상은 정면도·평면도·우측면도 위에 그려요.");
+        if (sheetEdit.tool === "detail" && sh.views[v] && (host.views().find((x) => x.id === v)?.kind ?? "section") !== "section") return host.toast("상세도는 기본 뷰나 단면도 위에 그려요.");
+        vpick = { v, q: toView(v, snap) };
+        paint();
+        return;
+      }
+      const v0 = vpick.v;
+      const list = host.views();
+      const label = nextLabel(list);
+      let view: DrawingView;
+      if (sheetEdit.tool === "detail") {
+        const r = Math.hypot(P[0] - toPaper(v0, vpick.q)[0], P[1] - toPaper(v0, vpick.q)[1]) / sv(v0);
+        if (r * sv(v0) < 2) return host.toast("원을 조금 더 크게 그리세요.");
+        view = { id: newViewId(), kind: "detail", parent: v0, c: vpick.q, r, k: 2, label };
+      } else {
+        const b = toView(v0, lockLine(toPaper(v0, vpick.q), snap, e.shiftKey));
+        if (Math.hypot(b[0] - vpick.q[0], b[1] - vpick.q[1]) * sv(v0) < 2) return host.toast("선을 조금 더 길게 그리세요.");
+        view = { id: newViewId(), kind: sheetEdit.tool === "aux" ? "aux" : "section", parent: v0 as StdView, a: vpick.q, b, label };
+      }
+      host.editViews((l) => [...l, view], view.kind === "section" ? `단면 ${label}-${label}` : view.kind === "aux" ? `보조 투상도 ${label}` : `상세 ${label}`);
+      vpick = null;
+      vhover = null;
+      sheetEdit.tool = "select";
+      sheetEdit.selectedView = view.id;
+      host.changed();
+      return;
+    }
     if (sheetEdit.tool === "dim") {
       e.preventDefault();
       const ready = sheetEdit.kind === "angle" ? lines.length === 2 : picks.length === 2 || !!circle;
@@ -268,7 +349,7 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
         const c = nearestCircle(P, tol);
         const v = c && viewAt(c.c);
         if (!c || !v) return host.toast("선 끝·원 중심 같은 점이나 원·원호를 누르세요.");
-        circle = { v, c: toView(v, c.c), r: c.r / s, full: c.full };
+        circle = { v, c: toView(v, c.c), r: c.r / sv(v), full: c.full };
       }
       paint();
       return;
@@ -276,7 +357,17 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
     // 선택 도구
     const hit = dimAt(P, tol * 0.6);
     sheetEdit.selected = hit?.id ?? null;
-    if (!hit) {
+    // 치수가 아니면: 추가 뷰 안 → 그 뷰 고르기·끌어 옮기기, 빈 곳 → 화면 이동
+    const xv = hit ? null : extraAt(P);
+    sheetEdit.selectedView = xv;
+    if (xv) {
+      vdrag = { id: xv, start: P, now: P, pointer: e.pointerId };
+      try {
+        svg.setPointerCapture(e.pointerId);
+      } catch {
+        /* 붙잡지 못해도 끌기는 됨 */
+      }
+    } else if (!hit) {
       pan = { x: e.clientX, y: e.clientY, pointer: e.pointerId };
       svg.style.cursor = "grabbing";
     }
@@ -293,6 +384,17 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   };
 
   const onMove = (e: PointerEvent) => {
+    if (vdrag && vdrag.pointer === e.pointerId) {
+      vdrag.now = paperOf(e);
+      paint();
+      return;
+    }
+    if ((sheetEdit.tool === "section" || sheetEdit.tool === "aux" || sheetEdit.tool === "detail") && vpick) {
+      const P = paperOf(e);
+      vhover = sheetEdit.tool === "detail" ? P : lockLine(toPaper(vpick.v, vpick.q), nearestPt(P, tolOf(e)) ?? P, e.shiftKey);
+      paint();
+      return;
+    }
     if (pan && pan.pointer === e.pointerId) {
       panBy(svg.parentElement!, e.clientX - pan.x, e.clientY - pan.y);
       pan.x = e.clientX;
@@ -321,6 +423,19 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   };
 
   const onUp = (e: PointerEvent) => {
+    if (vdrag && vdrag.pointer === e.pointerId) {
+      const d = vdrag;
+      vdrag = null;
+      const dx = d.now[0] - d.start[0];
+      const dy = d.now[1] - d.start[1];
+      const b = sh.views[d.id]?.box;
+      if (b && Math.hypot(dx, dy) > 0.8) {
+        const at: Pt = [(b[0] + b[2]) / 2 + dx, (b[1] + b[3]) / 2 + dy];
+        host.editViews((l) => l.map((x) => (x.id === d.id ? { ...x, at } : x)), "뷰 옮기기");
+      } else paint();
+      host.changed();
+      return;
+    }
     if (pan && pan.pointer === e.pointerId) {
       pan = null;
       svg.style.cursor = "";
@@ -351,11 +466,15 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== "Escape" || !svg.isConnected) return;
-    if (picks.length || circle || lines.length || preview) {
+    if (picks.length || circle || lines.length || preview || vpick) {
       e.stopPropagation();
       reset();
-    } else if (sheetEdit.selected) {
+    } else if (sheetEdit.tool !== "select" && sheetEdit.tool !== "dim") {
+      sheetEdit.tool = "select";
+      host.changed();
+    } else if (sheetEdit.selected || sheetEdit.selectedView) {
       sheetEdit.selected = null;
+      sheetEdit.selectedView = null;
       paint();
       host.changed();
     }
@@ -378,6 +497,16 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
 
 /** 고른 치수 지우기 (자동 치수는 숨김) */
 export function deleteSelected(sh: Sheet | null, edits: DimEdits, host: EditorHost): boolean {
+  // 고른 추가 뷰: 그 뷰 + 그 뷰를 부모로 하는 상세도 + 그 뷰에 놓은 치수
+  const vid = sheetEdit.selectedView;
+  if (vid && sh) {
+    const gone = new Set([vid, ...host.views().filter((x) => x.kind === "detail" && x.parent === vid).map((x) => x.id)]);
+    host.editViews((l) => l.filter((x) => !gone.has(x.id)), "뷰 지우기");
+    if ((edits.dims ?? []).some((d) => gone.has(d.view))) host.edit((e) => (e.dims = (e.dims ?? []).filter((d) => !gone.has(d.view))), "뷰의 치수 지우기");
+    sheetEdit.selectedView = null;
+    host.changed();
+    return true;
+  }
   const id = sheetEdit.selected;
   if (!id || !sh) return false;
   const isManual = (edits.dims ?? []).some((d) => d.id === id);

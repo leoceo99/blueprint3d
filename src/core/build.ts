@@ -14,6 +14,8 @@ import {
   makeCompound,
   makeProjectedEdges,
   measureShapeVolumeProperties,
+  cast,
+  getOC,
   Plane,
   ProjectionCamera,
   type Drawing,
@@ -364,6 +366,54 @@ export function projectAll(shape: Shape3D): Record<ViewId, ProjectedView> {
 
 const emptyProjections = (): Record<ViewId, ProjectedView> =>
   Object.fromEntries(VIEW_IDS.map((v) => [v, { visible: [], hidden: [], bounds: null }])) as unknown as Record<ViewId, ProjectedView>;
+
+/**
+ * 도면의 추가 뷰 (14단계): 카메라(toward = 물체 → 보는 사람, x = 화면 오른쪽)로 비춘 모습.
+ * cut이 있으면 그 평면에서 잘라 법선 쪽만 남기고(단면도), 자른 면의 경계선을 뷰 좌표 선들로 함께 (해칭용)
+ */
+export function projectView(
+  shape: Shape3D,
+  req: { toward: [number, number, number]; x: [number, number, number]; cut?: { p: [number, number, number]; n: [number, number, number] } },
+): { view: ProjectedView; hatch?: [number, number][][] } {
+  const cam = new ProjectionCamera([0, 0, 0], req.toward, req.x);
+  if (!req.cut) return { view: project(shape, cam) };
+  const plane = new Plane(req.cut.p, req.x, req.cut.n);
+  const kept = shape.cutPlane(plane, 0, "positive");
+  if (!kept) return { view: { visible: [], hidden: [], bounds: null }, hatch: [] };
+  const view = project(kept as Shape3D, cam);
+  view.hidden = []; // 단면도에는 숨은선을 그리지 않는다 (KS B 0001)
+  // 자른 면: 형상 ∩ 그 평면의 큰 사각형 → 면의 모서리를 뷰 좌표 선으로
+  const up = [
+    req.toward[1] * req.x[2] - req.toward[2] * req.x[1],
+    req.toward[2] * req.x[0] - req.toward[0] * req.x[2],
+    req.toward[0] * req.x[1] - req.toward[1] * req.x[0],
+  ];
+  const bb = shape.boundingBox.bounds as [[number, number, number], [number, number, number]];
+  const big = 4 * Math.hypot(bb[1][0] - bb[0][0], bb[1][1] - bb[0][1], bb[1][2] - bb[0][2]) + 100;
+  const hatch: [number, number][][] = [];
+  try {
+    const face = (drawRectangle(big, big).sketchOnPlane(plane) as any).face();
+    const oc = getOC();
+    const builder = new oc.BRepAlgoAPI_Common(shape.wrapped, face.wrapped);
+    builder.Build();
+    const res = cast(builder.Shape());
+    for (const e of res.edges) {
+      const n = e.geomType === "LINE" ? 1 : 24;
+      const pts: [number, number][] = [];
+      for (let k = 0; k <= n; k++) {
+        const q = e.pointAt(k / n);
+        pts.push([q.x * req.x[0] + q.y * req.x[1] + q.z * req.x[2], q.x * up[0] + q.y * up[1] + q.z * up[2]]);
+      }
+      hatch.push(pts);
+    }
+    builder.delete?.();
+    face.delete?.();
+  } catch {
+    /* 해칭 없이 */
+  }
+  kept.delete?.();
+  return { view, hatch };
+}
 
 /** 스케치 평면(법선 n, 가로 x)에 비춘 모습 — 스케치의 (가로, 세로) 좌표 그대로 (13단계 스케치 밑그림) */
 export function projectOnPlane(shape: Shape3D, n: [number, number, number], x: [number, number, number]): ProjectedView {

@@ -14,7 +14,8 @@ import { autoDims, checkNeeds } from "./autoDims";
 import { renderDim, type DimDraw, type Layer, type Prim, type Pt, type SheetDim, type SheetText } from "./sheetDims";
 import { projUnit } from "./params";
 import { fmtLen, MM_PER_INCH, type Unit } from "./units";
-import type { BuildResult, Project, SheetInfo, ViewId } from "./types";
+import type { BuildResult, ProjectedView, Project, SheetInfo, ViewId } from "./types";
+import { clipToCircle, cutCamera, hatchLines, STD_CAM, viewTitle, type DrawingView } from "./sheetViews";
 import { VIEW_IDS, VIEW_LABEL } from "./types";
 
 export type { Layer, Prim, SheetText };
@@ -36,8 +37,19 @@ export interface Sheet {
   dims: DimDraw[];
   /** 빠진 치수 (형상 특징 중 크기나 위치가 도면에 없는 것) */
   missing: string[];
-  /** 뷰마다 용지 위치: 뷰 좌표 (u, v) → 용지 (o[0] + u·scale, o[1] + v·scale), 뷰 상자 */
-  views: Record<ViewId, { o: Pt; box: [number, number, number, number] }>;
+  /**
+   * 뷰마다 용지 위치: 뷰 좌표 (u, v) → 용지 (o[0] + u·s, o[1] + v·s), 뷰 상자.
+   * 기본 3면도(front·top·side, 숨긴 것은 없음) + 추가 뷰(단면·상세·보조·등각, 뷰 id). s가 없으면 도면 척도
+   */
+  views: Record<string, { o: Pt; box: [number, number, number, number]; s?: number }>;
+}
+
+/** 도면의 추가 뷰와 그 3D 계산 결과 (14단계) */
+export interface SheetExtra {
+  views?: DrawingView[];
+  data?: Record<string, { view: ProjectedView; hatch?: [number, number][][] }>;
+  /** 숨길 기본 뷰 */
+  hide?: ViewId[];
 }
 
 /** 도면에 저장된 치수 고침 (도면마다): 직접 놓은 치수, 숨긴 자동 치수, 옮긴 자동 치수 */
@@ -226,14 +238,24 @@ function scaleLabel(s: number): string {
   return s >= 1 ? `${f2(s)}:1` : `1:${f2(1 / s)}`;
 }
 
-/** 세 뷰를 척도 s로 놓았을 때 필요한 크기 (용지 mm) */
-function needed(views: Record<ViewId, ViewBox>, s: number): [number, number] {
+/** 추가 뷰 칸의 크기 (척도 s일 때 [폭, 높이]) */
+type ExtraSize = (s: number) => [number, number];
+
+/** 세 뷰(숨긴 뷰는 크기 0)와 추가 뷰 칸을 척도 s로 놓았을 때 필요한 크기 (용지 mm) */
+function needed(views: Record<ViewId, ViewBox>, s: number, extra?: ExtraSize): [number, number] {
   const w = (v: ViewId) => (views[v].max[0] - views[v].min[0]) * s;
   const h = (v: ViewId) => (views[v].max[1] - views[v].min[1]) * s;
   const leftCol = Math.max(w("front"), w("top"));
   const bottomRow = Math.max(h("front"), h("side"));
-  const width = PAD.left + leftCol + PAD.gap + w("side") + PAD.right;
-  const height = PAD.bottom + bottomRow + PAD.gap + h("top") + PAD.top;
+  let width = PAD.left + leftCol + (w("side") > 0 ? PAD.gap + w("side") : 0) + PAD.right;
+  let height = PAD.bottom + bottomRow + (h("top") > 0 ? PAD.gap + h("top") : 0) + PAD.top;
+  if (extra) {
+    const [ew, eh] = extra(s);
+    if (ew > 0) {
+      width += PAD.gap + ew;
+      height = Math.max(height, eh + PAD.top + PAD.bottom);
+    }
+  }
   return [width, height];
 }
 
@@ -242,11 +264,11 @@ function areaOf(paper: [number, number]): [number, number] {
 }
 
 /** 용지와 척도 고르기 */
-export function chooseLayout(views: Record<ViewId, ViewBox>, info: SheetInfo = {}): { paper: keyof typeof PAPERS; scale: number } {
+export function chooseLayout(views: Record<ViewId, ViewBox>, info: SheetInfo = {}, extra?: ExtraSize): { paper: keyof typeof PAPERS; scale: number } {
   const fixedScale = parseScale(info.scale);
   const papers = (info.paper && info.paper !== "auto" ? [info.paper] : ["A4", "A3", "A2"]) as (keyof typeof PAPERS)[];
   const fits = (paper: keyof typeof PAPERS, s: number) => {
-    const [nw, nh] = needed(views, s);
+    const [nw, nh] = needed(views, s, extra);
     const [aw, ah] = areaOf(PAPERS[paper]);
     return nw <= aw && nh <= ah;
   };
@@ -270,21 +292,38 @@ export function chooseLayout(views: Record<ViewId, ViewBox>, info: SheetInfo = {
 
 // ---------------- 도면 만들기 ----------------
 
-export function buildSheet(res: BuildResult, project: Project, edits: DimEdits = {}): Sheet {
+export function buildSheet(res: BuildResult, project: Project, edits: DimEdits = {}, extra: SheetExtra = {}): Sheet {
   U = projUnit(project);
   const info = project.sheet ?? {};
   const pr = res.projections;
+  const hide = new Set(extra.hide ?? []);
+  const shown = VIEW_IDS.filter((v) => !hide.has(v));
   const views = Object.fromEntries(
     VIEW_IDS.map((v) => {
+      // 숨긴 뷰는 크기 0 (자리를 차지하지 않게)
+      if (hide.has(v)) return [v, { min: [0, 0], max: [0, 0] } as ViewBox];
       const b = pr[v].bounds ?? [[0, 0], [1, 1]];
       return [v, { min: [b[0][0], b[0][1]], max: [b[1][0], b[1][1]] } as ViewBox];
     }),
   ) as Record<ViewId, ViewBox>;
-  const { paper, scale: s } = chooseLayout(views, info);
+  // 추가 뷰: 뷰 좌표 범위와 배율 (상세도는 k배)
+  const xviews = (extra.views ?? [])
+    .map((v) => ({ v, b: extraBounds(v, extra, pr, views), k: v.kind === "detail" ? v.k : 1 }))
+    .filter((x): x is { v: DrawingView; b: [number, number, number, number]; k: number } => !!x.b);
+  const XM = 4;
+  const XLABEL = 8;
+  const xsize = (x: (typeof xviews)[number], sc: number): [number, number] => [(x.b[2] - x.b[0]) * sc * x.k + 2 * XM, (x.b[3] - x.b[1]) * sc * x.k + 2 * XM + XLABEL];
+  const extraSize: ExtraSize | undefined = xviews.some((x) => !x.v.at)
+    ? (sc) => {
+        const sz = xviews.filter((x) => !x.v.at).map((x) => xsize(x, sc));
+        return [Math.max(...sz.map((z) => z[0])), sz.reduce((a, z) => a + z[1], 0) + (sz.length - 1) * 4];
+      }
+    : undefined;
+  const { paper, scale: s } = chooseLayout(views, info, extraSize);
   const [PW, PH] = PAPERS[paper];
 
   // 세 뷰 묶음을 그림 영역 가운데에
-  const [nw, nh] = needed(views, s);
+  const [nw, nh] = needed(views, s, extraSize);
   const [aw, ah] = areaOf([PW, PH]);
   const bx = BORDER.left + Math.max(0, (aw - nw) / 2);
   const by = BORDER.bottom + TITLE_H + Math.max(0, (ah - nh) / 2);
@@ -309,8 +348,12 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
 
   // 1) 투영선 (숨은선 먼저, 외형선이 위에). 보이는 선은 뷰 좌표로도 둔다 (치수를 어느 뷰에 잴지)
   const vis = {} as Record<ViewId, Prim[]>;
+  /** 뷰마다 선 (뷰 좌표, 외형선 + 숨은선) — 상세도가 잘라 씀 */
+  const viewPrims: Record<string, Prim[]> = {};
   for (const v of VIEW_IDS) {
     vis[v] = [];
+    viewPrims[v] = [];
+    if (hide.has(v)) continue;
     for (const [layer, paths] of [
       ["HIDDEN", pr[v].hidden],
       ["VISIBLE", pr[v].visible],
@@ -318,6 +361,7 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
       for (const d of paths)
         for (const prim of parseProjection(d, layer)) {
           if (layer === "VISIBLE") vis[v].push(prim);
+          viewPrims[v].push(prim);
           prims.push(transformPrim(prim, (q) => P(v, q[0], q[1]), s));
         }
   }
@@ -325,17 +369,61 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
   // 가져온 3D 파일이면 3D에서 찾은 구멍을, 아니면 스케치 도형을 쓴다
   const feat: Project = res.holes && project.source ? { ...project, mode: "auto", views: res.holes } : project;
 
-  // 2) 중심선과 구멍 표시
-  addCenterLines(prims, feat, res, P, s);
+  // 2) 중심선과 구멍 표시 (숨긴 뷰는 빼고)
+  {
+    const cl: Prim[] = [];
+    const owner: ViewId[] = [];
+    addCenterLines(cl, feat, res, (v, u, w) => (owner.push(v), P(v, u, w)), s);
+    // addCenterLines는 선 하나에 P를 두 번 부른다 (a, b)
+    cl.forEach((pr2, i) => {
+      if (!hide.has(owner[i * 2])) prims.push(pr2);
+    });
+  }
+
+  // 2.5) 추가 뷰 배치·그리기 (14단계): 기본 3면도 오른쪽 칸에 위에서부터, 옮긴 뷰는 그 자리
+  const xplaced: Record<string, { o: Pt; box: [number, number, number, number]; s: number }> = {};
+  {
+    const right = Math.max(...shown.map((v) => box(v).r + PAD.right), frontLeft);
+    const x0 = right + PAD.gap;
+    let ytop = PH - BORDER.top - PAD.top;
+    const colW = extraSize ? extraSize(s)[0] : 0;
+    for (const x of xviews) {
+      const sv = s * x.k;
+      const h = xsize(x, s)[1];
+      // 뷰 상자 가운데: 옮긴 뷰는 그 자리, 아니면 오른쪽 칸에 위에서부터 (아래 글자 자리를 남기고)
+      const center: Pt = x.v.at ?? [x0 + colW / 2, ytop - XM - (h - 2 * XM - XLABEL) / 2];
+      if (!x.v.at) ytop -= h + 4;
+      const mid: Pt = [(x.b[0] + x.b[2]) / 2, (x.b[1] + x.b[3]) / 2];
+      const o: Pt = [center[0] - mid[0] * sv, center[1] - mid[1] * sv];
+      xplaced[x.v.id] = { o, box: [o[0] + x.b[0] * sv, o[1] + x.b[1] * sv, o[0] + x.b[2] * sv, o[1] + x.b[3] * sv], s: sv };
+    }
+    // 상세도는 부모(단면도일 수도) 선이 있어야 하므로 나중에
+    for (const x of [...xviews.filter((x) => x.v.kind !== "detail"), ...xviews.filter((x) => x.v.kind === "detail")]) drawExtra(x.v, xplaced[x.v.id], extra, viewPrims, prims, texts, s);
+    // 부모 뷰의 표시: 절단선·화살표·문자, 보조 투상 화살표, 상세 원
+    for (const x of xviews) {
+      const pv = x.v;
+      if ((pv.kind === "section" || pv.kind === "aux") && !hide.has(pv.parent)) markCut(pv, views[pv.parent], (q) => P(pv.parent, q[0], q[1]), s, prims, texts);
+      if (pv.kind === "detail") {
+        const par = isStd(pv.parent) ? (hide.has(pv.parent) ? null : { o: origin[pv.parent], s }) : xplaced[pv.parent] ? { o: xplaced[pv.parent].o, s: xplaced[pv.parent].s } : null;
+        if (par) {
+          const C: Pt = [par.o[0] + pv.c[0] * par.s, par.o[1] + pv.c[1] * par.s];
+          prims.push({ layer: "DIM", t: "arc", c: C, r: pv.r * par.s, start: 0, end: 360 });
+          texts.push({ at: [C[0] + pv.r * par.s * 0.75 + 1.5, C[1] + pv.r * par.s * 0.75 + 1.5], text: pv.label, size: 4, bold: true });
+        }
+      }
+    }
+  }
 
   // 3) 치수: 자동(형상 특징 + 구멍) → 숨기기·옮기기 → 직접 놓은 치수
   const area: [number, number, number, number] = [BORDER.left + 1.5, BORDER.bottom + 1.5, PW - BORDER.right - 1.5, PH - BORDER.top - 1.5];
   const titleBox: [number, number, number, number] = [PW - BORDER.right - TITLE_W - 1, BORDER.bottom, PW - BORDER.right, BORDER.bottom + TITLE_H + 1];
-  const labelBoxes = VIEW_IDS.map((v): [number, number, number, number] => {
+  const labelBoxes = shown.map((v): [number, number, number, number] => {
     const b = box(v);
     return [(b.l + b.r) / 2 - 9, b.t + 3, (b.l + b.r) / 2 + 9, b.t + 7];
   });
-  const auto = autoDims({ feat, f3: res.features, V, vis, P: (v, q) => P(v, q[0], q[1]), s, fmt: fl, unit: U, area, keepOut: [titleBox, ...labelBoxes] });
+  // 추가 뷰 자리(+ 아래 이름)에는 자동 치수를 놓지 않는다
+  const extraBoxes = Object.values(xplaced).map((x): [number, number, number, number] => [x.box[0] - 2, x.box[1] - XLABEL, x.box[2] + 2, x.box[3] + 2]);
+  const auto = autoDims({ feat, f3: res.features, V, vis, P: (v, q) => P(v, q[0], q[1]), s, fmt: fl, unit: U, area, keepOut: [titleBox, ...labelBoxes, ...extraBoxes] });
   // 볼트 원 (중심선)
   for (const v of VIEW_IDS) for (const c of pcdCircles(feat, v)) prims.push({ layer: "CENTER", t: "arc", c: P(v, c.c[0], c.c[1]), r: c.r * s, start: 0, end: 360 });
   const hidden = new Set(edits.hide ?? []);
@@ -344,10 +432,17 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
     ...(edits.dims ?? []),
   ];
   // 치수는 따로 둔다 (화면에서 하나씩 고르기·옮기기, DXF의 진짜 치수) — 모든 글자는 sheetTexts(sheet)
-  const draws = dims.map((d) => renderDim(d, (q) => P(d.view, q[0], q[1]), s, fl));
+  const toPaper = (v: string, q: Pt): Pt | null => {
+    if (isStd(v)) return hide.has(v) ? null : P(v, q[0], q[1]);
+    const x = xplaced[v];
+    return x ? [x.o[0] + q[0] * x.s, x.o[1] + q[1] * x.s] : null;
+  };
+  const draws = dims
+    .filter((d) => toPaper(d.view, [0, 0]))
+    .map((d) => renderDim(d, (q) => toPaper(d.view, q)!, s, fl));
 
   // 4) 뷰 이름 (작게)
-  for (const v of VIEW_IDS) {
+  for (const v of shown) {
     const b = box(v);
     texts.push({ at: [(b.l + b.r) / 2, b.t + 4], text: VIEW_LABEL[v], size: 2.5, anchor: "middle" });
   }
@@ -355,12 +450,15 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
   // 5) 테두리와 표제란
   frame(prims, texts, PW, PH, project, info, scaleLabel(s), paper);
 
-  const viewsOut = Object.fromEntries(
-    VIEW_IDS.map((v) => {
-      const b = box(v);
-      return [v, { o: origin[v], box: [b.l, b.b, b.r, b.t] as [number, number, number, number] }];
-    }),
-  ) as Sheet["views"];
+  const viewsOut: Sheet["views"] = {
+    ...Object.fromEntries(
+      shown.map((v) => {
+        const b = box(v);
+        return [v, { o: origin[v], box: [b.l, b.b, b.r, b.t] as [number, number, number, number] }];
+      }),
+    ),
+    ...xplaced,
+  };
   const sheet: Sheet = {
     svg: "",
     prims,
@@ -377,6 +475,118 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
   };
   sheet.svg = toSVG(sheet);
   return sheet;
+}
+
+const isStd = (v: string): v is ViewId => (VIEW_IDS as string[]).includes(v);
+
+/** 추가 뷰의 범위 (뷰 좌표) — 그릴 것이 없으면 null */
+function extraBounds(v: DrawingView, extra: SheetExtra, pr: BuildResult["projections"], std: Record<ViewId, ViewBox>): [number, number, number, number] | null {
+  if (v.kind === "detail") return [v.c[0] - v.r, v.c[1] - v.r, v.c[0] + v.r, v.c[1] + v.r];
+  void pr;
+  void std;
+  const d = extra.data?.[v.id];
+  const b = d?.view.bounds;
+  if (!b) return null;
+  return [b[0][0], b[0][1], b[1][0], b[1][1]];
+}
+
+/** 추가 뷰 그리기 (선·해칭·이름). 뷰 좌표 선은 viewPrims[id]에 (상세도가 잘라 씀) */
+function drawExtra(
+  v: DrawingView,
+  at: { o: Pt; box: [number, number, number, number]; s: number },
+  extra: SheetExtra,
+  viewPrims: Record<string, Prim[]>,
+  prims: Prim[],
+  texts: SheetText[],
+  s: number,
+) {
+  const T = (q: Pt): Pt => [at.o[0] + q[0] * at.s, at.o[1] + q[1] * at.s];
+  const local: Prim[] = [];
+  if (v.kind === "detail") {
+    const src = viewPrims[v.parent] ?? [];
+    local.push(...clipToCircle(src, v.c, v.r));
+    // 상세도 테두리 (가는 원)
+    prims.push({ layer: "DIM", t: "arc", c: T(v.c), r: v.r * at.s, start: 0, end: 360 });
+  } else {
+    const d = extra.data?.[v.id];
+    if (d) {
+      for (const [layer, paths] of [
+        ["HIDDEN", v.kind === "aux" ? d.view.hidden : []],
+        ["VISIBLE", d.view.visible],
+      ] as const)
+        for (const path of paths) local.push(...parseProjection(path, layer));
+      if (v.kind === "section" && d.hatch?.length) {
+        // 해칭: 가는 실선 45°, 용지에서 2.5 mm 간격 (KS B 0001)
+        const segs: [Pt, Pt][] = [];
+        for (const pl of d.hatch) for (let i = 0; i + 1 < pl.length; i++) segs.push([pl[i], pl[i + 1]]);
+        for (const [a, b] of hatchLines(segs, 2.5 / at.s, 45)) local.push({ layer: "HATCH", t: "line", a, b });
+      }
+    }
+  }
+  viewPrims[v.id] = local;
+  for (const p of local) prims.push(transformPrim(p, T, at.s));
+  void s;
+  // 이름: 뷰 아래 가운데 (단면 A-A, 상세 B (2:1) …)
+  texts.push({ at: [(at.box[0] + at.box[2]) / 2, at.box[1] - 6], text: viewTitle(v), size: 3.5, anchor: "middle", bold: true });
+}
+
+/**
+ * 부모 뷰의 절단선 표시 (단면도): 가는 일점쇄선 + 양끝 굵게 + 보는 방향 화살표 + 문자.
+ * 보조 투상도: 경사 모서리 쪽을 가리키는 화살표 하나 + 문자
+ */
+function markCut(v: Extract<DrawingView, { kind: "section" | "aux" }>, box: ViewBox, P: (q: Pt) => Pt, s: number, prims: Prim[], texts: SheetText[]) {
+  const { n } = cutCamera(v.parent, v.a, v.b, v.flip);
+  const pc = STD_CAM[v.parent];
+  // 보는 방향을 부모 뷰 좌표로
+  let d: Pt = [n[0] * pc.x[0] + n[1] * pc.x[1] + n[2] * pc.x[2], n[0] * pc.up[0] + n[1] * pc.up[1] + n[2] * pc.up[2]];
+  const dl = Math.hypot(d[0], d[1]) || 1;
+  d = [d[0] / dl, d[1] / dl];
+  const arrow = (from: Pt, tip: Pt) => {
+    const dir: Pt = [tip[0] - from[0], tip[1] - from[1]];
+    const L = Math.hypot(dir[0], dir[1]) || 1;
+    const u: Pt = [dir[0] / L, dir[1] / L];
+    const base: Pt = [tip[0] - u[0] * 2.8, tip[1] - u[1] * 2.8];
+    prims.push({ layer: "VISIBLE", t: "line", a: from, b: base });
+    prims.push({ layer: "VISIBLE", t: "fill", pts: [tip, [base[0] - u[1] * 1, base[1] + u[0] * 1], [base[0] + u[1] * 1, base[1] - u[0] * 1]] });
+  };
+  if (v.kind === "aux") {
+    const m: Pt = [(v.a[0] + v.b[0]) / 2, (v.a[1] + v.b[1]) / 2];
+    const M = P(m);
+    const tail: Pt = [M[0] - d[0] * 14, M[1] - d[1] * 14];
+    arrow(tail, [M[0] - d[0] * 2, M[1] - d[1] * 2]);
+    texts.push({ at: [tail[0] - d[0] * 3, tail[1] - d[1] * 3 - 1.5], text: v.label, size: 4.5, anchor: "middle", bold: true });
+    return;
+  }
+  // 절단선을 부모 뷰 상자(+4mm) 끝까지 늘린다
+  const dir: Pt = [v.b[0] - v.a[0], v.b[1] - v.a[1]];
+  const ext = 4 / s;
+  const lo: Pt = [box.min[0] - ext, box.min[1] - ext];
+  const hi: Pt = [box.max[0] + ext, box.max[1] + ext];
+  let t0 = -Infinity;
+  let t1 = Infinity;
+  for (const k of [0, 1] as const) {
+    if (Math.abs(dir[k]) < 1e-12) {
+      if (v.a[k] < lo[k] || v.a[k] > hi[k]) return;
+      continue;
+    }
+    const ta = (lo[k] - v.a[k]) / dir[k];
+    const tb = (hi[k] - v.a[k]) / dir[k];
+    t0 = Math.max(t0, Math.min(ta, tb));
+    t1 = Math.min(t1, Math.max(ta, tb));
+  }
+  if (!(t1 > t0)) return;
+  const E1 = P([v.a[0] + dir[0] * t0, v.a[1] + dir[1] * t0]);
+  const E2 = P([v.a[0] + dir[0] * t1, v.a[1] + dir[1] * t1]);
+  prims.push({ layer: "CENTER", t: "line", a: E1, b: E2 });
+  const L = Math.hypot(E2[0] - E1[0], E2[1] - E1[1]) || 1;
+  const u: Pt = [(E2[0] - E1[0]) / L, (E2[1] - E1[1]) / L];
+  const thick = Math.min(5, L / 4);
+  prims.push({ layer: "VISIBLE", t: "line", a: E1, b: [E1[0] + u[0] * thick, E1[1] + u[1] * thick] });
+  prims.push({ layer: "VISIBLE", t: "line", a: E2, b: [E2[0] - u[0] * thick, E2[1] - u[1] * thick] });
+  for (const E of [E1, E2]) {
+    arrow(E, [E[0] + d[0] * 7, E[1] + d[1] * 7]);
+    texts.push({ at: [E[0] + d[0] * 9.5 + (E === E1 ? -u[0] : u[0]) * 1.5, E[1] + d[1] * 9.5 + (E === E1 ? -u[1] : u[1]) * 1.5 - 1.6], text: v.label, size: 4.5, anchor: "middle", bold: true });
+  }
 }
 
 function transformPrim(p: Prim, T: (q: Pt) => Pt, s: number): Prim {
@@ -505,6 +715,7 @@ const STYLE: Record<Layer, { w: number; dash?: string; opacity?: number }> = {
   CENTER: { w: 0.2, dash: "8 1.5 1 1.5" },
   DIM: { w: 0.18 },
   FRAME: { w: 0.5 },
+  HATCH: { w: 0.15 },
 };
 
 /**
@@ -531,7 +742,7 @@ function esc(s: string) {
 /** 선·글자 묶음 → SVG 조각 (도면과 같은 모양, 용지 높이 H로 y 뒤집기) */
 export function fragmentSVG(prims: Prim[], texts: SheetText[], H: number, color = "#111"): string {
   const X = (p: Pt) => `${r2(p[0])} ${r2(H - p[1])}`;
-  const byLayer: Record<Layer, string[]> = { VISIBLE: [], HIDDEN: [], CENTER: [], DIM: [], FRAME: [] };
+  const byLayer: Record<Layer, string[]> = { VISIBLE: [], HIDDEN: [], CENTER: [], DIM: [], FRAME: [], HATCH: [] };
   const fills: string[] = [];
   for (const p of prims) {
     if (p.t === "line") byLayer[p.layer].push(`M${X(p.a)}L${X(p.b)}`);
@@ -565,6 +776,7 @@ export function fragmentSVG(prims: Prim[], texts: SheetText[], H: number, color 
     .join("");
   return (
     group("FRAME") +
+    group("HATCH") +
     group("DIM") +
     group("CENTER") +
     group("HIDDEN") +
@@ -631,6 +843,7 @@ export function sheetToDXF(sh: Sheet): string {
     ["CENTER", 1, "CENTER"],
     ["DIM", 3, "CONTINUOUS"],
     ["FRAME", 7, "CONTINUOUS"],
+    ["HATCH", 8, "CONTINUOUS"],
   ];
   g(0, "TABLE"); g(2, "LAYER"); g(70, layers.length + 1);
   g(0, "LAYER"); g(2, "0"); g(70, 0); g(62, 7); g(6, "CONTINUOUS");

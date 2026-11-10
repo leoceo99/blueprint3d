@@ -9,7 +9,7 @@ const path = require('path');
 const http = require('http');
 
 const ROOT = path.join(__dirname, '..');
-const SUITES = ['core', 'app', 'library', 'document', 'import3d', 'legacy', 'constraints', 'units', 'dims', 'tablet', 'features', 'features2'];
+const SUITES = ['core', 'app', 'library', 'document', 'import3d', 'legacy', 'constraints', 'units', 'dims', 'tablet', 'features', 'features2', 'sheetviews'];
 const PORT = Number(process.env.E2E_PORT || 4173);
 const URL = `http://localhost:${PORT}/`;
 

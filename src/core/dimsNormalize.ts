@@ -13,7 +13,7 @@ export function normalizeDims(raw: unknown): SheetDim[] {
   const out: SheetDim[] = [];
   for (const d of raw as Record<string, unknown>[]) {
     if (!d || typeof d !== "object" || typeof d.id !== "string" || !views.includes(d.view as string)) continue;
-    const base = { id: d.id, view: d.view as ViewId, ...(typeof d.text === "string" && d.text ? { text: d.text } : {}), ...(typeof d.suffix === "string" && d.suffix ? { suffix: d.suffix } : {}) };
+    const base = { id: d.id, view: d.view as string, ...(typeof d.text === "string" && d.text ? { text: d.text } : {}), ...(typeof d.suffix === "string" && d.suffix ? { suffix: d.suffix } : {}) };
     if (d.kind === "linear" && (d.dir === "h" || d.dir === "v" || d.dir === "aligned") && pt(d.a) && pt(d.b) && num(d.off)) out.push({ ...base, kind: "linear", dir: d.dir, a: d.a, b: d.b, off: d.off });
     else if (d.kind === "ordinate" && (d.axis === "u" || d.axis === "v") && pt(d.origin) && pt(d.p) && num(d.line))
       out.push({ ...base, kind: "ordinate", axis: d.axis, origin: d.origin, p: d.p, line: d.line, ...(num(d.jog) ? { jog: d.jog } : {}) });

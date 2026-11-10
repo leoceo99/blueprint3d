@@ -6,7 +6,7 @@
 import type { ViewId } from "./types";
 
 export type Pt = [number, number];
-export type Layer = "VISIBLE" | "HIDDEN" | "CENTER" | "DIM" | "FRAME";
+export type Layer = "VISIBLE" | "HIDDEN" | "CENTER" | "DIM" | "FRAME" | "HATCH";
 export type Prim =
   | { layer: Layer; t: "line"; a: Pt; b: Pt }
   /** start→end 반시계 방향(도) */
@@ -26,7 +26,8 @@ export interface SheetText {
 
 interface DimBase {
   id: string;
-  view: ViewId;
+  /** 기본 뷰(front·top·side) 또는 도면 추가 뷰 id */
+  view: ViewId | string;
   /** 글자 바꾸기 (비우면 잰 값) */
   text?: string;
   /** 글자 뒤에 붙이기 (공차·“관통” 등) */
@@ -103,7 +104,8 @@ export interface DxfDim {
 
 export interface DimDraw {
   id: string;
-  view: ViewId;
+  /** 기본 뷰(front·top·side) 또는 도면 추가 뷰 id */
+  view: ViewId | string;
   prims: Prim[];
   texts: SheetText[];
   /** 글자 상자 (용지) — 겹침 검사·누르기 */

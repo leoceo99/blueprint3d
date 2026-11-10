@@ -4,12 +4,13 @@
  */
 import { activeDrawing, addDrawing, drawingsOf, geometryKey, partOf, removeDrawing, type Drawing } from "../core/document";
 import type { DimEdits, Sheet } from "../core/sheet";
-import { sheetEdit, type DimKind, type EditorHost } from "./sheetState";
+import { sheetEdit, type DimKind, type DimTool, type EditorHost } from "./sheetState";
 import { applyZoom, wireZoom, zoomBy, zoomFit } from "./sheetZoom";
-import type { SheetInfo } from "../core/types";
+import type { SheetInfo, ViewId } from "../core/types";
 import { safeName, saveFile } from "../files";
 import { store } from "../store";
 import { buildPart } from "../app/build";
+import { engine } from "../engine";
 import type { Command } from "../app/commands";
 import { app, commands, on, requestRender } from "../app/context";
 import { $, $$, esc } from "../app/dom";
@@ -31,8 +32,25 @@ export async function sheetOf(d: Drawing): Promise<Sheet | null> {
   const build = await buildPart(part);
   if (!build) return null;
   // 도면 코드(자동 치수·치수 편집)는 도면을 처음 그릴 때 내려받는다
-  const { buildSheet } = await import("../core/sheet");
-  return buildSheet(build, { ...part, sheet: d.sheet }, d.edits ?? {});
+  const [{ buildSheet }, { viewRequest }] = await Promise.all([import("../core/sheet"), import("../core/sheetViews")]);
+  // 추가 뷰(단면·보조·등각)는 워커가 3D에서 따로 비춘다 (14단계)
+  const reqs = (d.views ?? []).map(viewRequest).filter((r): r is NonNullable<typeof r> => !!r);
+  const data = reqs.length ? await viewData(part, reqs) : {};
+  return buildSheet(build, { ...part, sheet: d.sheet }, d.edits ?? {}, { views: d.views, data, hide: d.hide });
+}
+
+/** 추가 뷰 계산 결과 기억 (같은 부품 모양·같은 뷰면 다시 계산하지 않음) */
+const viewCache = new Map<string, Promise<Record<string, { view: import("../core/types").ProjectedView; hatch?: [number, number][][] }>>>();
+function viewData(part: import("../core/document").Part, reqs: import("../core/sheetViews").ViewRequest[]) {
+  const active = part.id === store.project.id && !!app.lastBuild;
+  const key = JSON.stringify([part.id, geometryKey(part), active ? app.buildStamp : 0, reqs]);
+  let hit = viewCache.get(key);
+  if (!hit) {
+    if (viewCache.size > 8) viewCache.clear();
+    hit = engine.views(structuredClone(part), active, reqs);
+    viewCache.set(key, hit);
+  }
+  return hit;
 }
 
 /** 지금 편집 중인 부품의 도면 설정 (AI 검토 등에서 쓰는 도면) */
@@ -101,6 +119,13 @@ const editorHost: EditorHost = {
     syncTools();
     requestRender();
   },
+  views: () => activeDrawing(store.doc)?.views ?? [],
+  editViews: (fn, label) =>
+    editDrawing((d) => {
+      const next = fn(structuredClone(d.views ?? []));
+      if (next.length) d.views = next;
+      else delete d.views;
+    }, label),
 };
 
 /** 치수 검사: 빠진 치수, 숨긴 자동 치수 */
@@ -123,18 +148,25 @@ function renderCheck(sh: Sheet | null, d: Drawing | null) {
 
 function syncTools() {
   $<HTMLSelectElement>("#dimKind").value = sheetEdit.kind;
-  $("#sheetHost").classList.toggle("tool-dim", sheetEdit.tool === "dim");
+  $("#sheetHost").classList.toggle("tool-dim", sheetEdit.tool !== "select");
   app.sheetHint =
-    sheetEdit.tool === "dim"
+    sheetEdit.tool === "section" || sheetEdit.tool === "aux"
+      ? `${sheetEdit.tool === "section" ? "절단선" : "경사 모서리"}의 두 점을 누르세요 (점에 붙음, Shift·5° 안쪽은 수평·수직) · Esc 취소`
+      : sheetEdit.tool === "detail"
+        ? "자세히 볼 곳의 가운데를 누르고, 원 크기만큼 떨어진 곳을 누르세요 · Esc 취소"
+        : sheetEdit.tool === "dim"
       ? sheetEdit.kind === "angle"
         ? "선 두 개를 누르고, 각도 글자 자리를 누르세요 · Esc 취소"
         : "점 두 개(선 끝·원 중심) 또는 원·원호를 누르고, 치수선 자리를 누르세요 · Esc 취소"
       : "치수를 눌러 고르고 끌어서 옮기기 · 두 번 누르면 글자 덧붙이기 · Delete 지우기";
 }
 
-function setTool(t: "select" | "dim") {
+function setTool(t: DimTool) {
   sheetEdit.tool = t;
-  if (t === "dim") sheetEdit.selected = null;
+  if (t !== "select") {
+    sheetEdit.selected = null;
+    sheetEdit.selectedView = null;
+  }
   void renderSheet(true);
   syncTools();
   requestRender();
@@ -156,12 +188,79 @@ function renderControls() {
   for (const el of [partSel, nameIn]) el.disabled = !d;
   $("#sheetForm").classList.toggle("off", !d);
   const info = d?.sheet ?? {};
+  // 기본 뷰 보이기 · 추가 뷰 목록 (14단계)
+  for (const cb of $$<HTMLInputElement>("#viewStd input[data-std]")) {
+    cb.checked = !(d?.hide ?? []).includes(cb.dataset.std as ViewId);
+    cb.disabled = !d;
+  }
+  renderViewList(d);
   for (const f of sheetFields()) {
     if (document.activeElement === f) continue;
     const key = f.dataset.sheet as keyof SheetInfo;
     f.value = (info[key] as string | undefined) ?? (f.tagName === "SELECT" ? "auto" : "");
     f.disabled = !d;
   }
+}
+
+const KIND_NAME: Record<string, string> = { section: "단면", aux: "보조", detail: "상세", iso: "등각" };
+const DETAIL_K = [2, 2.5, 4, 5, 10];
+
+/** 추가 뷰 목록: 이름, 상세 배율, 단면 방향 뒤집기, 지우기 */
+function renderViewList(d: Drawing | null | undefined) {
+  const box = $("#viewList");
+  const list = d?.views ?? [];
+  if (!list.length) {
+    box.innerHTML = `<p class="muted small">단면·상세·보조·등각은 위 도구 줄에서 (S · C · B · I)</p>`;
+    return;
+  }
+  box.innerHTML = list
+    .map((v) => {
+      const title = v.kind === "section" ? `단면 ${v.label}-${v.label}` : v.kind === "detail" ? `상세 ${v.label}` : v.kind === "aux" ? `보조 ${v.label}` : "등각 그림";
+      const extra =
+        v.kind === "detail"
+          ? `<select data-vk="${v.id}" title="배율">${DETAIL_K.map((k) => `<option value="${k}"${k === v.k ? " selected" : ""}>${k}:1</option>`).join("")}</select>`
+          : v.kind === "section" || v.kind === "aux"
+            ? `<button class="small ghost" data-vflip="${v.id}" title="보는 방향 뒤집기">⇄</button>`
+            : "";
+      const moved = v.at ? `<button class="small ghost" data-vhome="${v.id}" title="자동 자리로">↺</button>` : "";
+      return `<div class="view-row${sheetEdit.selectedView === v.id ? " sel" : ""}"><span class="vk">${KIND_NAME[v.kind]}</span><span class="vn">${esc(title)}</span>${extra}${moved}<button class="small ghost" data-vdel="${v.id}" title="지우기">✕</button></div>`;
+    })
+    .join("");
+}
+
+function wireViewList() {
+  const box = $("#viewList");
+  box.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    const flip = t.dataset.vflip;
+    const del = t.dataset.vdel;
+    const home = t.dataset.vhome;
+    if (flip) editorHost.editViews((l) => l.map((v) => (v.id === flip && (v.kind === "section" || v.kind === "aux") ? { ...v, flip: !v.flip } : v)), "보는 방향 뒤집기");
+    if (home) editorHost.editViews((l) => l.map((v) => (v.id === home ? (({ at: _at, ...rest }) => rest)(v) as typeof v : v)), "뷰 자동 자리로");
+    if (del) {
+      sheetEdit.selectedView = del;
+      void commands.run("sheet.dimDelete");
+    }
+  });
+  box.addEventListener("change", (e) => {
+    const t = e.target as HTMLSelectElement;
+    const id = t.dataset.vk;
+    if (id) editorHost.editViews((l) => l.map((v) => (v.id === id && v.kind === "detail" ? { ...v, k: Number(t.value) } : v)), "상세도 배율");
+  });
+  for (const cb of $$<HTMLInputElement>("#viewStd input[data-std]"))
+    cb.onchange = () =>
+      editDrawing((d) => {
+        const v = cb.dataset.std as ViewId;
+        const hide = new Set(d.hide ?? []);
+        if (cb.checked) hide.delete(v);
+        else hide.add(v);
+        if (hide.size >= 3) {
+          toast("기본 뷰 하나는 남겨 두세요.");
+          hide.delete(v);
+        }
+        if (hide.size) d.hide = [...hide];
+        else delete d.hide;
+      }, cb.checked ? "뷰 보이기" : "뷰 숨기기");
 }
 
 /** 지금 도면을 고치기 (실행 취소 가능) */
@@ -311,7 +410,7 @@ const cmds: Command[] = [
     category: "도면",
     keywords: ["delete dimension", "치수 지우기"],
     keys: ["Delete", "Backspace"],
-    enabled: () => !!sheetEdit.selected,
+    enabled: () => !!sheetEdit.selected || !!sheetEdit.selectedView,
     run: async () => (await import("./sheetEdit")).deleteSelected(app.lastSheet, activeDrawing(store.doc)?.edits ?? {}, editorHost),
   },
   {
@@ -325,6 +424,22 @@ const cmds: Command[] = [
         delete e.hide;
         delete e.moved;
       }, "자동 치수 처음대로"),
+  },
+  // ---- 추가 뷰 (14단계) ----
+  { id: "sheet.section", title: "도면: 단면도 (절단선 두 점)", category: "도면", keywords: ["section", "cut", "단면", "절단"], keys: ["S"], checked: () => sheetEdit.tool === "section", run: () => setTool("section") },
+  { id: "sheet.aux", title: "도면: 보조 투상도 (경사 모서리 두 점)", category: "도면", keywords: ["auxiliary", "보조", "경사"], keys: ["B"], checked: () => sheetEdit.tool === "aux", run: () => setTool("aux") },
+  { id: "sheet.detail", title: "도면: 상세도 (원으로 확대)", category: "도면", keywords: ["detail", "상세", "확대"], keys: ["C"], checked: () => sheetEdit.tool === "detail", run: () => setTool("detail") },
+  {
+    id: "sheet.iso",
+    title: "도면: 등각 그림 넣기",
+    category: "도면",
+    keywords: ["isometric", "등각", "입체"],
+    keys: ["I"],
+    enabled: () => !!activeDrawing(store.doc),
+    run: () => {
+      if ((activeDrawing(store.doc)?.views ?? []).some((v) => v.kind === "iso")) return toast("등각 그림은 이미 있어요.");
+      editorHost.editViews((l) => [...l, { id: `v${Date.now().toString(36)}`, kind: "iso", label: "ISO" }], "등각 그림");
+    },
   },
   { id: "sheet.print", title: "도면 인쇄 / PDF", category: "내보내기", keywords: ["print", "pdf", "인쇄"], keys: ["Ctrl+P"], when: any, global: true, run: printSheet },
   {
@@ -376,6 +491,7 @@ export function initSheet() {
   wireZoom($("#sheetHost"));
   const kindSel = $<HTMLSelectElement>("#dimKind");
   kindSel.onchange = () => commands.run(`sheet.dim.${kindSel.value}`);
+  wireViewList();
   syncTools();
   on("built", () => {
     if (app.workspace === "sheet") void renderSheet();

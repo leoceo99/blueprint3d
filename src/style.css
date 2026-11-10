@@ -689,3 +689,15 @@ body.sketch-mode .ribbon .g-3d { display: none; }
 .feat-row.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
 .feat-row.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 .props-body .sec-head { margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+
+/* ---------- 14단계: 도면 뷰 ---------- */
+.view-std { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.view-list { display: flex; flex-direction: column; gap: 3px; margin: 4px 0; }
+.view-row { display: flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 4px; border-radius: 5px; }
+.view-row.sel { background: var(--accent-soft); }
+.view-row .vk { color: var(--text-muted); font-size: 11px; min-width: 26px; }
+.view-row .vn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-row select { font-size: 11px; padding: 0 2px; }
+.view-row button { padding: 0 5px; min-height: 20px; }
+.view-std input[type="checkbox"] { width: auto; height: auto; margin: 0 2px 0 0; }
+.view-std label.check { display: inline-flex; align-items: center; gap: 2px; }

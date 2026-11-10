@@ -328,7 +328,7 @@ export function autoDims(inp: AutoInput): { dims: SheetDim[]; needs: Need[] } {
     const b = P(v, V[v].max);
     viewObs.push([a[0] - 0.8, a[1] - 0.8, b[0] + 0.8, b[1] + 0.8]);
   }
-  for (const d of dims) for (const t of renderDim(d, (q) => P(d.view, q), s, fmt).texts) textObs.push(textBox(t));
+  for (const d of dims) for (const t of renderDim(d, (q) => P(d.view as ViewId, q), s, fmt).texts) textObs.push(textBox(t));
   for (const c of callouts) {
     const best = place(c, inp, textObs, viewObs);
     if (!best) continue;
@@ -536,7 +536,9 @@ function groupBy<T>(xs: T[], k: (x: T) => string): Map<string, T[]> {
 
 /** 치수에서 “어느 축의 어느 위치를 쟀는지” */
 export function touched(d: SheetDim): { axis: Axis; at: number }[] {
-  const [au, av] = VIEW_AX[d.view];
+  // 추가 뷰(단면·상세 등)의 치수는 빠짐 검사에 넣지 않음 (3D 축이 정해져 있지 않음)
+  if (!(d.view in VIEW_AX)) return [];
+  const [au, av] = VIEW_AX[d.view as ViewId];
   if (d.kind === "linear") {
     if (d.dir === "h") return [
       { axis: au, at: d.a[0] },

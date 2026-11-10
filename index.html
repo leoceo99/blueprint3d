@@ -270,6 +270,12 @@
           </select>
           <button class="small ghost" data-cmd="sheet.dimDelete">치수 지우기</button>
         </div>
+        <div class="dim-tools view-tools" role="group" aria-label="뷰 더하기">
+          <button class="small" data-cmd="sheet.section" title="단면도 — 기본 뷰 위에 절단선 두 점 (S)">단면</button>
+          <button class="small" data-cmd="sheet.detail" title="상세도 — 원으로 감싼 곳을 크게 (C)">상세</button>
+          <button class="small" data-cmd="sheet.aux" title="보조 투상도 — 경사 모서리의 두 점 (B)">보조</button>
+          <button class="small" data-cmd="sheet.iso" title="등각 그림 (I)">등각</button>
+        </div>
         <div class="dim-tools zoom-tools" role="group" aria-label="확대">
           <button class="small ghost" data-cmd="sheet.zoomOut" aria-label="축소">−</button>
           <span id="sheetZoomLabel" class="muted small zoom-label">100%</span>
@@ -292,6 +298,13 @@
           <div class="sheet-form" id="sheetForm">
             <label>이 도면에 그릴 부품 <select id="drawingPart"></select></label>
             <label>도면 이름 <input id="drawingName" spellcheck="false" /></label>
+            <div class="form-sep">뷰</div>
+            <div class="view-std" id="viewStd">
+              <label class="check"><input type="checkbox" data-std="front" /> 정면도</label>
+              <label class="check"><input type="checkbox" data-std="top" /> 평면도</label>
+              <label class="check"><input type="checkbox" data-std="side" /> 우측면도</label>
+            </div>
+            <div id="viewList" class="view-list"></div>
             <div class="form-sep">용지 · 척도</div>
             <label>용지 (가로)
               <select data-sheet="paper">

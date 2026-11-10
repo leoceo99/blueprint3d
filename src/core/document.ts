@@ -11,7 +11,8 @@ import { normalizeDims } from "./dimsNormalize";
 import type { SheetDim } from "./sheetDims";
 import type { DimEdits } from "./sheet";
 import { normalizeProject } from "./project";
-import { emptyProject, type Project, type SheetInfo } from "./types";
+import { emptyProject, VIEW_IDS, type Project, type SheetInfo, type ViewId } from "./types";
+import { normalizeViews, type DrawingView } from "./sheetViews";
 import { diffSummary, fileKeys, summarize } from "./versions";
 
 export type Part = Project & { id: string };
@@ -25,6 +26,10 @@ export interface Drawing {
   sheet?: SheetInfo;
   /** 치수 고침: 직접 놓은 치수, 숨긴·옮긴 자동 치수 (11단계) */
   edits?: DimEdits;
+  /** 추가 뷰: 단면·상세·보조·등각 (14단계) */
+  views?: DrawingView[];
+  /** 숨길 기본 뷰 (14단계) */
+  hide?: ViewId[];
 }
 
 /** 15단계(메쉬 편집)부터 쓰는 장면 — 지금은 자리만 */
@@ -121,7 +126,17 @@ export function normalizeDoc(raw: unknown): Doc | null {
     if (!obj(d) || typeof d.partId !== "string" || !partIds.has(d.partId)) continue;
     const s = cleanSheet(d.sheet);
     const e = cleanEdits(d.edits);
-    drawings.push({ id: uniq(d.id, "drawing"), name: typeof d.name === "string" && d.name.trim() ? d.name : "도면", partId: d.partId, ...(s ? { sheet: s } : {}), ...(e ? { edits: e } : {}) });
+    const xv = normalizeViews(d.views);
+    const hide = Array.isArray(d.hide) ? VIEW_IDS.filter((v) => (d.hide as unknown[]).includes(v)) : [];
+    drawings.push({
+      id: uniq(d.id, "drawing"),
+      name: typeof d.name === "string" && d.name.trim() ? d.name : "도면",
+      partId: d.partId,
+      ...(s ? { sheet: s } : {}),
+      ...(e ? { edits: e } : {}),
+      ...(xv ? { views: xv } : {}),
+      ...(hide.length ? { hide } : {}),
+    });
   }
   // 부품 안에 남아 있던 도면 설정은 그 부품의 도면으로
   for (const [pid, s] of legacySheets) {

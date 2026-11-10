@@ -44,6 +44,13 @@ class Engine {
     return r.result;
   }
 
+  /** 도면의 추가 뷰 (단면·보조·등각) — useCurrent면 지금 화면의 모델로 */
+  async views(project: Project, useCurrent: boolean, specs: import("./core/sheetViews").ViewRequest[]) {
+    const r = await this.call({ type: "views", project, useCurrent, specs } as any);
+    if (!r.ok || r.type !== "views") return {} as Record<string, { view: import("./core/types").ProjectedView; hatch?: [number, number][][] }>;
+    return r.views;
+  }
+
   /** 지금 모델(마지막으로 keep한 것)의 3면도 투영 */
   async projections(): Promise<BuildResult["projections"] | null> {
     const r = await this.call({ type: "projections" } as any);
