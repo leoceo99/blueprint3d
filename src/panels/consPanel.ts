@@ -1,8 +1,8 @@
 /** 속성 패널의 구속 부분: 선택한 도형의 구속 목록, 고른 구속의 값·지우기 (10단계) */
 import { constraintsOf, isDimension, KIND_LABEL, refType } from "../core/constraints";
 import { fmtLen } from "../core/units";
-import type { Constraint, CRef, Shape2D, ViewId } from "../core/types";
-import { VIEW_LABEL } from "../core/types";
+import type { Constraint, CRef, Shape2D } from "../core/types";
+import { slotCons, slotLabel, slotShapes, type SlotId } from "../core/featureModel";
 import { deleteConstraint, setConstraintValue } from "../consActions";
 import { store } from "../store";
 import { shapeLabel } from "../ui/sketch";
@@ -15,11 +15,11 @@ const RECT_V = ["왼쪽 아래", "오른쪽 아래", "오른쪽 위", "왼쪽 �
 const RECT_E = ["아랫변", "오른쪽 변", "윗변", "왼쪽 변"];
 
 /** 대상 이름: “사각형 80×40 왼쪽 아래”, “원점” */
-export function refName(view: ViewId, r: CRef): string {
+export function refName(view: SlotId, r: CRef): string {
   if (r.s === "@o") return "원점";
   if (r.s === "@x") return "가로축";
   if (r.s === "@y") return "세로축";
-  const s = store.project.views[view].find((x) => x.id === r.s);
+  const s = slotShapes(store.project, view).find((x) => x.id === r.s);
   if (!s) return "?";
   const base = shapeLabel(s, true);
   const k = r.k;
@@ -34,7 +34,7 @@ export function refName(view: ViewId, r: CRef): string {
 }
 
 /** 선택한 도형의 구속 목록 */
-export function constraintRows(s: Shape2D, view: ViewId): HTMLElement[] {
+export function constraintRows(s: Shape2D, view: SlotId): HTMLElement[] {
   const list = constraintsOf(store.project, view, s.id);
   const title = el("div", { textContent: `구속 ${list.length ? list.length + "개" : ""}` }, "full section-title");
   if (!list.length)
@@ -44,7 +44,7 @@ export function constraintRows(s: Shape2D, view: ViewId): HTMLElement[] {
   return [title, box];
 }
 
-function row(c: Constraint, view: ViewId): HTMLElement {
+function row(c: Constraint, view: SlotId): HTMLElement {
   const r = el("div", { title: describeConstraint(c, (x) => refName(view, x)) }, "cons-row" + (ui.selCons?.id === c.id ? " on" : ""));
   r.append(el("span", { textContent: describeConstraint(c, (x) => refName(view, x)) }, "cons-text"));
   const del = el("button", { textContent: "✕", title: "이 구속 지우기" }, "ghost small");
@@ -64,10 +64,10 @@ function row(c: Constraint, view: ViewId): HTMLElement {
 export function selectedConstraintProps(): HTMLElement[] | null {
   const sel = ui.selCons;
   if (!sel) return null;
-  const c = store.project.constraints?.[sel.view]?.find((x) => x.id === sel.id);
+  const c = slotCons(store.project, sel.view)?.find((x) => x.id === sel.id);
   if (!c) return null;
   const out: HTMLElement[] = [];
-  out.push(el("div", { innerHTML: `<b>구속: ${KIND_LABEL[c.kind]}</b> <span class="muted">· ${VIEW_LABEL[sel.view]}</span>` }, "full"));
+  out.push(el("div", { innerHTML: `<b>구속: ${KIND_LABEL[c.kind]}</b> <span class="muted">· ${slotLabel(store.project, sel.view)}</span>` }, "full"));
   c.refs.forEach((r, i) => {
     const t = refType(store.project, sel.view, r);
     out.push(keyCell(`대상 ${i + 1}`), el("span", { textContent: `${refName(sel.view, r)} (${t === "point" ? "점" : t === "line" ? "선" : "원"})` }));

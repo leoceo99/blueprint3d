@@ -5,6 +5,7 @@ import { fmtLen, fmtLenU, fmtNum, fromDisplay } from "../core/units";
 import {
   area,
   boundsOf,
+  distToBoundary,
   bulgeThrough,
   flatten,
   isDegenerate,
@@ -17,7 +18,8 @@ import {
 import { holeLabel, specDiameter, threadRow } from "../core/standards";
 import { plainNumber } from "../core/expr";
 import { getDim, setDimInput } from "../core/params";
-import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Severity, type Shape2D, type ViewId } from "../core/types";
+import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Severity, type Shape2D } from "../core/types";
+import { frameOf, isViewSlot, planeLabel, sketchOf, slotCons, slotShapes, toWorld, type SlotId } from "../core/featureModel";
 import { newId, store } from "../store";
 import type { DraftBoard } from "./board";
 import { ui } from "./state";
@@ -91,12 +93,13 @@ export class SketchPane {
 
   constructor(
     private board: DraftBoard,
-    readonly view: ViewId,
+    readonly view: SlotId,
   ) {
     this.canvas = board.canvas;
     this.ctx = board.ctx;
     const canvas = this.canvas;
-    const [u, v] = VIEW_AXES[view];
+    // 3면도 뷰는 그 뷰의 3D 축, 스케치는 평면의 가로(u)·세로(v)를 0·1에
+    const [u, v] = isViewSlot(view) ? VIEW_AXES[view] : (["X", "Y"] as const);
     this.ua = AX[u];
     this.va = AX[v];
     this.cons = new ConstraintLayer({ view, toScreen: (u, v) => this.toScreen(u, v), region: () => this.board.regionScreenRect(view) });
@@ -159,9 +162,10 @@ export class SketchPane {
   /** 다른 도형/뷰에서 이 축에 해당하는 기준 좌표들 */
   private alignTargets(excludeId?: string): { u: number[]; v: number[] } {
     const byAxis: number[][] = [[], [], []];
-    for (const view of VIEW_IDS) {
-      const [a, b] = VIEW_AXES[view].map((n) => AX[n]);
-      for (const s of store.project.views[view]) {
+    // 3면도는 세 뷰의 같은 축끼리, 스케치는 그 스케치 안에서만
+    const slots: [SlotId, number, number][] = isViewSlot(this.view) ? VIEW_IDS.map((v) => [v, AX[VIEW_AXES[v][0]], AX[VIEW_AXES[v][1]]]) : [[this.view, 0, 1]];
+    for (const [view, a, b] of slots) {
+      for (const s of slotShapes(store.project, view)) {
         if (s.id === excludeId) continue;
         for (const [pu, pv] of keyPoints(s)) {
           byAxis[a].push(pu);
@@ -232,12 +236,13 @@ export class SketchPane {
 
   // ---------------- 공개 동작 ----------------
 
-  finishPoly() {
+  /** 다각형 끝내기. open이면 열린 선(선 도구, 13단계 — 스윕 경로 등) */
+  finishPoly(open = false) {
     const pts = this.polyDraft;
     this.polyDraft = [];
     this.onPolyDraft();
-    if (pts.length >= 3) {
-      const s: Shape2D = { id: newId(), kind: "poly", hole: false, pts };
+    if (open ? pts.length >= 2 : pts.length >= 3) {
+      const s: Shape2D = open ? { id: newId(), kind: "poly", hole: false, pts, open: true } : { id: newId(), kind: "poly", hole: false, pts };
       if (!isDegenerate(s)) this.addShape(s);
     }
     this.render();
@@ -300,6 +305,10 @@ export class SketchPane {
     if (!this.busy) return false;
     if (/^[0-9.\-@]$/.test(e.key)) {
       this.openDyn(e.key);
+      return true;
+    }
+    if (e.key === "Enter" && ui.tool === "line" && this.polyDraft.length >= 2) {
+      this.finishPoly(true);
       return true;
     }
     if (e.key === "Enter" && this.polyDraft.length >= 3) {
@@ -372,7 +381,7 @@ export class SketchPane {
       return;
     }
 
-    if (ui.tool === "poly") {
+    if (ui.tool === "poly" || ui.tool === "line") {
       const first = this.polyDraft[0];
       if (first && this.polyDraft.length >= 3) {
         const [fx, fy] = this.toScreen(first[0], first[1]);
@@ -454,7 +463,7 @@ export class SketchPane {
 
     const excl = d?.kind === "move" || d?.kind === "vertex" ? d.shape.id : d?.kind === "bend" ? d.shapeId : this.creating?.shape.id;
     let { pt, guides } = this.snap(raw, excl);
-    if (e.shiftKey && ui.tool === "poly" && this.polyDraft.length) pt = this.ortho(pt, this.polyDraft[this.polyDraft.length - 1]);
+    if (e.shiftKey && (ui.tool === "poly" || ui.tool === "line") && this.polyDraft.length) pt = this.ortho(pt, this.polyDraft[this.polyDraft.length - 1]);
     this.hover = pt;
     this.guides = guides;
     this.hoverShapeId = !d && ui.tool === "select" ? (this.hitShape(raw)?.id ?? null) : null;
@@ -465,9 +474,13 @@ export class SketchPane {
     } else this.hoverCand = null;
 
     // 다른 창에 투영선을 그릴 수 있게 3D 커서 공유
-    const cur: [number | null, number | null, number | null] = [null, null, null];
-    cur[this.ua] = pt[0];
-    cur[this.va] = pt[1];
+    let cur: [number | null, number | null, number | null] = [null, null, null];
+    const fr = this.frame();
+    if (fr) cur = toWorld(fr, pt[0], pt[1]);
+    else {
+      cur[this.ua] = pt[0];
+      cur[this.va] = pt[1];
+    }
     ui.cursor = cur;
     ui.activeView = this.view;
 
@@ -535,7 +548,7 @@ export class SketchPane {
 
   private addShape(s: Shape2D, forceHole = false) {
     const [cx, cy] = shapeCenter(s);
-    const own = store.project.views[this.view];
+    const own = slotShapes(store.project, this.view);
     if (forceHole || this.holesOnly()) s.hole = true;
     else if (own.some((o) => !o.hole)) {
       // 이미 있는 몸체 안쪽에 그리면 자동으로 구멍
@@ -551,7 +564,7 @@ export class SketchPane {
     }
     const what = { rect: "사각형", circle: s.hole ? "원형 구멍" : "원", poly: "다각형", slot: "장공" }[s.kind];
     store.update((p) => {
-      p.views[this.view].push(s);
+      slotShapes(p, this.view).push(s);
     }, `${what} 그리기`);
     ui.sel = { view: this.view, id: s.id };
     ui.emit();
@@ -559,14 +572,19 @@ export class SketchPane {
 
   private selected(): Shape2D | null {
     if (!ui.sel || ui.sel.view !== this.view) return null;
-    return store.project.views[this.view].find((s) => s.id === ui.sel!.id) ?? null;
+    return slotShapes(store.project, this.view).find((s) => s.id === ui.sel!.id) ?? null;
   }
 
   private hitShape(w: Pt): Shape2D | null {
-    const list = store.project.views[this.view];
+    const list = slotShapes(store.project, this.view);
     const ordered = [...list.filter((s) => s.hole).reverse(), ...list.filter((s) => !s.hole).reverse()];
     const pad = 5 / ui.camera.scale;
     for (const s of ordered) {
+      // 열린 선은 선 가까이를 눌러야
+      if (s.kind === "poly" && s.open) {
+        if (distToBoundary(w, s) < pad * 1.6) return s;
+        continue;
+      }
       if (pointInShape(w[0], w[1], s)) return s;
       if (s.kind === "circle" && Math.abs(Math.hypot(w[0] - s.cx, w[1] - s.cy) - s.r) < pad) return s;
     }
@@ -583,7 +601,7 @@ export class SketchPane {
 
   /** 변 가운데 손잡이를 끌면 그 변이 끄는 점을 지나는 원호가 된다 (사각형은 다각형으로 바뀜) */
   private bendEdge(d: Extract<Drag, { kind: "bend" }>, p: Pt) {
-    const list = store.project.views[this.view];
+    const list = slotShapes(store.project, this.view);
     const idx = list.findIndex((s) => s.id === d.shapeId);
     if (idx < 0) return;
     let s = list[idx];
@@ -608,7 +626,7 @@ export class SketchPane {
   /** 모서리 도구: 커서 근처의 사각형/다각형 꼭짓점 */
   private findCorner(x: number, y: number): { shapeId: string; index: number; pt: Pt } | null {
     let best: { shapeId: string; index: number; pt: Pt; d: number } | null = null;
-    for (const s of store.project.views[this.view]) {
+    for (const s of slotShapes(store.project, this.view)) {
       if (s.kind !== "rect" && s.kind !== "poly") continue;
       const pts = s.kind === "rect" ? rectPoints(s) : s.pts;
       pts.forEach((pt, i) => {
@@ -622,7 +640,7 @@ export class SketchPane {
 
   /** 꼭짓점에 모서리 R/모따기 적용. 같은 것이 이미 있으면 해제. all이면 그 도형의 모든 꼭짓점 */
   private applyCorner(shapeId: string, index: number, all: boolean) {
-    const s = store.project.views[this.view].find((x) => x.id === shapeId);
+    const s = slotShapes(store.project, this.view).find((x) => x.id === shapeId);
     if (!s || (s.kind !== "rect" && s.kind !== "poly")) return;
     const n = s.kind === "rect" ? 4 : s.pts.length;
     const want = { kind: ui.cornerKind, size: ui.cornerSize };
@@ -642,7 +660,7 @@ export class SketchPane {
 
   /** 회전체 모드의 평면도·우측면도에는 구멍만 그린다 */
   private holesOnly() {
-    return store.project.mode === "revolve" && this.view !== "front";
+    return store.project.mode === "revolve" && isViewSlot(this.view) && this.view !== "front";
   }
 
   /** 구멍 도구: 설정된 규격 구멍을 클릭한 곳에 놓는다 */
@@ -688,7 +706,7 @@ export class SketchPane {
 
   /** 치수 숫자를 누르면 그 자리에서 값이나 식을 입력 */
   private openDimEdit(hit: { box: [number, number, number, number]; shapeId: string; key: string }) {
-    const s = store.project.views[this.view].find((x) => x.id === hit.shapeId);
+    const s = slotShapes(store.project, this.view).find((x) => x.id === hit.shapeId);
     if (!s) return;
     this.dimEdit = { shapeId: hit.shapeId, key: hit.key };
     const cx = (hit.box[0] + hit.box[2]) / 2;
@@ -708,7 +726,7 @@ export class SketchPane {
   }
 
   private openConsEdit(id: string, box: [number, number, number, number]) {
-    const k = store.project.constraints?.[this.view]?.find((x) => x.id === id);
+    const k = slotCons(store.project, this.view)?.find((x) => x.id === id);
     if (!k) return;
     this.consEdit = id;
     this.dimEdit = null;
@@ -742,7 +760,7 @@ export class SketchPane {
   private applyDimEdit(text: string): boolean {
     const d = this.dimEdit;
     if (!d) return true;
-    const s = store.project.views[this.view].find((x) => x.id === d.shapeId);
+    const s = slotShapes(store.project, this.view).find((x) => x.id === d.shapeId);
     if (!s) return true;
     // 성공했을 때만 실행 취소 기록을 남긴다 (구속과 맞지 않으면 되돌려짐)
     let err: string | null = null;
@@ -806,7 +824,7 @@ export class SketchPane {
   /** 가져온 도면 이미지를 밑그림으로 (그 뷰에 해당하는 부분만) */
   private drawImageUnderlay() {
     const u = store.project.underlay;
-    if (!u || u.show === false) return;
+    if (!u || u.show === false || !isViewSlot(this.view)) return;
     const vm = u.views[this.view];
     if (!vm) return;
     const img = underlayCanvas(u.key, palette().underlayInk);
@@ -834,14 +852,15 @@ export class SketchPane {
     this.drawImageUnderlay();
     this.drawAxes();
     this.drawResultUnderlay();
-    if (store.project.mode !== "revolve") this.drawExtentGuides();
+    if (store.project.mode !== "revolve" && isViewSlot(this.view)) this.drawExtentGuides();
 
-    const shapes = store.project.views[this.view];
+    const shapes = slotShapes(store.project, this.view);
     const draft = this.creating?.shape ?? null;
     const sel = this.selected();
     const flagged = this.flaggedShapes();
 
-    for (const s of [...shapes.filter((s) => !s.hole), ...(draft ? [draft] : [])]) {
+    const isLine = (s: Shape2D) => !!s.construction || (s.kind === "poly" && !!s.open);
+    for (const s of [...shapes.filter((s) => !s.hole && !isLine(s)), ...(draft ? [draft] : [])]) {
       this.pathShape(s);
       c.fillStyle = col.solidFill;
       c.fill();
@@ -849,7 +868,16 @@ export class SketchPane {
       c.strokeStyle = col.solidStroke;
       c.stroke();
     }
-    for (const s of shapes.filter((s) => s.hole)) {
+    // 열린 선(경로)은 굵은 선, 참조선은 가는 일점쇄선 (3D에 쓰지 않음)
+    for (const s of shapes.filter(isLine)) {
+      this.pathShape(s);
+      c.lineWidth = s.construction ? 1 : 2;
+      c.strokeStyle = s.construction ? col.guide : col.solidStroke;
+      c.setLineDash(s.construction ? [8, 3, 2, 3] : []);
+      c.stroke();
+      c.setLineDash([]);
+    }
+    for (const s of shapes.filter((s) => s.hole && !isLine(s))) {
       this.pathShape(s);
       // 관통 구멍은 비어 보이게, 막힌 구멍·포켓은 바닥이 있는 것처럼 옅게 칠한다
       c.fillStyle = s.depth !== undefined ? col.blindFill : col.bg;
@@ -1043,12 +1071,13 @@ export class SketchPane {
       return;
     }
     const pts = flatten(s, Math.PI / 48);
+    if (s.kind === "poly" && s.open) pts.push(s.pts[s.pts.length - 1]);
     pts.forEach(([u, v], i) => {
       const [x, y] = this.toScreen(u, v);
       if (i) c.lineTo(x, y);
       else c.moveTo(x, y);
     });
-    c.closePath();
+    if (!(s.kind === "poly" && s.open)) c.closePath();
   }
 
   private drawCornerHover() {
@@ -1098,7 +1127,7 @@ export class SketchPane {
     c.beginPath();
     c.arc(bx, by, 3.5, 0, Math.PI * 2);
     c.fill();
-    const [ua, va] = VIEW_AXES[this.view];
+    const [ua, va] = isViewSlot(this.view) ? VIEW_AXES[this.view] : ["가로", "세로"];
     const len = Math.hypot(du, dv);
     const ang = (Math.atan2(dv, du) * 180) / Math.PI;
     this.tag(`${fmtLenU(len)}  ∠${fmtNum(ang)}°`, (ax + bx) / 2, (ay + by) / 2 - 14, col.snap);
@@ -1204,7 +1233,7 @@ export class SketchPane {
   /** 선택한 도형의 크기·위치 치수 (원점 기준) */
   private drawDims(s: Shape2D) {
     // 위치를 이미 거리 구속(치수)이 정하면 같은 값의 선택 치수는 그리지 않는다 (겹쳐 보이지 않게)
-    const cons = (store.project.constraints?.[this.view] ?? []).filter((c) => c.refs.some((r) => r.s === s.id));
+    const cons = (slotCons(store.project, this.view) ?? []).filter((c) => c.refs.some((r) => r.s === s.id));
     const hasX = cons.some((c) => c.kind === "distanceX" || (c.kind === "fix" && c.refs.length === 1));
     const hasY = cons.some((c) => c.kind === "distanceY" || (c.kind === "fix" && c.refs.length === 1));
     if (s.kind === "rect") {
@@ -1485,7 +1514,18 @@ export class SketchPane {
   }
 
   get title() {
+    if (!isViewSlot(this.view)) {
+      const sk = sketchOf(store.project, this.view);
+      return sk ? `${sk.name} · ${planeLabel(sk.plane)}` : "스케치";
+    }
     const [u, v] = VIEW_AXES[this.view];
     return `${VIEW_LABEL[this.view]} · ${u}–${v}`;
+  }
+
+  /** 스케치 평면 (3면도 뷰면 null) */
+  frame() {
+    if (isViewSlot(this.view)) return null;
+    const sk = sketchOf(store.project, this.view);
+    return sk ? frameOf(sk.plane) : null;
   }
 }

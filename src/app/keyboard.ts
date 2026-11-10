@@ -35,7 +35,7 @@ export function initKeyboard() {
     const typing = isTyping();
     const mod = e.ctrlKey || e.metaKey || e.altKey;
     // 그리는 중의 숫자 입력·Enter·Backspace (2D 설계)
-    if (!typing && !mod && app.workspace === "design" && app.board.panes[ui.activeView].handleKey(e)) {
+    if (!typing && !mod && app.workspace === "design" && app.board.pane(ui.activeView).handleKey(e)) {
       e.preventDefault();
       return;
     }

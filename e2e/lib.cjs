@@ -47,7 +47,7 @@ async function fresh(page) {
 
 const waitBuild = async (page) => {
   await page.waitForTimeout(500);
-  await page.waitForFunction(() => /✓|⚠|도형을 그리면/.test(document.querySelector('#buildStatus')?.textContent || ''), null, { timeout: 120000 });
+  await page.waitForFunction(() => /✓|⚠|만들어져요/.test(document.querySelector('#buildStatus')?.textContent || ''), null, { timeout: 120000 });
   await page.waitForTimeout(300);
 };
 

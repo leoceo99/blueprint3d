@@ -4,7 +4,8 @@ import { plainNumber } from "../core/expr";
 import { getDim, projUnit, setDimInput, toggleLock } from "../core/params";
 import { fmtLenU, fmtNum, fmtVol, fromDisplay, unitLabel } from "../core/units";
 import { HEAD_LABEL, PURPOSE_LABEL, specDiameter, THREADS, withTableHead } from "../core/standards";
-import { VIEW_AXES, VIEW_LABEL, type HoleSpec, type Shape2D, type ViewId } from "../core/types";
+import { type HoleSpec, type Shape2D } from "../core/types";
+import { slotAxes, slotLabel, type SlotId } from "../core/featureModel";
 import { store } from "../store";
 import { fmt, shapeLabel } from "../ui/sketch";
 import { ui, type HoleSettings } from "../ui/state";
@@ -13,6 +14,7 @@ import { $, el, esc, keyCell } from "../app/dom";
 import { addCopies, centerShape, partCenter, selectedShape, setHole, straightenSelected } from "../app/edit";
 import { toast } from "../app/notify";
 import { constraintRows, selectedConstraintProps } from "./consPanel";
+import { renderFeaturePanel } from "./featurePanel";
 
 export function initProps() {
   onPanels(renderProps);
@@ -85,13 +87,7 @@ function renderProps() {
   const s = selectedShape();
   const lastBuild = app.lastBuild;
   if (app.workspace === "3d") {
-    const info = lastBuild
-      ? (() => {
-          const [[x0, y0, z0], [x1, y1, z1]] = lastBuild.bbox;
-          return `<b>3D 모델</b><br/>크기 ${fmt(x1 - x0)} × ${fmt(y1 - y0)} × ${fmt(z1 - z0)} ${unitLabel()}<br/>부피 ${fmtVol(lastBuild.volume)} · 덩어리 ${lastBuild.solidCount}개`;
-        })()
-      : `<b>3D 모델 없음</b><br/>${esc(app.buildError ?? "2D 설계에서 도형을 그리면 만들어집니다.")}`;
-    box.innerHTML = `<div class="props-empty">${info}<br/><br/>마우스 왼쪽 끌기: 돌리기 · 오른쪽 끌기: 이동 · 휠: 확대<br/>수정은 <kbd>1</kbd> 2D 설계에서 합니다.</div>`;
+    renderFeaturePanel(box);
     return;
   }
   if ((!s || !ui.sel) && ui.tool === "hole") {
@@ -117,10 +113,10 @@ function renderProps() {
     box.innerHTML = `<div class="props-empty">도형을 선택하면 치수를 숫자로 고칠 수 있어요.<br/>단축키: <kbd>V</kbd> 선택 <kbd>R</kbd> 사각형 <kbd>C</kbd> 원 <kbd>L</kbd> 다각형 <kbd>S</kbd> 장공 <kbd>D</kbd> 구멍 <kbd>E</kbd> 모서리 <kbd>M</kbd> 측정 <kbd>H</kbd> 구멍 전환 <kbd>F</kbd> 전체 보기<br/>선택한 도형의 ◆ 손잡이를 끌면 변이 둥글게 휩니다.</div>`;
     return;
   }
-  const [ua, va] = VIEW_AXES[ui.sel.view];
+  const [ua, va] = slotAxes(ui.sel.view);
   const head = document.createElement("div");
   head.className = "full";
-  head.innerHTML = `<b>${esc(shapeLabel(s))}</b> <span class="muted">· ${VIEW_LABEL[ui.sel.view]}</span>`;
+  head.innerHTML = `<b>${esc(shapeLabel(s))}</b> <span class="muted">· ${slotLabel(store.project, ui.sel.view)}</span>`;
   const seg = document.createElement("div");
   seg.className = "seg full";
   for (const [hole, label] of [
@@ -238,7 +234,7 @@ function renderProps() {
 }
 
 /** 부품 가운데로 맞추기 (가로/세로) — 위치가 잠겨 있으면 하지 않음 */
-function alignControls(s: Shape2D, view: ViewId): HTMLElement[] {
+function alignControls(s: Shape2D, view: SlotId): HTMLElement[] {
   const row = el("div", {}, "inline");
   const b1 = el("button", { textContent: "↔ 가로 가운데" }, "small");
   b1.onclick = () => centerShape(s, view, 0);
@@ -248,7 +244,7 @@ function alignControls(s: Shape2D, view: ViewId): HTMLElement[] {
   return [keyCell("가운데 맞춤"), row];
 }
 
-const DEPTH_FROM: Record<ViewId, string> = { front: "앞면부터", top: "윗면부터", side: "오른쪽 면부터" };
+const DEPTH_FROM: Record<SlotId, string> = { front: "앞면부터", top: "윗면부터", side: "오른쪽 면부터" };
 
 function nearestSize(d: number): string {
   let best = THREADS[0];
@@ -257,7 +253,7 @@ function nearestSize(d: number): string {
 }
 
 /** 깊이: [관통] 체크 또는 mm 값 */
-function depthRow(depth: number | undefined, view: ViewId, onSet: (d: number | undefined) => void, shape?: Shape2D): HTMLElement[] {
+function depthRow(depth: number | undefined, view: SlotId, onSet: (d: number | undefined) => void, shape?: Shape2D): HTMLElement[] {
   const row = el("div", {}, "inline");
   const through = el("input", { type: "checkbox", checked: depth === undefined });
   const lab = el("label", {}, "check");
@@ -295,7 +291,7 @@ function depthRow(depth: number | undefined, view: ViewId, onSet: (d: number | u
 }
 
 /** 규격 구멍 설정 (구멍 도구 기본값과 선택한 원형 구멍이 같이 쓴다) */
-function holeForm(state: HoleSettings, view: ViewId, apply: (next: HoleSettings) => void, shape?: Shape2D): HTMLElement[] {
+function holeForm(state: HoleSettings, view: SlotId, apply: (next: HoleSettings) => void, shape?: Shape2D): HTMLElement[] {
   const spec = state.spec;
   const set = (patch: Partial<HoleSpec>, extra: Partial<HoleSettings> = {}) => apply({ ...state, ...extra, spec: { ...spec, ...patch } });
   const select = <T extends string>(options: [T, string][], value: T, onChange: (v: T) => void) => {
@@ -372,8 +368,8 @@ function cornerControls(s: Extract<Shape2D, { kind: "rect" | "poly" }>): HTMLEle
 }
 
 /** 대칭 복사, 직선 배열, 원형 배열 */
-function copyControls(s: Shape2D, view: ViewId): HTMLElement[] {
-  const [ua, va] = VIEW_AXES[view];
+function copyControls(s: Shape2D, view: SlotId): HTMLElement[] {
+  const [ua, va] = slotAxes(view);
   const [cu, cv] = partCenter(view);
   /** isLen: 길이면 문서 단위로 보여 주고 읽을 때 mm로 */
   const num = (value: number, title: string, width = 56, isLen = true) => {

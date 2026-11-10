@@ -15,6 +15,7 @@ import {
   selectedShape,
   setTool,
   straightenSelected,
+  toggleConstruction,
   toggleHole,
 } from "../app/edit";
 import { VIEW_IDS, VIEW_LABEL, type ViewId } from "../core/types";
@@ -26,6 +27,7 @@ import { deleteConstraint } from "../consActions";
 import { addParam } from "../panels/params";
 import { initRibbon, PROCESS_LABEL, setCornerKind, setGrid, setMode, setProcess } from "./designRibbon";
 import type { Workspace } from "./registry";
+import { slotLabel, slotShapes } from "../core/featureModel";
 import { GRIDS, gridLabel, INCH_GRIDS } from "../core/settings";
 import { displayUnit } from "../core/units";
 
@@ -62,7 +64,8 @@ const TOOLS: [Tool, string, string, string[]][] = [
   ["select", "선택 · 이동", "V", ["select", "move", "선택"]],
   ["rect", "사각형 그리기", "R", ["rectangle", "box"]],
   ["circle", "원 그리기", "C", ["circle", "원형"]],
-  ["poly", "다각형 그리기", "L", ["polygon", "line", "선"]],
+  ["poly", "다각형 그리기", "L", ["polygon", "다각형"]],
+  ["line", "선 이어 그리기 (열린 선 — 스윕 경로·참조)", "Shift+L", ["line", "polyline", "path", "선", "경로"]],
   ["slot", "장공 그리기", "S", ["slot", "긴 구멍"]],
   ["hole", "규격 구멍 놓기", "D", ["hole", "bolt", "tap", "drill", "counterbore", "countersink", "탭", "볼트", "드릴", "카운터보어", "카운터싱크"]],
   ["corner", "모서리 R · 모따기", "E", ["fillet", "chamfer", "round", "라운드", "필렛"]],
@@ -100,6 +103,16 @@ function designCommands(): Command[] {
     },
     { id: "edit.duplicate", title: "복제", category: "편집", keywords: ["duplicate", "copy", "복사"], keys: ["Ctrl+D"], enabled: hasSel, run: duplicateSelected },
     { id: "edit.toggleHole", title: "몸체 ↔ 구멍 바꾸기", category: "편집", keywords: ["hole", "body", "구멍 전환"], keys: ["H"], enabled: hasSel, run: toggleHole },
+    {
+      id: "edit.toggleConstruction",
+      title: "참조선 ↔ 보통 선 바꾸기",
+      category: "편집",
+      keywords: ["construction", "reference", "참조선", "구성선", "보조선"],
+      keys: ["X"],
+      enabled: hasSel,
+      checked: () => !!selectedShape()?.construction,
+      run: toggleConstruction,
+    },
     {
       id: "edit.centerH",
       title: "가로 가운데 맞춤",
@@ -203,8 +216,8 @@ export function initDesign() {
   // 리본 ‘구속’ 옆: 지금 뷰의 남은 자유도
   onPanels(() => {
     const badge = $("#dofBadge");
-    const pane = app.board.panes[ui.activeView];
-    const shapes = store.project.views[ui.activeView];
+    const pane = app.board.pane(ui.activeView);
+    const shapes = slotShapes(store.project, ui.activeView);
     if (!shapes.length) {
       badge.textContent = "";
       return;
@@ -212,6 +225,6 @@ export function initDesign() {
     const an = pane.cons.analysis();
     badge.className = "dof-badge" + (an.unsatisfied.length ? " bad" : an.dof === 0 ? " full" : "");
     badge.textContent = an.unsatisfied.length ? "⚠ 안 풀림" : an.dof === 0 ? "✓ 다 정해짐" : `자유도 ${an.dof}`;
-    badge.title = `${VIEW_LABEL[ui.activeView]}: ${an.unsatisfied.length ? "지켜지지 않는 구속이 있어요" : an.dof === 0 ? "모든 도형의 크기·위치가 정해졌어요" : `더 정해야 할 값이 ${an.dof}개 남았어요 (치수 잠금🔒·구속으로)`}`;
+    badge.title = `${slotLabel(store.project, ui.activeView)}: ${an.unsatisfied.length ? "지켜지지 않는 구속이 있어요" : an.dof === 0 ? "모든 도형의 크기·위치가 정해졌어요" : `더 정해야 할 값이 ${an.dof}개 남았어요 (치수 잠금🔒·구속으로)`}`;
   });
 }

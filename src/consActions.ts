@@ -5,40 +5,36 @@
 import { analyzeView, KIND_LABEL } from "./core/constraints";
 import { plainNumber, referencedNames } from "./core/expr";
 import { evaluateParams } from "./core/params";
-import type { Constraint, ViewId } from "./core/types";
+import type { Constraint } from "./core/types";
+import { setSlotCons, slotCons, type SlotId } from "./core/featureModel";
 import { fromDisplay } from "./core/units";
 import { store } from "./store";
 
 /** 구속 추가. 이미 정해진 것(중복)이면 만들지 않는다 */
-export function addConstraint(view: ViewId, c: Constraint): boolean {
+export function addConstraint(view: SlotId, c: Constraint): boolean {
   const trial = structuredClone(store.project);
-  ((trial.constraints ??= {})[view] ??= []).push(c);
+  setSlotCons(trial, view, [...(slotCons(trial, view) ?? []), c]);
   const an = analyzeView(trial, view);
   if (an.redundant.includes(c.id)) {
     store.onConstraintError?.(`이미 정해져 있어서 ‘${KIND_LABEL[c.kind]}’ 구속은 필요 없어요 (중복 구속).`, [c.id]);
     return false;
   }
   return store.update((p) => {
-    ((p.constraints ??= {})[view] ??= []).push(c);
+    setSlotCons(p, view, [...(slotCons(p, view) ?? []), c]);
   }, `구속: ${KIND_LABEL[c.kind]}`);
 }
 
-export function deleteConstraint(view: ViewId, id: string) {
-  const c = store.project.constraints?.[view]?.find((x) => x.id === id);
+export function deleteConstraint(view: SlotId, id: string) {
+  const c = slotCons(store.project, view)?.find((x) => x.id === id);
   if (!c) return;
   store.update((p) => {
-    const list = (p.constraints?.[view] ?? []).filter((x) => x.id !== id);
-    if (list.length) p.constraints![view] = list;
-    else if (p.constraints) {
-      delete p.constraints[view];
-      if (!Object.keys(p.constraints).length) delete p.constraints;
-    }
+    setSlotCons(p, view, (slotCons(p, view) ?? []).filter((x) => x.id !== id));
   }, `구속 지우기: ${KIND_LABEL[c.kind]}`);
 }
 
 /** 치수 구속 값: 숫자(표시 단위) 또는 식(L/2). 오류면 설명을 돌려준다 */
-export function setConstraintValue(view: ViewId, id: string, input: string): string | null {
-  const c = store.project.constraints?.[view]?.find((x) => x.id === id);
+export function setConstraintValue(view: SlotId, id: string, input: string): string | null {
+  const c = slotCons(store.project, view)?.find((x) => x.id === id);
   if (!c) return "구속이 없어요";
   const text = input.trim();
   const angle = c.kind === "angle";
@@ -47,7 +43,7 @@ export function setConstraintValue(view: ViewId, id: string, input: string): str
     if (!angle && n < 0) return "거리는 0 이상이어야 해요";
     const v = angle ? n : fromDisplay(n);
     const ok = store.update((p) => {
-      const k = p.constraints![view]!.find((x) => x.id === id)!;
+      const k = slotCons(p, view)!.find((x) => x.id === id)!;
       k.value = v;
       delete k.expr;
     }, `${KIND_LABEL[c.kind]} ${text}`);
@@ -58,7 +54,7 @@ export function setConstraintValue(view: ViewId, id: string, input: string): str
   const unknown = referencedNames(text).find((x) => !values.has(x));
   if (unknown) return `없는 변수: ${unknown}`;
   const ok = store.update((p) => {
-    p.constraints![view]!.find((x) => x.id === id)!.expr = text;
+    slotCons(p, view)!.find((x) => x.id === id)!.expr = text;
   }, `${KIND_LABEL[c.kind]} = ${text}`);
   return ok ? null : "구속 조건과 맞지 않아 되돌렸어요";
 }

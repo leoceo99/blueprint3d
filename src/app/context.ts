@@ -50,6 +50,10 @@ type EventMap = {
   switched: void;
   /** 설정이 바뀜 */
   settings: void;
+  /** 스케치 편집 시작(스케치 id)·끝(null) — 13단계 */
+  sketch: string | null;
+  /** 피처 편집 시작·끝 — 13단계 */
+  featureEdit: string | null;
 };
 const handlers: { [K in keyof EventMap]?: ((v: EventMap[K]) => void)[] } = {};
 export function on<K extends keyof EventMap>(name: K, fn: (v: EventMap[K]) => void) {

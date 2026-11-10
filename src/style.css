@@ -641,3 +641,43 @@ label.radio { display: inline-flex; align-items: center; gap: 4px; cursor: point
 @media (pointer: coarse) { .dim-tools button, .dim-tools select { min-height: 34px; min-width: 44px; } }
 .set-dwg { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .set-dwg .inline-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* ---------- 13단계: 3D 설계 (피처) ---------- */
+.feat-head, .feat-tree { display: none; }
+body.ws-3d .feat-head { display: flex; }
+body.ws-3d .feat-tree { display: block; }
+body.ws-3d .tree-head, body.ws-3d #tree { display: none; }
+.feat-tree { overflow: auto; flex: 1 1 auto; min-height: 120px; padding: 2px 0 8px; font-size: 13px; }
+.feat-planes { border-bottom: 1px solid var(--border); margin-bottom: 4px; padding-bottom: 3px; }
+.feat-row { display: flex; align-items: center; gap: 6px; padding: 4px 10px 4px 12px; cursor: default; border-left: 3px solid transparent; user-select: none; }
+.feat-row:hover { background: var(--surface-2); }
+.feat-row.sel { background: var(--accent-soft); border-left-color: var(--accent); }
+.feat-row.editing { box-shadow: inset 0 0 0 1px var(--accent); }
+.feat-row.plane { color: var(--text-muted); font-size: 12px; padding-top: 2px; padding-bottom: 2px; cursor: pointer; }
+.feat-row.plane:hover { color: var(--text); }
+.feat-row.base .fi { color: var(--solid-stroke); }
+.feat-row .fi { width: 16px; text-align: center; flex: none; color: var(--accent); }
+.feat-row .fname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feat-row.off .fname { text-decoration: line-through; color: var(--text-muted); }
+.feat-row.rolled { opacity: 0.45; }
+.feat-row.error .fname { color: var(--sev-error); }
+.feat-row .fstate.error { color: var(--sev-error); }
+.feat-row .fstate.warn { color: var(--sev-warning); }
+.feat-row .facts { display: none; gap: 1px; flex: none; }
+.feat-row:hover .facts, .feat-row.sel .facts { display: inline-flex; }
+.feat-row .facts button { padding: 0 4px; min-height: 20px; font-size: 12px; line-height: 1; }
+.feat-rename { flex: 1; min-width: 0; font: inherit; padding: 1px 4px; }
+.feat-checks { display: flex; flex-direction: column; gap: 3px; max-height: 160px; overflow: auto; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; }
+.feat-checks label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.feat-msg { font-size: 12px; padding: 6px 8px; border-radius: 6px; }
+.feat-msg.error { background: color-mix(in srgb, var(--sev-error) 14%, transparent); color: var(--sev-error); }
+.feat-msg.warn { background: color-mix(in srgb, var(--sev-warning) 14%, transparent); }
+.feat-actions { display: flex; gap: 6px; margin-top: 6px; }
+.feat-actions button { flex: 1; }
+.plane-btn { text-align: left; padding: 6px 10px; line-height: 1.3; }
+.props-body .hint { font-size: 12px; color: var(--text-muted); }
+.props-body label.check { display: flex; align-items: center; gap: 4px; }
+.sketch-bar { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+body.sketch-mode .board-tools { display: none; }
+body.sketch-mode .ribbon .g-3d { display: none; }
+.tree-item.cons .name { color: var(--text-muted); font-style: italic; }

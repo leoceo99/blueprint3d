@@ -2,7 +2,8 @@ import { applyExpressions, evalSite, evaluateParams } from "./core/params";
 import { getVar, KIND_LABEL, pruneConstraints, shapeVarKeys, solveView } from "./core/constraints";
 import { activePart, docFromProject, fixView, normalizeDoc, setActiveDrawing, setActivePart, type Doc, type Part } from "./core/document";
 import { History } from "./core/history";
-import { emptyProject, VIEW_IDS, type Project, type Shape2D, type ViewId } from "./core/types";
+import { emptyProject, type Project, type Shape2D } from "./core/types";
+import { allSlots, slotCons, slotShapes, type SlotId } from "./core/featureModel";
 
 /** 열린 문서의 즉시 사본 (9단계부터 문서 형식) */
 const KEY = "blueprint3d.doc.v2";
@@ -119,9 +120,9 @@ class Store {
   private snapshotVars(): Map<string, number> {
     const m = new Map<string, number>();
     const p = this.project;
-    for (const v of VIEW_IDS) {
-      if (!p.constraints?.[v]?.length) continue;
-      for (const sh of p.views[v]) for (const k of shapeVarKeys(sh)) m.set(`${v}|${sh.id}|${k}`, getVar(sh, k));
+    for (const v of allSlots(p)) {
+      if (!slotCons(p, v)?.length) continue;
+      for (const sh of slotShapes(p, v)) for (const k of shapeVarKeys(sh)) m.set(`${v}|${sh.id}|${k}`, getVar(sh, k));
     }
     return m;
   }
@@ -129,30 +130,31 @@ class Store {
   /** 지금 상태를 기준으로 (실행 취소·다른 부품·새 문서 뒤) */
   snapBaseline() {
     this.baseline = this.snapshotVars();
-    this.baseCons = JSON.stringify(this.project.constraints ?? null);
+    this.baseCons = consKey(this.project);
   }
 
   /** 기준에서 바뀐 값은 고정하고 나머지를 풀어 구속을 지킨다. 풀 수 없으면 false (도형은 그대로) */
   private solveEdit(): boolean {
     const p = this.project;
     pruneConstraints(p);
-    if (!p.constraints) {
+    const slots = allSlots(p).filter((v) => slotCons(p, v)?.length);
+    if (!slots.length) {
       this.baseline.clear();
+      this.baseCons = consKey(p);
       return true;
     }
     const now = this.snapshotVars();
-    const consNow = JSON.stringify(p.constraints);
+    const consNow = consKey(p);
     // 바뀐 값도, 구속도 그대로면 풀 필요 없음
     // (식으로 값을 정한 치수 구속은 변수가 바뀌면 값도 바뀌므로 늘 다시 푼다)
-    let moved = consNow !== this.baseCons || VIEW_IDS.some((v) => p.constraints?.[v]?.some((c) => c.expr));
+    let moved = consNow !== this.baseCons || slots.some((v) => slotCons(p, v)?.some((c) => c.expr));
     if (!moved) for (const [k, v] of now) if (this.baseline.get(k) !== v) {
       moved = true;
       break;
     }
     if (!moved) return true;
     const values = constraintValues(p);
-    for (const v of VIEW_IDS) {
-      if (!p.constraints[v]?.length) continue;
+    for (const v of slots) {
       const fixed = new Set<string>();
       for (const [key, val] of now) {
         if (!key.startsWith(`${v}|`)) continue;
@@ -161,7 +163,7 @@ class Store {
       }
       const r = solveView(p, v, { fixed, values });
       if (!r.ok) {
-        const names = r.conflicting.map((id) => p.constraints?.[v]?.find((c) => c.id === id)).filter(Boolean).map((c) => KIND_LABEL[c!.kind]);
+        const names = r.conflicting.map((id) => slotCons(p, v)?.find((c) => c.id === id)).filter(Boolean).map((c) => KIND_LABEL[c!.kind]);
         this.onConstraintError?.(r.invalid ? `구속 조건을 지키면 ${r.invalid} — 되돌렸어요.` : `구속 조건과 맞지 않아 되돌렸어요${names.length ? ` (${[...new Set(names)].join(", ")})` : ""}.`, r.conflicting);
         return false;
       }
@@ -173,8 +175,8 @@ class Store {
   /** 이번에 바뀐 도형 값만 기준으로 되돌린다 (끌기 중 풀 수 없을 때) */
   private restoreBaseline() {
     const p = this.project;
-    for (const v of VIEW_IDS)
-      for (const sh of p.views[v])
+    for (const v of allSlots(p))
+      for (const sh of slotShapes(p, v))
         for (const k of shapeVarKeys(sh)) {
           const old = this.baseline.get(`${v}|${sh.id}|${k}`);
           if (old !== undefined && Math.abs(old - getVar(sh, k)) > 1e-9) setShapeVar(sh, k, old);
@@ -251,14 +253,19 @@ class Store {
     save(this.doc, this.projectId);
   }
 
-  shapes(view: ViewId): Shape2D[] {
-    return this.project.views[view];
+  shapes(view: SlotId): Shape2D[] {
+    return slotShapes(this.project, view);
   }
+}
+
+/** 구속 목록 전체 (3면도 + 스케치 피처) — 바뀌었는지 비교용 */
+function consKey(p: Project): string {
+  return JSON.stringify(allSlots(p).map((v) => slotCons(p, v) ?? null));
 }
 
 /** 치수 구속의 식 값 (변수 L 등) */
 function constraintValues(p: Project): Map<string, number> | undefined {
-  const all = VIEW_IDS.flatMap((v) => p.constraints?.[v] ?? []).filter((c) => c.expr);
+  const all = allSlots(p).flatMap((v) => slotCons(p, v) ?? []).filter((c) => c.expr);
   if (!all.length) return undefined;
   const pr = evaluateParams(p);
   const out = new Map<string, number>();

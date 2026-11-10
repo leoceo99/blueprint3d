@@ -5,6 +5,10 @@
  *  workspaces/ 작업 공간 모듈 (2D 설계 · 3D 보기 · 도면 출력 · 예제)
  */
 import { VIEW_IDS } from "./core/types";
+import { sketchOf, slotShapes } from "./core/featureModel";
+import { initSketchMode, leaveSketch } from "./app/sketchMode";
+import { syncEditState } from "./app/featureEdit";
+import { initFeatureTree } from "./panels/featureTree";
 import { store } from "./store";
 import { DraftBoard } from "./ui/board";
 import { refreshColors } from "./ui/sketch";
@@ -74,6 +78,8 @@ syncExample();
 // ---------------- 모듈 ----------------
 initDesign();
 initView3d();
+initSketchMode();
+initFeatureTree();
 initSheet();
 initDocTree();
 initTree();
@@ -121,7 +127,10 @@ store.subscribe(() => {
 });
 store.subscribe(() => {
   // 지워진 도형을 선택하고 있으면 해제
-  if (ui.sel && !store.project.views[ui.sel.view].some((s) => s.id === ui.sel!.id)) ui.sel = null;
+  if (ui.sel && !slotShapes(store.project, ui.sel.view).some((s) => s.id === ui.sel!.id)) ui.sel = null;
+  // 지워진 스케치를 편집하고 있었으면 3면도로
+  if (ui.sketch && !sketchOf(store.project, ui.sketch)) leaveSketch();
+  syncEditState();
   // 3D 모양이 바뀐 경우에만 다시 만든다 (이름·표제란·제조 방식만 바뀌면 건너뜀)
   scheduleBuildIfChanged();
   syncPartCommands();
@@ -148,4 +157,4 @@ const firstFit = setInterval(() => {
 }, 200);
 
 // 개발·시험용 (나중에 플러그인 API의 출발점)
-Object.assign(window, { blueprint3d: { commands, workspaces, registerWorkspace, unregisterWorkspace, store, buildStats, board: app.board, app } });
+Object.assign(window, { blueprint3d: { commands, workspaces, registerWorkspace, unregisterWorkspace, store, buildStats, board: app.board, app, ui } });

@@ -159,6 +159,8 @@ export function outline(s: Shape2D): Seg[] {
     ];
   }
   if (s.kind === "rect") return polyOutline(rectPoints(s), [], s.corners ?? []);
+  // 열린 선 (13단계): 점 i → i+1 만 (닫는 변 없음, 모서리 처리 없음)
+  if (s.kind === "poly" && s.open) return s.pts.slice(0, -1).map((a, i) => ({ a, b: s.pts[i + 1], bulge: s.bulges?.[i] ?? 0 }));
   if (s.kind === "poly") return polyOutline(s.pts, s.bulges, s.corners);
   // 장공
   const [a, b] = [s.a, s.b];
@@ -227,6 +229,7 @@ export function pointInPoly(x: number, y: number, pts: Pt[]): boolean {
 }
 
 export function pointInShape(x: number, y: number, s: Shape2D): boolean {
+  if (s.kind === "poly" && s.open) return false;
   if (s.kind === "circle") return (x - s.cx) ** 2 + (y - s.cy) ** 2 <= s.r * s.r;
   if (s.kind === "rect" && !s.corners?.some(Boolean)) {
     const r = normRect(s);
@@ -292,6 +295,7 @@ export function isDegenerate(s: Shape2D): boolean {
   if (s.kind === "rect") return Math.abs(s.w) < 1e-6 || Math.abs(s.h) < 1e-6;
   if (s.kind === "circle") return s.r < 1e-6;
   if (s.kind === "slot") return s.w < 1e-6;
+  if (s.open) return s.pts.length < 2 || s.pts.every((q) => Math.hypot(q[0] - s.pts[0][0], q[1] - s.pts[0][1]) < 1e-6);
   if (s.pts.length < 3) return true;
   return area(s) < 1e-9;
 }

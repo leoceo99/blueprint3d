@@ -1,5 +1,6 @@
 /** 왼쪽 패널: 모델 트리 (뷰별 도형 목록 + 3D 결과 요약) */
-import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Finding, type ViewId } from "../core/types";
+import { type Finding } from "../core/types";
+import { slotAxes, slotLabel, slotShapes, type SlotId } from "../core/featureModel";
 import { store } from "../store";
 import { fmt, shapeLabel } from "../ui/sketch";
 import { fmtVol, unitLabel } from "../core/units";
@@ -25,34 +26,35 @@ function renderTree() {
   const p = store.project;
   const tree = $("#tree");
   tree.innerHTML = "";
-  for (const v of VIEW_IDS) {
-    const holesOnly = p.mode === "revolve" && v !== "front";
+  for (const v of app.board.activePanes().map((x) => x.view)) {
+    const list = slotShapes(p, v);
+    const holesOnly = p.mode === "revolve" && (v === "top" || v === "side");
     const box = document.createElement("div");
     box.className = "tree-view";
     const head = document.createElement("div");
     head.className = "tv-head" + (ui.activeView === v ? " active" : "");
-    const [ua, va] = VIEW_AXES[v];
-    head.innerHTML = `<span>▾</span>${VIEW_LABEL[v]} <span class="muted">(${ua}–${va})</span><span class="cnt">${p.views[v].length}</span>`;
+    const [ua, va] = slotAxes(v);
+    head.innerHTML = `<span>▾</span>${esc(slotLabel(p, v))} <span class="muted">(${ua}–${va})</span><span class="cnt">${list.length}</span>`;
     head.onclick = () => {
       ui.activeView = v;
       ui.emit();
     };
     box.appendChild(head);
-    if (!p.views[v].length) {
+    if (!list.length) {
       const e = document.createElement("div");
       e.className = "tree-empty";
       e.textContent = holesOnly ? "구멍만 그릴 수 있어요" : "비어 있음";
       box.appendChild(e);
     }
-    for (const s of p.views[v]) {
+    for (const s of list) {
       const it = document.createElement("div");
       const sel = ui.sel?.view === v && ui.sel.id === s.id;
-      it.className = "tree-item" + (s.hole ? " hole" : "") + (sel ? " sel" : "");
+      it.className = "tree-item" + (s.hole ? " hole" : "") + (sel ? " sel" : "") + (s.construction ? " cons" : "");
       const sev = worstSeverity(v, s.id);
       it.innerHTML =
         `${SHAPE_ICON[s.kind]}<span class="name" title="${esc(shapeLabel(s))}">${esc(shapeLabel(s, true))}</span>` +
         (sev ? `<span class="dot" style="background:${SEV_COLOR[sev]}"></span>` : "") +
-        `<span class="badge">${s.hole ? "구멍" : "몸체"}</span>`;
+        `<span class="badge">${s.construction ? "참조선" : s.kind === "poly" && s.open ? "선" : s.hole ? "구멍" : "몸체"}</span>`;
       it.onclick = () => {
         ui.sel = { view: v, id: s.id };
         ui.activeView = v;
@@ -75,7 +77,7 @@ function renderTree() {
   tree.appendChild(r);
 }
 
-function worstSeverity(view: ViewId, id: string) {
+function worstSeverity(view: SlotId, id: string) {
   let best: Finding["severity"] | null = null;
   const rank = { error: 0, warning: 1, info: 2 };
   for (const f of ui.findings)

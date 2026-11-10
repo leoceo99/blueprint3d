@@ -63,6 +63,7 @@
           <button data-tool="rect" data-cmd="tool.rect" title="사각형"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="14" height="10" rx="0.5"/></svg>사각형<kbd>R</kbd></button>
           <button data-tool="circle" data-cmd="tool.circle" title="원"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/></svg>원<kbd>C</kbd></button>
           <button data-tool="poly" data-cmd="tool.poly" title="다각형"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3l7 5-2.7 8.5H5.7L3 8z"/></svg>다각형<kbd>L</kbd></button>
+          <button data-tool="line" data-cmd="tool.line" title="선 이어 그리기 — 열린 선(스윕 경로), 첫 점을 누르면 닫힌 도형"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 15l5-8 4 5 5-8"/><circle cx="3" cy="15" r="1" fill="currentColor"/><circle cx="17" cy="4" r="1" fill="currentColor"/></svg>선<kbd>⇧L</kbd></button>
           <button data-tool="slot" data-cmd="tool.slot" title="장공"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6.5" width="15" height="7" rx="3.5"/><circle cx="6" cy="10" r="0.6" fill="currentColor"/><circle cx="14" cy="10" r="0.6" fill="currentColor"/></svg>장공<kbd>S</kbd></button>
           <button data-tool="hole" data-cmd="tool.hole" title="규격 구멍 — 볼트 관통·탭·카운터보어·카운터싱크·깊이"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="3.5"/><path d="M10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3"/></svg>구멍<kbd>D</kbd></button>
         </div>
@@ -92,7 +93,7 @@
         </div>
         <div class="glabel">모서리 · 측정</div>
       </div>
-      <div class="group">
+      <div class="group g-3d">
         <div class="fields">
           <label>방식
             <select id="mode">
@@ -104,7 +105,7 @@
         </div>
         <div class="glabel">3D 생성</div>
       </div>
-      <div class="group">
+      <div class="group g-3d">
         <div class="fields">
           <label>제조 방식
             <select id="process">
@@ -139,6 +140,41 @@
       </div>
     </div>
 
+    <div class="ribbon ribbon3d" id="ribbon3d" hidden>
+      <div class="group">
+        <div class="tools">
+          <button data-cmd="feat.sketch" title="새 스케치 — 평면(XY·XZ·YZ)이나 부품의 평평한 면을 고르고 도형을 그려요"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 15l2.5-.6L15 5l-1.9-1.9L3.6 12.5z"/><path d="M2 18h16" stroke-dasharray="2 2"/></svg>스케치<kbd>S</kbd></button>
+        </div>
+        <div class="glabel">스케치</div>
+      </div>
+      <div class="group">
+        <div class="tools">
+          <button data-cmd="feat.extrude" title="스케치를 두께만큼 밀어내기 (더하기·빼기·겹친 부분)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="10" height="7"/><path d="M4 10l3-4h10l-3 4M17 6v7l-3 4"/><path d="M9 8V2M7 4l2-2 2 2"/></svg>돌출<kbd>E</kbd></button>
+          <button data-cmd="feat.revolve" title="스케치를 축으로 돌려 만들기 (축·플랜지·풀리)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="10" cy="15" rx="6" ry="2.2"/><path d="M4 15V7M16 15V7"/><ellipse cx="10" cy="7" rx="6" ry="2.2"/></svg>회전<kbd>R</kbd></button>
+          <button data-cmd="feat.sweep" title="경로를 따라 원·관·단면 쓸기 (배관·호스·손잡이)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 16c3 0 3-10 7-10s4 6 7 6"/><circle cx="3" cy="16" r="2"/></svg>스윕<kbd>W</kbd></button>
+          <button data-cmd="feat.loft" title="단면 두 개 이상을 이어 매끈하게"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="14" width="14" height="3"/><ellipse cx="10" cy="4" rx="3" ry="1.2"/><path d="M3 14L7 4M17 14L13 4"/></svg>로프트<kbd>O</kbd></button>
+        </div>
+        <div class="glabel">몸체</div>
+      </div>
+      <div class="group">
+        <div class="tools">
+          <button data-cmd="feat.fillet" title="모서리를 둥글게 (R)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17V9a6 6 0 016-6h8"/></svg>필렛<kbd>F</kbd></button>
+          <button data-cmd="feat.chamfer" title="모서리를 비스듬히 깎기 (C)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17V8l5-5h9"/></svg>모따기<kbd>C</kbd></button>
+          <button data-cmd="feat.shell" title="속을 비우고 벽 두께만 남기기 (상자·케이스)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="14" height="12"/><rect x="5.5" y="5" width="9" height="9.5"/></svg>쉘<kbd>T</kbd></button>
+          <button data-cmd="feat.draft" title="면을 조금 기울이기 (금형·주조 빼기)"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 17L7 4h6l2 13z"/></svg>구배<kbd>D</kbd></button>
+        </div>
+        <div class="glabel">다듬기</div>
+      </div>
+      <div class="group">
+        <div class="tools">
+          <button data-cmd="feat.hole" title="규격 구멍(볼트 관통·탭·카운터보어·카운터싱크)을 스케치 원 중심마다"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="3.5"/></svg>구멍<kbd>H</kbd></button>
+          <button data-cmd="feat.pattern" title="피처를 직선·원형으로 여러 개"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="7" width="4" height="6"/><rect x="8" y="7" width="4" height="6"/><rect x="13.5" y="7" width="4" height="6"/></svg>패턴<kbd>P</kbd></button>
+          <button data-cmd="feat.mirror" title="피처(또는 몸체 전체)를 평면에 대칭으로"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 2v16" stroke-dasharray="2 2"/><path d="M8 5L3 15h5zM12 5l5 10h-5z"/></svg>대칭<kbd>M</kbd></button>
+        </div>
+        <div class="glabel">복제 · 구멍</div>
+      </div>
+    </div>
+
     <div id="sourceBar" class="source-bar" hidden>
       <span class="sb-label">가져온 3D 파일</span>
       <b id="sourceName"></b>
@@ -150,11 +186,21 @@
       <button data-turn="2" title="Z축으로 90° 돌리기">Z ↻</button>
       <button id="sourceClose" title="가져온 3D 파일을 닫고 빈 스케치로 (Ctrl+Z로 되돌릴 수 있어요)">닫기</button>
     </div>
+    <div id="sketchBar" class="source-bar sketch-bar" hidden>
+      <span class="sb-label">✎ 스케치 편집 중</span>
+      <b id="sketchName"></b>
+      <span class="muted small" id="sketchPlane"></span>
+      <span class="muted small">· 옅은 선은 이 평면에 비친 지금 모델 — 끝·가운데에 붙어요</span>
+      <div class="spacer"></div>
+      <button id="sketchDone" class="primary" title="스케치를 끝내고 3D 설계로 (Esc 두 번)">✓ 스케치 끝내기</button>
+    </div>
     <main id="ws-main" class="workspace">
       <aside class="panel left">
         <div class="panel-head">문서</div>
         <div id="docTree" class="doc-tree"></div>
-        <div class="panel-head">모델 트리 <span id="treePart" class="muted"></span></div>
+        <div class="panel-head feat-head">피처 <span id="featCount" class="muted"></span></div>
+        <div id="featTree" class="feat-tree"></div>
+        <div class="panel-head tree-head">모델 트리 <span id="treePart" class="muted"></span></div>
         <div id="tree" class="tree"></div>
         <div class="panel-head params-head">
           변수

@@ -2,20 +2,23 @@
  * 도형 편집 동작 (명령과 속성 패널이 같이 쓴다): 선택, 도구, 삭제, 복제, 복사본 추가, 가운데 맞춤, 변 바로잡기.
  */
 import { boundsOf, translated } from "../core/geometry2d";
-import { VIEW_IDS, type Shape2D, type ViewId } from "../core/types";
+import { type Shape2D } from "../core/types";
+import { slotShapes, type SlotId } from "../core/featureModel";
 import { newId, store } from "../store";
 import { ui, type Tool } from "../ui/state";
 import { app, invalidatePanels } from "./context";
 import { $$ } from "./dom";
 import { toast } from "./notify";
+import { cancelEdit, fedit, stopPlanePick } from "./featureEdit";
+import { leaveSketch } from "./sketchMode";
 
 export function selectedShape(): Shape2D | null {
   if (!ui.sel) return null;
-  return store.project.views[ui.sel.view].find((s) => s.id === ui.sel!.id) ?? null;
+  return slotShapes(store.project, ui.sel.view).find((s) => s.id === ui.sel!.id) ?? null;
 }
 
 export function setTool(t: Tool) {
-  for (const v of VIEW_IDS) app.board.panes[v].cancel();
+  for (const p of app.board.activePanes()) p.cancel();
   ui.tool = t;
   ui.emit();
   invalidatePanels();
@@ -27,7 +30,7 @@ export function fitAll() {
   $$("[data-focus]").forEach((x) => x.classList.toggle("on", x.getAttribute("data-focus") === "all"));
 }
 /** 제도판: 한 뷰만 크게 */
-export function focusView(v: ViewId) {
+export function focusView(v: SlotId) {
   app.board.focus(v);
   $$("[data-focus]").forEach((x) => x.classList.toggle("on", x.getAttribute("data-focus") === v));
 }
@@ -37,6 +40,16 @@ export function toggleHole() {
   if (s) store.update(() => (s.hole = !s.hole), s.hole ? "몸체로 바꾸기" : "구멍으로 바꾸기");
 }
 
+/** 참조선(구성선): 그리기·구속에만 쓰고 3D에는 안 씀 (13단계) */
+export function toggleConstruction() {
+  const s = selectedShape();
+  if (!s) return;
+  store.update(() => {
+    if (s.construction) delete s.construction;
+    else s.construction = true;
+  }, s.construction ? "보통 선으로" : "참조선으로");
+}
+
 export function setHole(s: Shape2D, hole: boolean) {
   store.update(() => (s.hole = hole), hole ? "구멍으로 바꾸기" : "몸체로 바꾸기");
 }
@@ -44,7 +57,11 @@ export function setHole(s: Shape2D, hole: boolean) {
 export function deleteSelected() {
   const sel = ui.sel;
   if (!sel) return;
-  store.update((p) => (p.views[sel.view] = p.views[sel.view].filter((s) => s.id !== sel.id)), "삭제");
+  store.update((p) => {
+    const list = slotShapes(p, sel.view);
+    const i = list.findIndex((s) => s.id === sel.id);
+    if (i >= 0) list.splice(i, 1);
+  }, "삭제");
   ui.sel = null;
   ui.emit();
 }
@@ -57,25 +74,25 @@ export function duplicateSelected() {
 }
 
 /** 복사본들을 한 번에 추가 (실행 취소 한 번으로 되돌릴 수 있게) */
-export function addCopies(view: ViewId, copies: Shape2D[], label = "복사") {
+export function addCopies(view: SlotId, copies: Shape2D[], label = "복사") {
   if (!copies.length) return;
   for (const c of copies) c.id = newId();
-  store.update((p) => p.views[view].push(...copies), label);
+  store.update((p) => slotShapes(p, view).push(...copies), label);
   ui.sel = { view, id: copies[copies.length - 1].id };
   ui.emit();
 }
 
 /** 그 뷰 몸체 전체의 가운데 (대칭·원형 배열의 기본 기준) */
-export function partCenter(view: ViewId): [number, number] {
-  const b = boundsOf(store.project.views[view]);
+export function partCenter(view: SlotId): [number, number] {
+  const b = boundsOf(slotShapes(store.project, view));
   return b ? [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] : [0, 0];
 }
 
 /** 부품 가운데로 맞추기 (axis 0: 가로, 1: 세로) — 위치가 잠겨 있으면 하지 않음 */
-export function centerShape(s: Shape2D, view: ViewId, axis: 0 | 1) {
+export function centerShape(s: Shape2D, view: SlotId, axis: 0 | 1) {
   // 이 도형을 뺀 몸체들의 범위 가운데 (몸체 자신을 맞출 땐 다른 몸체 기준)
-  const others = store.project.views[view].filter((o) => o.id !== s.id);
-  const b = boundsOf(others) ?? boundsOf(store.project.views[view]);
+  const others = slotShapes(store.project, view).filter((o) => o.id !== s.id);
+  const b = boundsOf(others) ?? boundsOf(slotShapes(store.project, view));
   if (!b) return toast("기준이 될 몸체가 없어요.");
   const target = axis === 0 ? (b[0] + b[2]) / 2 : (b[1] + b[3]) / 2;
   const sb = boundsOf([{ ...s, hole: false }])!;
@@ -84,7 +101,7 @@ export function centerShape(s: Shape2D, view: ViewId, axis: 0 | 1) {
   if (keys.some((k) => s.exprs?.[k] !== undefined)) return toast("위치가 잠겨 있거나 식에 묶여 있어요. 🔒를 풀고 다시 하세요.");
   const d = target - cur;
   store.update((p) => {
-    const list = p.views[view];
+    const list = slotShapes(p, view);
     const i = list.findIndex((o) => o.id === s.id);
     if (i >= 0) list[i] = translated(list[i], axis === 0 ? d : 0, axis === 1 ? d : 0);
   }, axis === 0 ? "가로 가운데 맞춤" : "세로 가운데 맞춤");
@@ -128,11 +145,17 @@ export function straightenSelected() {
 
 /** Esc: 그리던 것 취소 → 선택 도구로 → 선택 해제 */
 export function escape() {
-  const pane = app.board.panes[ui.activeView];
+  // 3D 설계: 평면 고르기·피처 편집 취소
+  if (app.workspace === "3d") {
+    if (fedit.plane) stopPlanePick();
+    else if (fedit.id) cancelEdit();
+    return;
+  }
+  const pane = app.board.pane(ui.activeView);
   if (pane.cancel()) return;
   if (ui.tool !== "select") setTool("select");
   else if (ui.sel) {
     ui.sel = null;
     ui.emit();
-  }
+  } else if (ui.sketch && !ui.selCons) leaveSketch(); // 스케치 편집: 더 취소할 것이 없으면 끝내기
 }

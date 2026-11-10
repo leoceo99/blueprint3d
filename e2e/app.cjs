@@ -31,7 +31,7 @@ const fs = require('fs');
 
     // ---- 8.1 버튼·메뉴·단축키가 같은 명령 ----
     const kbds = await page.$$eval('#ribbon [data-cmd] kbd', ks => ks.map(k => k.textContent).join(' '));
-    ok('ribbon shortcut labels from commands', /V R C L S D/.test(kbds) && kbds.includes('⌃Z'), kbds);
+    ok('ribbon shortcut labels from commands', /V R C L (⇧L )?S D/.test(kbds) && kbds.includes('⌃Z'), kbds);
     await page.click('[data-menu="file"]');
     const fileKbd = await page.$$eval('#menu-file [data-cmd] kbd', ks => ks.map(k => k.textContent).filter(Boolean));
     ok('file menu shortcut labels', fileKbd.includes('Ctrl+Alt+N') && fileKbd.includes('Ctrl+Shift+O'), fileKbd.join(' '));

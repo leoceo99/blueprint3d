@@ -6,7 +6,7 @@
  * - 스케치 피처는 몸체를 바꾸지 않고, 돌출·회전 등이 스케치 id로 가리킨다
  * - 면·모서리 참조는 기하 지문(FaceSig·EdgeSig)으로 저장하고 다시 계산할 때 가장 닮은 것을 찾는다 (결정 29)
  */
-import { VIEW_IDS, type Constraint, type HoleSpec, type Project, type Shape2D, type ViewId } from "./types";
+import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type Constraint, type HoleSpec, type Project, type Shape2D, type ViewId } from "./types";
 
 export type P3 = [number, number, number];
 
@@ -268,6 +268,16 @@ export function setSlotCons(p: FeaturePart, slot: SlotId, list: Constraint[] | u
   if (!sk) return;
   if (list?.length) sk.constraints = list;
   else delete sk.constraints;
+}
+
+/** 자리 이름: “정면도”, “스케치 1” */
+export function slotLabel(p: FeaturePart, slot: SlotId): string {
+  return isViewSlot(slot) ? VIEW_LABEL[slot] : (sketchOf(p, slot)?.name ?? "스케치");
+}
+
+/** 자리의 가로·세로 축 이름: 3면도는 3D 축(X·Z …), 스케치는 가로·세로 */
+export function slotAxes(slot: SlotId): [string, string] {
+  return isViewSlot(slot) ? VIEW_AXES[slot] : ["가로", "세로"];
 }
 
 /** 도형이 있는 모든 자리 (3면도 뷰 + 스케치 피처) */

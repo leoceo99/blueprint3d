@@ -17,7 +17,8 @@ import {
   type ViewAnalysis,
 } from "../core/constraints";
 import { fmtLen } from "../core/units";
-import type { Constraint, CRef, Shape2D, ViewId } from "../core/types";
+import type { Constraint, CRef, Shape2D } from "../core/types";
+import { slotCons, slotShapes, type SlotId } from "../core/featureModel";
 import { store } from "../store";
 import { ui } from "./state";
 
@@ -33,7 +34,7 @@ export interface Candidate {
 
 /** SketchPane이 넘겨 주는 것 */
 export interface PaneLike {
-  readonly view: ViewId;
+  readonly view: SlotId;
   toScreen(u: number, v: number): [number, number];
   /** 화면에서 이 뷰가 차지하는 사각형 (축을 그릴 범위) */
   region(): [number, number, number, number];
@@ -96,7 +97,7 @@ export class ConstraintLayer {
       const R = Math.abs(S(c[0] + r, c[1])[0] - C[0]);
       out.push({ ref, type: "circle", screen: { c: C, r: R }, dist: Math.abs(Math.hypot(C[0] - x, C[1] - y) - R) + 1 });
     };
-    for (const s of p.views[this.view]) {
+    for (const s of slotShapes(p, this.view)) {
       for (const k of pointKeys(s)) pushPt({ s: s.id, k }, refPoint(p, this.view, { s: s.id, k }));
       for (const k of lineKeys(s)) {
         const [a, b] = refLine(p, this.view, { s: s.id, k });
@@ -148,7 +149,7 @@ export class ConstraintLayer {
   draw(c: CanvasRenderingContext2D, col: { cons: string; bg: string; accent: string; error: string }, hover: Candidate | null) {
     this.hits = [];
     const p = store.project;
-    const list = p.constraints?.[this.view] ?? [];
+    const list = slotCons(p, this.view) ?? [];
     const S = (w: Pt) => this.pane.toScreen(w[0], w[1]);
     const bad = new Set(this.analysis().unsatisfied);
     const selId = ui.selCons?.view === this.view ? ui.selCons.id : null;

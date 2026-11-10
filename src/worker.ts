@@ -2,7 +2,7 @@
 import opencascade from "replicad-opencascadejs";
 import wasmUrl from "replicad-opencascadejs/wasm?url";
 import { setOC, type Shape3D } from "replicad";
-import { BuildError } from "./core/build";
+import { BuildError, projectOnPlane } from "./core/build";
 import { buildAllPart, FeatureBuildError } from "./core/featureBuild";
 import { orientShape, readStep, readStl, stepResult, stlResult } from "./core/importModel";
 import { meshToSTL, rotateQuarter, type Mesh } from "./core/mesh";
@@ -13,11 +13,14 @@ export type WorkerRequest =
   | { id: number; type: "build"; project: Project; keep?: boolean }
   /** 가져온 3D 파일로 결과 만들기. data는 이 워커가 그 key를 처음 볼 때만 보낸다 */
   | { id: number; type: "import"; source: ModelSource; data?: ArrayBuffer; keep?: boolean }
-  | { id: number; type: "export"; format: "stl" | "step" };
+  | { id: number; type: "export"; format: "stl" | "step" }
+  /** 지금 모델을 스케치 평면에 비춘 모습 (13단계 스케치 밑그림) */
+  | { id: number; type: "projectPlane"; n: [number, number, number]; x: [number, number, number] };
 
 export type WorkerResponse =
   | { id: number; ok: true; type: "build"; result: import("./core/types").BuildResult }
   | { id: number; ok: true; type: "export"; data: ArrayBuffer }
+  | { id: number; ok: true; type: "projectPlane"; view: import("./core/types").ProjectedView | null }
   | { id: number; ok: false; error: string; userError: boolean; needData?: boolean; featureLog?: import("./core/featureModel").FeatureStatus[] };
 
 const ready = (async () => {
@@ -62,6 +65,8 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         if (msg.keep !== false) setCurrent(null, mesh);
         post({ id: msg.id, ok: true, type: "build", result });
       }
+    } else if (msg.type === "projectPlane") {
+      post({ id: msg.id, ok: true, type: "projectPlane", view: current ? projectOnPlane(current, msg.n, msg.x) : null });
     } else {
       let data: ArrayBuffer;
       if (currentMesh) {

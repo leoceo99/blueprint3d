@@ -44,6 +44,13 @@ class Engine {
     return r.result;
   }
 
+  /** 지금 모델을 평면(법선 n, 가로 x)에 비춘 모습 — 모델이 없으면 null */
+  async projectPlane(n: [number, number, number], x: [number, number, number]): Promise<import("./core/types").ProjectedView | null> {
+    const r = await this.call({ type: "projectPlane", n, x } as any);
+    if (!r.ok || r.type !== "projectPlane") return null;
+    return r.view;
+  }
+
   async export(format: "stl" | "step"): Promise<ArrayBuffer> {
     const r = await this.call({ type: "export", format } as any);
     if (!r.ok) throw new Error(r.error);

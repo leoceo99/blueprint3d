@@ -14,6 +14,7 @@
  */
 import { boundsOf, isDegenerate, shapeBounds } from "../core/geometry2d";
 import { VIEW_AXES, VIEW_IDS, VIEW_LABEL, type ViewId } from "../core/types";
+import { isViewSlot, sketchOf, slotShapes, type SlotId } from "../core/featureModel";
 import { store } from "../store";
 import { palette, SketchPane } from "./sketch";
 import { ui } from "./state";
@@ -29,10 +30,12 @@ export class DraftBoard {
   dpr = 1;
   spaceDown = false;
 
-  /** 각 뷰 원점의 도면 좌표 */
-  private off: Record<ViewId, [number, number]> = { front: [0, 0], top: [0, 80], side: [100, 0] };
+  /** 각 뷰 원점의 도면 좌표 (스케치 한 장 모드에서는 스케치가 [0, 0]) */
+  private off: Record<string, [number, number]> = { front: [0, 0], top: [0, 80], side: [100, 0] };
   /** 각 뷰의 내용 범위 (뷰 좌표, 여백 포함) */
-  private frames: Record<ViewId, Rect> = { front: [0, 0, 60, 40], top: [0, 0, 60, 40], side: [0, 0, 40, 40] };
+  private frames: Record<string, Rect> = { front: [0, 0, 60, 40], top: [0, 0, 60, 40], side: [0, 0, 40, 40] };
+  /** 스케치 한 장 모드 (13단계): 편집 중인 스케치 피처의 창 */
+  private sk: SketchPane | null = null;
   /** 뷰 영역을 나누는 선 (도면 좌표): x보다 오른쪽은 우측면도, y보다 위는 평면도 */
   private split = { x: 90, y: 70 };
   private laidOut = false;
@@ -59,8 +62,9 @@ export class DraftBoard {
       }
     });
     canvas.addEventListener("dblclick", () => {
-      const p = this.panes[ui.activeView];
+      const p = this.pane(ui.activeView);
       if (ui.tool === "poly" && p.polyDraft.length >= 3) p.finishPoly();
+      else if (ui.tool === "line" && p.polyDraft.length >= 2) p.finishPoly(true);
     });
     canvas.addEventListener("contextmenu", (e) => e.preventDefault());
     canvas.addEventListener("wheel", (e) => this.wheel(e), { passive: false });
@@ -83,8 +87,33 @@ export class DraftBoard {
   get h() {
     return this.canvas.clientHeight;
   }
-  offset(v: ViewId): [number, number] {
-    return this.off[v];
+  offset(v: SlotId): [number, number] {
+    return this.off[v] ?? [0, 0];
+  }
+
+  /** 스케치 한 장 모드인지 (편집 중인 스케치가 문서에 있을 때만) */
+  get sketchMode(): boolean {
+    return !!ui.sketch && !!sketchOf(store.project, ui.sketch);
+  }
+
+  /** 그 자리의 창 (3면도 뷰 또는 편집 중인 스케치) */
+  pane(slot: SlotId): SketchPane {
+    if (isViewSlot(slot)) return this.panes[slot];
+    if (!this.sk || this.sk.view !== slot) {
+      this.sk?.cancel();
+      this.sk = new SketchPane(this, slot);
+    }
+    return this.sk;
+  }
+
+  /** 지금 화면에 있는 창들 */
+  activePanes(): SketchPane[] {
+    return this.sketchMode ? [this.pane(ui.sketch!)] : VIEW_IDS.map((v) => this.panes[v]);
+  }
+
+  /** 지금 보이는 자리들 */
+  private slots(): SlotId[] {
+    return this.sketchMode ? [ui.sketch!] : [...VIEW_IDS];
   }
   sheetToScreen(gx: number, gy: number): [number, number] {
     const { scale, x, y } = ui.camera;
@@ -100,13 +129,15 @@ export class DraftBoard {
   }
 
   /** 도면 좌표가 속한 뷰 (오른쪽 위 빈 칸은 null) */
-  regionAt(gx: number, gy: number): ViewId | null {
+  regionAt(gx: number, gy: number): SlotId | null {
+    if (this.sketchMode) return ui.sketch!;
     if (gx <= this.split.x) return gy > this.split.y ? "top" : "front";
     return gy <= this.split.y ? "side" : null;
   }
 
   /** 뷰 영역의 화면 사각형 (캔버스 밖은 잘라냄) */
-  regionScreenRect(v: ViewId): Rect {
+  regionScreenRect(v: SlotId): Rect {
+    if (!isViewSlot(v)) return [0, 0, this.w, this.h];
     const [sx, sy] = this.sheetToScreen(this.split.x, this.split.y);
     const W = this.w;
     const H = this.h;
@@ -120,8 +151,8 @@ export class DraftBoard {
 
   /** 뷰마다 내용(도형 + 3D 결과)의 범위를 재서 겹치지 않게 배치. force가 아니면 간격은 넓어지기만 한다 */
   layout(force = false) {
-    const local = (v: ViewId): Rect => {
-      const boxes: Rect[] = store.project.views[v].filter((s) => !isDegenerate(s)).map((s) => shapeBounds(s) as Rect);
+    const local = (v: SlotId): Rect => {
+      const boxes: Rect[] = slotShapes(store.project, v).filter((s) => !isDegenerate(s)).map((s) => shapeBounds(s) as Rect);
       const rb = ui.result?.[v]?.bounds;
       if (rb) boxes.push([rb[0][0], rb[0][1], rb[1][0], rb[1][1]]);
       if (!boxes.length) return v === "side" ? [0, 0, 40, 40] : [0, 0, 60, 40];
@@ -135,6 +166,12 @@ export class DraftBoard {
       const m = Math.max(8, 0.12 * Math.max(b[2] - b[0], b[3] - b[1]));
       return [b[0] - m, b[1] - m, b[2] + m, b[3] + m];
     };
+    if (this.sketchMode) {
+      const id = ui.sketch!;
+      this.frames[id] = local(id);
+      this.off[id] = [0, 0];
+      return;
+    }
     const F = local("front");
     const T = local("top");
     const S = local("side");
@@ -156,7 +193,7 @@ export class DraftBoard {
   }
 
   /** 뷰 틀의 화면 사각형 [왼, 위, 오른, 아래] */
-  frameScreenRect(v: ViewId): Rect {
+  frameScreenRect(v: SlotId): Rect {
     const f = this.frameSheet(v);
     const [x0, y1] = this.sheetToScreen(f[0], f[1]);
     const [x1, y0] = this.sheetToScreen(f[2], f[3]);
@@ -164,9 +201,9 @@ export class DraftBoard {
   }
 
   /** 도면 좌표로 본 뷰의 틀 */
-  private frameSheet(v: ViewId): Rect {
-    const f = this.frames[v];
-    const [ox, oy] = this.off[v];
+  private frameSheet(v: SlotId): Rect {
+    const f = this.frames[v] ?? [0, 0, 60, 40];
+    const [ox, oy] = this.offset(v);
     return [f[0] + ox, f[1] + oy, f[2] + ox, f[3] + oy];
   }
 
@@ -186,13 +223,13 @@ export class DraftBoard {
   /** 세 뷰가 모두 보이게 */
   fitAll() {
     this.layout(true);
-    const rs = VIEW_IDS.map((v) => this.frameSheet(v));
+    const rs = this.slots().map((v) => this.frameSheet(v));
     this.fitRect([Math.min(...rs.map((r) => r[0])), Math.min(...rs.map((r) => r[1])), Math.max(...rs.map((r) => r[2])), Math.max(...rs.map((r) => r[3]))]);
     ui.emit();
   }
 
   /** 한 뷰만 크게 */
-  focus(v: ViewId) {
+  focus(v: SlotId) {
     this.layout();
     this.fitRect(this.frameSheet(v));
     ui.activeView = v;
@@ -203,12 +240,12 @@ export class DraftBoard {
 
   /** 그리는 중인 뷰 (다각형 점 찍기, 클릭-클릭 사각형, 측정 중) */
   private pendingPane(): SketchPane | null {
-    return VIEW_IDS.map((v) => this.panes[v]).find((p) => p.pending) ?? null;
+    return this.activePanes().find((p) => p.pending) ?? null;
   }
 
   private paneAt(x: number, y: number): SketchPane | null {
     const v = this.regionAt(...this.screenToSheet(x, y));
-    return v ? this.panes[v] : null;
+    return v ? this.pane(v) : null;
   }
 
   startPan(x: number, y: number) {
@@ -245,7 +282,7 @@ export class DraftBoard {
     const [x, y] = this.local(e);
     if (e.pointerType === "touch") {
       this.touches.set(e.pointerId, [x, y]);
-      if (this.touches.size === 1) this.touchPoly = this.panes[ui.activeView].polyDraft.length;
+      if (this.touches.size === 1) this.touchPoly = this.pane(ui.activeView).polyDraft.length;
       if (this.touches.size >= 2) {
         // 두 번째 손가락: 첫 손가락으로 시작한 것은 취소하고 이동·확대로
         if (this.touches.size === 2) {
@@ -358,19 +395,19 @@ export class DraftBoard {
     c.fillRect(0, 0, W, H);
     this.drawGrid();
 
-    for (const v of VIEW_IDS) {
+    for (const v of this.slots()) {
       const r = this.regionScreenRect(v);
       if (r[2] <= r[0] || r[3] <= r[1]) continue;
       c.save();
       c.beginPath();
       c.rect(r[0], r[1], r[2] - r[0], r[3] - r[1]);
       c.clip();
-      this.panes[v].renderContent();
+      this.pane(v).renderContent();
       c.restore();
       c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     }
 
-    this.drawCorner();
+    if (!this.sketchMode) this.drawCorner();
     this.drawFrames();
   }
 
@@ -378,11 +415,11 @@ export class DraftBoard {
   private drawFrames() {
     const c = this.ctx;
     const col = palette();
-    for (const v of VIEW_IDS) {
+    for (const v of this.slots()) {
       const f = this.frameSheet(v);
       const [x0, y1] = this.sheetToScreen(f[0], f[1]);
       const [x1, y0] = this.sheetToScreen(f[2], f[3]);
-      const active = ui.activeView === v;
+      const active = ui.activeView === v || this.sketchMode;
       c.strokeStyle = active ? col.accent : col.frame;
       c.lineWidth = active ? 1.5 : 1;
       c.setLineDash(active ? [] : [6, 4]);
@@ -390,8 +427,7 @@ export class DraftBoard {
       c.roundRect(x0, y0, x1 - x0, y1 - y0, 6);
       c.stroke();
       c.setLineDash([]);
-      const [ua, va] = VIEW_AXES[v];
-      const label = `${VIEW_LABEL[v]}  ${ua}–${va}`;
+      const label = isViewSlot(v) ? `${VIEW_LABEL[v]}  ${VIEW_AXES[v][0]}–${VIEW_AXES[v][1]}` : `✎ ${this.pane(v).title}`;
       c.font = `${active ? 700 : 600} 12px system-ui, sans-serif`;
       c.textAlign = "left";
       c.textBaseline = "bottom";

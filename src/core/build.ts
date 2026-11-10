@@ -355,6 +355,11 @@ export function cameraFor(view: ViewId): ProjectionCamera {
   return new ProjectionCamera([0, 0, 0], [1, 0, 0], [0, 1, 0]);
 }
 
+/** 스케치 평면(법선 n, 가로 x)에 비춘 모습 — 스케치의 (가로, 세로) 좌표 그대로 (13단계 스케치 밑그림) */
+export function projectOnPlane(shape: Shape3D, n: [number, number, number], x: [number, number, number]): ProjectedView {
+  return project(shape, new ProjectionCamera([0, 0, 0], n, x));
+}
+
 function flatPaths(paths: string[] | string[][]): string[] {
   return (paths as (string | string[])[]).flat();
 }
@@ -408,8 +413,8 @@ function circleR(a: number[], b: number[], c: number[]): [number, number] {
   return [a[0] - ux, a[1] - uy];
 }
 
-function projectFallback(shape: Shape3D, view: ViewId): ProjectedView {
-  const { visible, hidden } = makeProjectedEdges(shape, cameraFor(view));
+function projectFallback(shape: Shape3D, cam: ProjectionCamera): ProjectedView {
+  const { visible, hidden } = makeProjectedEdges(shape, cam);
   let lo = [Infinity, Infinity];
   let hi = [-Infinity, -Infinity];
   for (const e of visible as any[]) {
@@ -426,12 +431,13 @@ function projectFallback(shape: Shape3D, view: ViewId): ProjectedView {
   };
 }
 
-export function project(shape: Shape3D, view: ViewId): ProjectedView {
+export function project(shape: Shape3D, view: ViewId | ProjectionCamera): ProjectedView {
+  const cam = typeof view === "string" ? cameraFor(view) : view;
   let res: ReturnType<typeof drawProjection>;
   try {
-    res = drawProjection(shape, cameraFor(view));
+    res = drawProjection(shape, cam);
   } catch {
-    return projectFallback(shape, view);
+    return projectFallback(shape, cam);
   }
   const { visible, hidden } = res;
   const bb = visible.boundingBox;

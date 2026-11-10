@@ -7,8 +7,8 @@
  * 잠근 치수(🔒·식)와 “사용자가 방금 바꾼 값”은 고정 변수 → 나머지가 가장 적게 움직여 조건을 맞춘다.
  */
 import { analyze, solve, type Eq } from "./solver";
-import type { Constraint, ConsKind, CRef, Project, Shape2D, ViewId } from "./types";
-import { VIEW_IDS } from "./types";
+import type { Constraint, ConsKind, CRef, Project, Shape2D } from "./types";
+import { allSlots, setSlotCons, slotCons, slotShapes, type SlotId } from "./featureModel";
 
 // ---------------- 변수 ----------------
 
@@ -121,10 +121,10 @@ function mkEq(tag: number, qs: Lin[], F: (q: number[]) => number, G: (q: number[
 export type RefType = "point" | "line" | "circle";
 
 /** 대상이 어떤 종류인지 (없거나 쓸 수 없으면 null) */
-export function refType(p: Project, view: ViewId, r: CRef): RefType | null {
+export function refType(p: Project, view: SlotId, r: CRef): RefType | null {
   if (r.s === "@o") return "point";
   if (r.s === "@x" || r.s === "@y") return "line";
-  const s = p.views[view].find((x) => x.id === r.s);
+  const s = slotShapes(p, view).find((x) => x.id === r.s);
   if (!s) return null;
   const k = r.k;
   if (k === "c") return "point";
@@ -183,10 +183,10 @@ function pointOf(s: Shape2D, k: string, V: VarOf): P2 {
   return { x: v(`x${i}`), y: v(`y${i}`) };
 }
 
-function lineOf(p: Project, view: ViewId, r: CRef, V: VarOf): [P2, P2] {
+function lineOf(p: Project, view: SlotId, r: CRef, V: VarOf): [P2, P2] {
   if (r.s === "@x") return [{ x: lin(0), y: lin(0) }, { x: lin(1), y: lin(0) }];
   if (r.s === "@y") return [{ x: lin(0), y: lin(0) }, { x: lin(0), y: lin(1) }];
-  const s = p.views[view].find((x) => x.id === r.s)!;
+  const s = slotShapes(p, view).find((x) => x.id === r.s)!;
   const i = Number(r.k.slice(1));
   if (s.kind === "rect") return [pointOf(s, `v${i}`, V), pointOf(s, `v${(i + 1) % 4}`, V)];
   if (s.kind === "slot") return [pointOf(s, "a", V), pointOf(s, "b", V)];
@@ -194,15 +194,15 @@ function lineOf(p: Project, view: ViewId, r: CRef, V: VarOf): [P2, P2] {
   return [pointOf(s, `v${i}`, V), pointOf(s, `v${(i + 1) % n}`, V)];
 }
 
-function circleOf(p: Project, view: ViewId, r: CRef, V: VarOf): { c: P2; r: Lin } {
-  const s = p.views[view].find((x) => x.id === r.s)!;
+function circleOf(p: Project, view: SlotId, r: CRef, V: VarOf): { c: P2; r: Lin } {
+  const s = slotShapes(p, view).find((x) => x.id === r.s)!;
   if (s.kind === "circle") return { c: pointOf(s, "c", V), r: V(s, "r") };
   return { c: pointOf(s, r.k === "ra" ? "a" : "b", V), r: scale(V(s, "w"), 0.5) };
 }
 
-function refPointLin(p: Project, view: ViewId, r: CRef, V: VarOf): P2 {
+function refPointLin(p: Project, view: SlotId, r: CRef, V: VarOf): P2 {
   if (r.s === "@o") return { x: lin(0), y: lin(0) };
-  const s = p.views[view].find((x) => x.id === r.s)!;
+  const s = slotShapes(p, view).find((x) => x.id === r.s)!;
   if (r.k === "o") return pointOf(s, "c", V);
   if (r.k === "ra" || r.k === "rb") return pointOf(s, r.k === "ra" ? "a" : "b", V);
   return pointOf(s, r.k, V);
@@ -213,18 +213,18 @@ const NOW: VarOf = (s, key) => lin(getVar(s, key));
 const nowVal = (l: Lin) => l.c;
 
 /** 화면 표시용: 대상의 지금 위치 */
-export function refPoint(p: Project, view: ViewId, r: CRef): [number, number] {
+export function refPoint(p: Project, view: SlotId, r: CRef): [number, number] {
   const q = refPointLin(p, view, r, NOW);
   return [nowVal(q.x), nowVal(q.y)];
 }
-export function refLine(p: Project, view: ViewId, r: CRef): [[number, number], [number, number]] {
+export function refLine(p: Project, view: SlotId, r: CRef): [[number, number], [number, number]] {
   const [a, b] = lineOf(p, view, r, NOW);
   return [
     [nowVal(a.x), nowVal(a.y)],
     [nowVal(b.x), nowVal(b.y)],
   ];
 }
-export function refCircle(p: Project, view: ViewId, r: CRef): { c: [number, number]; r: number } {
+export function refCircle(p: Project, view: SlotId, r: CRef): { c: [number, number]; r: number } {
   const q = circleOf(p, view, r, NOW);
   return { c: [nowVal(q.c.x), nowVal(q.c.y)], r: nowVal(q.r) };
 }
@@ -306,7 +306,7 @@ function sdLine(q: number[]): [number, number[]] {
 }
 
 /** 이 구속의 식들 (tag = 구속 번호) */
-function equationsFor(p: Project, view: ViewId, c: Constraint, tag: number, V: VarOf, value: number): Eq[] {
+function equationsFor(p: Project, view: SlotId, c: Constraint, tag: number, V: VarOf, value: number): Eq[] {
   const t = c.refs.map((r) => refType(p, view, r)!);
   const P = (i: number) => refPointLin(p, view, c.refs[i], V);
   const Ln = (i: number) => lineOf(p, view, c.refs[i], V);
@@ -516,7 +516,7 @@ function equationsFor(p: Project, view: ViewId, c: Constraint, tag: number, V: V
   return [];
 }
 
-function lenOf(p: Project, view: ViewId, r: CRef) {
+function lenOf(p: Project, view: SlotId, r: CRef) {
   const [[ax, ay], [bx, by]] = refLine(p, view, r);
   return dist2(bx - ax, by - ay);
 }
@@ -524,7 +524,7 @@ function lenOf(p: Project, view: ViewId, r: CRef) {
 // ---------------- 지금 값 재기 (치수 구속을 만들 때·표시) ----------------
 
 /** 치수 구속의 지금 값과 방향 (side) */
-export function measure(p: Project, view: ViewId, kind: ConsKind, refs: CRef[]): { value: number; side: number } {
+export function measure(p: Project, view: SlotId, kind: ConsKind, refs: CRef[]): { value: number; side: number } {
   const t = refs.map((r) => refType(p, view, r)!);
   if (kind === "distanceX" || kind === "distanceY") {
     const a = refPoint(p, view, refs[0]);
@@ -570,10 +570,9 @@ export function measure(p: Project, view: ViewId, kind: ConsKind, refs: CRef[]):
 
 /** 쓸 수 없게 된 구속(지운 도형, 바뀐 꼭짓점 수, 휜 변) 빼기. 바뀌었으면 true */
 export function pruneConstraints(p: Project): boolean {
-  if (!p.constraints) return false;
   let changed = false;
-  for (const v of VIEW_IDS) {
-    const list = p.constraints[v];
+  for (const v of allSlots(p)) {
+    const list = slotCons(p, v);
     if (!list) continue;
     const keep = list.filter((c) => {
       const types = c.refs.map((r) => refType(p, v, r));
@@ -581,8 +580,7 @@ export function pruneConstraints(p: Project): boolean {
     });
     if (keep.length !== list.length) {
       changed = true;
-      if (keep.length) p.constraints[v] = keep;
-      else delete p.constraints[v];
+      setSlotCons(p, v, keep);
     }
   }
   if (p.constraints && !Object.keys(p.constraints).length) delete p.constraints;
@@ -590,7 +588,7 @@ export function pruneConstraints(p: Project): boolean {
 }
 
 /** 이 도형이 나오는 구속 */
-export const constraintsOf = (p: Project, view: ViewId, shapeId: string) => (p.constraints?.[view] ?? []).filter((c) => c.refs.some((r) => r.s === shapeId));
+export const constraintsOf = (p: Project, view: SlotId, shapeId: string) => (slotCons(p, view) ?? []).filter((c) => c.refs.some((r) => r.s === shapeId));
 
 // ---------------- 풀기 ----------------
 
@@ -613,14 +611,14 @@ interface Built {
  * 뷰의 식 만들기. fixed: "도형id:변수" — 움직이지 않을 변수(방금 바꾼 값, 끄는 도형).
  * values: 치수 구속의 식 값 (없으면 저장된 값)
  */
-function build(p: Project, view: ViewId, fixed: Set<string>, values?: Map<string, number>): Built {
-  const cons = p.constraints?.[view] ?? [];
+function build(p: Project, view: SlotId, fixed: Set<string>, values?: Map<string, number>): Built {
+  const cons = slotCons(p, view) ?? [];
   const used = new Set<string>();
   for (const c of cons) for (const r of c.refs) if (!r.s.startsWith("@")) used.add(r.s);
   const slots: Built["slots"] = [];
   const index = new Map<string, number>();
   const xs: number[] = [];
-  for (const s of p.views[view]) {
+  for (const s of slotShapes(p, view)) {
     if (!used.has(s.id)) continue;
     const locked = new Set(lockedVars(s));
     for (const key of shapeVarKeys(s)) {
@@ -643,11 +641,11 @@ function build(p: Project, view: ViewId, fixed: Set<string>, values?: Map<string
 }
 
 /** 풀어서 도형에 쓴다. 풀 수 없으면 도형은 그대로 두고 ok: false */
-export function solveView(p: Project, view: ViewId, opts: { fixed?: Set<string>; values?: Map<string, number> } = {}): ViewSolve {
-  const cons = p.constraints?.[view];
+export function solveView(p: Project, view: SlotId, opts: { fixed?: Set<string>; values?: Map<string, number> } = {}): ViewSolve {
+  const cons = slotCons(p, view);
   if (!cons?.length) return { ok: true, conflicting: [] };
   // 사각형은 가로·세로가 양수인 모양으로 (꼭짓점 번호가 바뀌지 않게)
-  for (const s of p.views[view]) if (s.kind === "rect" && (s.w < 0 || s.h < 0)) Object.assign(s, { x: Math.min(s.x, s.x + s.w), y: Math.min(s.y, s.y + s.h), w: Math.abs(s.w), h: Math.abs(s.h) });
+  for (const s of slotShapes(p, view)) if (s.kind === "rect" && (s.w < 0 || s.h < 0)) Object.assign(s, { x: Math.min(s.x, s.x + s.w), y: Math.min(s.y, s.y + s.h), w: Math.abs(s.w), h: Math.abs(s.h) });
   const b = build(p, view, opts.fixed ?? new Set(), opts.values);
   const x = Float64Array.from(b.x);
   const r = solve(x, b.eqs);
@@ -670,7 +668,7 @@ export function solveView(p: Project, view: ViewId, opts: { fixed?: Set<string>;
 export function solveAll(p: Project, opts: { fixed?: Set<string>; values?: Map<string, number> } = {}): ViewSolve {
   const conflicting: string[] = [];
   let invalid: string | undefined;
-  for (const v of VIEW_IDS) {
+  for (const v of allSlots(p)) {
     const r = solveView(p, v, opts);
     if (!r.ok) {
       conflicting.push(...r.conflicting);
@@ -694,7 +692,7 @@ export interface ViewAnalysis {
   unsatisfied: string[];
 }
 
-export function analyzeView(p: Project, view: ViewId): ViewAnalysis {
+export function analyzeView(p: Project, view: SlotId): ViewAnalysis {
   const b = build(p, view, new Set());
   const an = analyze(b.x, b.eqs, b.x.length);
   const shapes = new Map<string, ShapeState>();
@@ -706,7 +704,7 @@ export function analyzeView(p: Project, view: ViewId): ViewAnalysis {
   // 구속에 걸린 도형의 변수 중 어느 식에도 안 나오는 것도 자유도
   const inEq = new Set(b.eqs.flatMap((e) => e.vars));
   let dof = an.dof + b.slots.filter((sl) => !inEq.has(sl.idx)).length;
-  for (const s of p.views[view]) {
+  for (const s of slotShapes(p, view)) {
     const d = det.get(s.id);
     if (d) {
       // 구속에 걸린 도형: 고정 변수(잠금)는 정해진 것, 나머지는 분석 결과
@@ -719,7 +717,7 @@ export function analyzeView(p: Project, view: ViewId): ViewAnalysis {
     shapes.set(s.id, locked >= all ? "full" : locked ? "partial" : "free");
   }
   // 구속에 걸린 도형도 고정 변수만 있고 식 변수가 하나도 없으면 다 정해짐
-  for (const s of p.views[view]) if (!det.has(s.id) && b.cons.some((c) => c.refs.some((r) => r.s === s.id))) shapes.set(s.id, "full");
+  for (const s of slotShapes(p, view)) if (!det.has(s.id) && b.cons.some((c) => c.refs.some((r) => r.s === s.id))) shapes.set(s.id, "full");
   const redundant = [...new Set(an.redundant.map((i) => b.cons[b.eqs[i].tag].id))];
   const unsatisfied = [...new Set(b.eqs.filter((e) => Math.abs(e.f(b.x)) > 1e-6).map((e) => b.cons[e.tag].id))];
   return { dof, shapes, redundant, unsatisfied };

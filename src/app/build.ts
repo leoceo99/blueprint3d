@@ -93,9 +93,18 @@ async function runBuild() {
     if (seq !== buildSeq) return;
     builtKey = key;
     app.lastBuild = null;
-    app.buildError = e.message;
     app.featureLog = e.featureLog ?? [];
-    setBuildStatus("⚠ 3D 생성 실패", "err");
+    // 피처 부품에 아직 몸체가 없는 것(스케치만 있음)은 오류가 아니라 시작 단계
+    if (e.featureLog && !e.featureLog.some((x: { state: string }) => x.state === "error")) {
+      app.buildError = undefined;
+      ui.result = null;
+      app.viewer.setMesh(null);
+      setBuildStatus("스케치를 돌출·회전하면 3D가 만들어져요", "");
+      $("#info3d").textContent = "아직 몸체 없음";
+    } else {
+      app.buildError = e.message;
+      setBuildStatus("⚠ 3D 생성 실패", "err");
+    }
   }
   finishBuild();
 }
