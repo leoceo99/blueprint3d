@@ -60,8 +60,24 @@ export function edgeSig(edge: Edge): EdgeSig {
   return { t: "other", c: mid, l };
 }
 
-export function topoOf(shape: Shape3D): { faces: FaceSig[]; edges: EdgeSig[] } {
-  return { faces: shape.faces.map(faceSig), edges: shape.edges.map(edgeSig) };
+export function topoOf(shape: Shape3D): { faces: FaceSig[]; edges: EdgeSig[]; faceEdges: number[][] } {
+  const edges = shape.edges;
+  const byHash = new Map<number, number[]>();
+  edges.forEach((e, i) => {
+    const h = e.hashCode;
+    byHash.set(h, [...(byHash.get(h) ?? []), i]);
+  });
+  const faces = shape.faces;
+  // 면마다 그 면의 모서리 번호 (면을 눌러 그 모서리를 한꺼번에 고르기)
+  const faceEdges = faces.map((f) => {
+    const out: number[] = [];
+    for (const e of f.edges) {
+      const i = (byHash.get(e.hashCode) ?? []).find((k) => edges[k].isSame(e));
+      if (i !== undefined && !out.includes(i)) out.push(i);
+    }
+    return out;
+  });
+  return { faces: faces.map(faceSig), edges: edges.map(edgeSig), faceEdges };
 }
 
 const bboxOf = (shape: Shape3D) => shape.boundingBox.bounds as [P3, P3];

@@ -131,6 +131,13 @@ export class SketchPane {
     this.dyn.addEventListener("blur", () => this.closeDyn());
   }
 
+  /** 이 창을 치움 (스케치 편집 창을 바꿀 때) */
+  dispose() {
+    this.closeDyn();
+    this.dyn.remove();
+    this.dynHint.remove();
+  }
+
   // ---------------- 좌표 ----------------
 
   private get w() {

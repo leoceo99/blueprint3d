@@ -82,7 +82,9 @@ function exprRow(label: string, s: Shape2D, key: string): HTMLElement[] {
 
 function renderProps() {
   const box = $("#props");
-  if (box.contains(document.activeElement) && document.activeElement !== box) return;
+  // 입력 중인 칸이 있으면 다시 그리지 않음 (단추에 초점이 남은 것은 상관없음)
+  const a = document.activeElement;
+  if (a && box.contains(a) && a !== box && (a.tagName === "INPUT" || a.tagName === "SELECT" || a.tagName === "TEXTAREA")) return;
   box.innerHTML = "";
   const s = selectedShape();
   const lastBuild = app.lastBuild;

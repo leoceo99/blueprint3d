@@ -301,5 +301,5 @@ export interface BuildResult {
   /** 피처마다 계산 결과 (13단계) */
   featureLog?: import("./featureModel").FeatureStatus[];
   /** 면·모서리 지문 (3D 화면에서 고르기 — mesh.faceGroups·edgeGroups의 순서와 같음, 13단계) */
-  topo?: { faces: import("./featureModel").FaceSig[]; edges: import("./featureModel").EdgeSig[] };
+  topo?: { faces: import("./featureModel").FaceSig[]; edges: import("./featureModel").EdgeSig[]; faceEdges?: number[][] };
 }

@@ -21,7 +21,7 @@ import type { HoleSpec } from "../core/types";
 import { fmtNum, fmtVol, unitLabel } from "../core/units";
 import { store } from "../store";
 import { fmt } from "../ui/sketch";
-import { app } from "../app/context";
+import { app, emit } from "../app/context";
 import { el, esc, keyCell } from "../app/dom";
 import { toast } from "../app/notify";
 import {
@@ -320,6 +320,16 @@ export function renderFeaturePanel(box: HTMLElement) {
   const st = app.featureLog.find((x) => x.id === f.id);
   const head = el("div", { innerHTML: `<b>${FEATURE_ICON[f.kind]} ${esc(f.name)}</b> <span class="muted">· ${FEATURE_LABEL[f.kind]}${fedit.isNew ? " 만들기" : " 고치기"}</span>` }, "full");
   box.append(head, ...featureFields(f));
+  if (f.kind === "fillet" || f.kind === "chamfer" || f.kind === "shell" || f.kind === "draft") {
+    const cb = el("input", { type: "checkbox", checked: fedit.preview });
+    cb.onchange = () => {
+      fedit.preview = cb.checked;
+      emit("featureEdit", f.id);
+    };
+    const lab = el("label", {}, "check full");
+    lab.append(cb, document.createTextNode(" 결과 미리 보기 (켜면 고르기는 쉼)"));
+    box.append(lab);
+  }
   if (st?.state === "error" || st?.state === "warn") box.append(el("div", { textContent: `${st.state === "error" ? "⚠ " : "ⓘ "}${st.message ?? ""}` }, `feat-msg full ${st.state}`));
   const ok = el("button", { textContent: "✓ 확인" }, "primary");
   ok.onclick = () => finishEdit();

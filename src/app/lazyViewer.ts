@@ -4,7 +4,7 @@
  * 불러오기 전에 받은 메시·테마·켜짐 상태는 기억해 두었다가 그대로 넘긴다.
  */
 import type { MeshData } from "../core/types";
-import type { Viewer3D } from "../ui/viewer";
+import type { PickHit, PickMode, Viewer3D } from "../ui/viewer";
 
 export class LazyViewer {
   private real: Viewer3D | null = null;
@@ -12,6 +12,12 @@ export class LazyViewer {
   private mesh: MeshData | null = null;
   private dark = false;
   private active = false;
+  // 13단계: 고르기·강조·스케치 선 (불러오기 전에 받은 것도 기억)
+  private pick: PickMode = "none";
+  private sel: [number[], number[]] = [[], []];
+  private overlay: number[] | null = null;
+  onPick: ((hit: PickHit, e: PointerEvent) => void) | null = null;
+  isPlanar: ((face: number) => boolean) | null = null;
 
   constructor(private host: HTMLElement) {}
 
@@ -21,6 +27,11 @@ export class LazyViewer {
       const v = new Viewer3D(this.host);
       v.setDark(this.dark);
       v.setMesh(this.mesh);
+      v.onPick = (h, e) => this.onPick?.(h, e);
+      v.isPlanar = (f) => this.isPlanar?.(f) ?? true;
+      v.setPickMode(this.pick);
+      v.setSelection(...this.sel);
+      v.setOverlay(this.overlay);
       if (this.active) v.setActive(true);
       this.real = v;
       return v;
@@ -34,6 +45,32 @@ export class LazyViewer {
   setMesh(m: MeshData | null) {
     this.mesh = m;
     this.real?.setMesh(m);
+    this.real?.setSelection(...this.sel);
+  }
+
+  setPickMode(m: PickMode) {
+    this.pick = m;
+    this.real?.setPickMode(m);
+  }
+
+  setSelection(faces: number[], edges: number[]) {
+    this.sel = [faces, edges];
+    this.real?.setSelection(faces, edges);
+  }
+
+  setOverlay(lines: number[] | null) {
+    this.overlay = lines;
+    this.real?.setOverlay(lines);
+  }
+
+  /** 시험용: 3D 점의 화면 좌표 */
+  screenOf(p: [number, number, number]): [number, number] | null {
+    return this.real?.screenOf(p) ?? null;
+  }
+
+  /** 시험용: 화면 좌표의 면·모서리 */
+  pickAt(x: number, y: number, tol = 8): PickHit | null {
+    return this.real?.pickAt(x, y, tol) ?? null;
   }
 
   setDark(dark: boolean) {

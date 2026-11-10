@@ -120,12 +120,76 @@ const { out, launch, finish, fresh, waitBuild } = require('./lib.cjs');
     bb = await bbox();
     ok('스케치를 고치면 돌출도 따라감 (가로 80)', bb && Math.abs(bb[1][0] - bb[0][0] - 80) < 1e-6, JSON.stringify(bb));
 
+    // ---- 면 위 스케치: 평면 고르기에서 윗면 누르기 → 원 → 빼기 돌출 ----
+    const vol0 = await B(() => window.blueprint3d.app.lastBuild.volume);
+    await page.click('[data-cmd="feat.sketch"]');
+    await page.waitForSelector('.plane-btn[data-plane="XY"]');
+    await page.waitForTimeout(400);
+    const topFace = await B(() => {
+      const { app } = window.blueprint3d;
+      const t = app.lastBuild.topo.faces.findIndex((f) => f.t === 'plane' && f.n && f.n[2] > 0.99);
+      return { i: t, c: app.lastBuild.topo.faces[t].c };
+    });
+    const [tx, ty] = await B((c) => window.blueprint3d.app.viewer.screenOf(c), topFace.c);
+    await page.mouse.move(tx, ty);
+    await page.mouse.click(tx, ty);
+    await page.waitForTimeout(500);
+    const sk2 = (await feats()).at(-1);
+    ok('3D에서 윗면을 누르면 그 면 위에 스케치', sk2?.kind === 'sketch' && sk2.plane.kind === 'face' && Math.abs(sk2.plane.face.n[2] - 1) < 1e-6 && await page.isVisible('#sketchBar'), JSON.stringify(sk2?.plane));
+    ok('스케치 밑그림: 그 평면에 비친 모델', await B(() => { const { ui } = window.blueprint3d; return !!ui.result?.[ui.sketch]?.visible?.length; }));
+    await page.keyboard.press('c');
+    const [cx, cy] = await scr(40, 20);
+    await page.mouse.click(cx, cy);
+    await page.keyboard.type('10');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+    await page.click('#sketchDone');
+    await page.waitForTimeout(300);
+    await page.click('[data-cmd="feat.extrude"]');
+    await waitBuild(page);
+    const cut = (await feats()).at(-1);
+    ok('구멍만 있는 스케치 → 빼기·끝까지가 기본', cut.kind === 'extrude' && cut.op === 'cut' && cut.extent === 'through', JSON.stringify(cut));
+    await page.click('#props [data-feat-ok]');
+    await waitBuild(page);
+    const vol1 = await B(() => window.blueprint3d.app.lastBuild.volume);
+    ok('면 위 원 → 관통 구멍 (부피 줄어듦 ≈ π·5²·24)', Math.abs(vol0 - vol1 - Math.PI * 25 * 24) / (Math.PI * 25 * 24) < 0.02, `${vol0.toFixed(0)} → ${vol1.toFixed(0)}`);
+
+    // ---- 필렛: 모서리 누르기 ----
+    await page.click('[data-cmd="feat.fillet"]');
+    await waitBuild(page);
+    const edge = await B(() => {
+      const t = window.blueprint3d.app.lastBuild.topo;
+      const i = t.edges.findIndex((e) => e.t === 'line' && Math.abs(e.d[2]) > 0.99 && e.c[0] > 70 && e.c[1] < 1);
+      return t.edges[i];
+    });
+    const [ex, ey] = await B((c) => window.blueprint3d.app.viewer.screenOf(c), edge.c);
+    await page.mouse.move(ex, ey);
+    await page.mouse.click(ex, ey);
+    await page.waitForTimeout(300);
+    let fl = (await feats()).at(-1);
+    ok('필렛: 3D에서 모서리를 누르면 고름', fl.kind === 'fillet' && fl.edges.length === 1 && Math.abs(fl.edges[0].c[0] - 80) < 1e-6, JSON.stringify(fl.edges));
+    await page.mouse.click(ex, ey);
+    await page.waitForTimeout(300);
+    ok('같은 모서리를 다시 누르면 빼기', (await feats()).at(-1).edges.length === 0);
+    await page.mouse.click(ex, ey);
+    await page.waitForTimeout(300);
+    const rIn = await page.$('#props input[data-key="r"]');
+    await rIn.fill('5');
+    await rIn.press('Enter');
+    await page.click('#props [data-feat-ok]');
+    await waitBuild(page);
+    const vol2 = await B(() => window.blueprint3d.app.lastBuild.volume);
+    const loss = (25 - (Math.PI * 25) / 4) * 24;
+    ok('확인 → 모서리 R5 (부피 줄어듦)', Math.abs(vol1 - vol2 - loss) / loss < 0.05 && (await rows()).at(-1) === '필렛 1', `${(vol1 - vol2).toFixed(1)} vs ${loss.toFixed(1)}`);
+    ok('확인하면 오른쪽 칸이 부품 정보로', /3D 모델/.test(await page.textContent('#props')), (await page.textContent('#props')).slice(0, 30));
+    await page.screenshot({ path: out('feat-fillet.png') });
+
     // ---- 저장 왕복 (.b3d) ----
     const back = await B(async () => {
       const { store } = window.blueprint3d;
       return JSON.stringify(store.project.features.map((x) => x.kind));
     });
-    ok('피처 목록이 문서에 저장됨', back === '["sketch","extrude"]', back);
+    ok('피처 목록이 문서에 저장됨', back === '["sketch","extrude","sketch","extrude","fillet"]', back);
     await page.screenshot({ path: out('feat-tree.png') });
   } catch (e) {
     results.push('FAIL exception — ' + (e && e.stack ? e.stack.split('\n').slice(0, 3).join(' | ') : e));

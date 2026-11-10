@@ -21,7 +21,14 @@ let builtKey = "";
 /** 다시 만든 횟수 (시험·성능 확인용) */
 export const buildStats = { runs: 0, skipped: 0 };
 
-const keyOfActive = () => `${store.project.id}|${geometryKey(store.project)}`;
+/** 3D를 만들 때 쓸 부품 (13단계: 고르는 피처를 고치는 동안은 그 앞까지만) */
+let transform: (p: Part) => Part = (p) => p;
+export function setBuildTransform(fn: (p: Part) => Part) {
+  transform = fn;
+}
+const projectToBuild = () => transform(store.project);
+
+const keyOfActive = () => `${store.project.id}|${geometryKey(projectToBuild())}`;
 
 /** 프로젝트가 바뀌면: 3D 모양이 바뀐 경우에만 다시 만든다 */
 export function scheduleBuildIfChanged() {
@@ -69,7 +76,7 @@ async function runBuild() {
   try {
     const res = source
       ? await engine.buildImported(structuredClone(source), () => getFile(source.key))
-      : await engine.build(structuredClone(store.project));
+      : await engine.build(structuredClone(projectToBuild()));
     if (seq !== buildSeq) return;
     builtKey = key;
     app.lastBuild = res;

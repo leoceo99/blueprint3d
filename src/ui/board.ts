@@ -100,8 +100,10 @@ export class DraftBoard {
   pane(slot: SlotId): SketchPane {
     if (isViewSlot(slot)) return this.panes[slot];
     if (!this.sk || this.sk.view !== slot) {
-      this.sk?.cancel();
+      // 새 창을 먼저 두고 예전 창을 치운다 (치우면서 다시 그릴 때 이 함수로 돌아와도 같은 창)
+      const old = this.sk;
       this.sk = new SketchPane(this, slot);
+      old?.dispose();
     }
     return this.sk;
   }

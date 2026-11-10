@@ -33,6 +33,8 @@ export const fedit = {
   plane: false,
   /** 피처 목록에서 고른 피처 */
   sel: null as string | null,
+  /** 고르는 피처(필렛·쉘…)를 고치는 동안 결과 미리 보기 (끄면 그 피처 앞까지 보여 주고 고르기) */
+  preview: false,
 };
 
 export const currentFeature = (): Feature | undefined => (fedit.id ? store.project.features?.find((f) => f.id === fedit.id) : undefined);
@@ -107,6 +109,7 @@ export function finishEdit() {
   if (store.history.isPending) store.commit();
   fedit.id = null;
   fedit.isNew = false;
+  fedit.preview = false;
   emit("featureEdit", null);
   invalidatePanels();
 }
@@ -117,6 +120,7 @@ export function cancelEdit() {
   if (store.history.isPending) store.revert();
   fedit.id = null;
   fedit.isNew = false;
+  fedit.preview = false;
   emit("featureEdit", null);
   invalidatePanels();
 }
