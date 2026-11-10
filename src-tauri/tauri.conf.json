@@ -32,14 +32,14 @@
     "targets": "all",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "category": "GraphicsAndDesign",
-    "shortDescription": "3면도 → 3D → 치수가 다 들어간 도면 (DXF·DWG)",
-    "longDescription": "노트북에서 쓰는 기계 부품 CAD. 3면도를 그리면 3D가 만들어지고, 다른 CAD의 STEP을 열면 치수가 다 들어간 도면을 DXF·DWG로 저장합니다.",
+    "shortDescription": "Three-view sketch to 3D to fully dimensioned drawings (DXF, DWG)",
+    "longDescription": "Mechanical part CAD for laptops and tablets. Draw three views to get a 3D model, or open a STEP file from another CAD to get a fully dimensioned drawing saved as DXF or DWG.",
     "copyright": "leoceo99",
     "fileAssociations": [
       {
         "ext": ["b3d"],
         "name": "Blueprint3D Document",
-        "description": "도면3D 문서",
+        "description": "Blueprint3D document",
         "role": "Editor",
         "mimeType": "application/x-blueprint3d"
       }
