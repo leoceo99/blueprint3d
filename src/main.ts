@@ -10,6 +10,7 @@ import { DraftBoard } from "./ui/board";
 import { refreshColors } from "./ui/sketch";
 import { ui } from "./ui/state";
 import { LazyViewer } from "./app/lazyViewer";
+import { isApp, setTitle } from "./app/native";
 import { appCommands } from "./app/appCommands";
 import { buildStats, scheduleBuild, scheduleBuildIfChanged } from "./app/build";
 import { bindCommands, refreshCommandStates } from "./app/commandUI";
@@ -109,6 +110,15 @@ store.onUndoRedo = (kind, label) => toast(`${kind === "undo" ? "실행 취소" :
 store.onConstraintError = (msg) => toast(msg);
 store.snapBaseline();
 ui.subscribe(requestRender);
+// 설치형 앱: 창 제목 = 파일(또는 문서) 이름
+let titleKey = "";
+store.subscribe(() => {
+  const tk = `${store.projectId}|${store.doc.name}`;
+  if (isApp() && tk !== titleKey) {
+    titleKey = tk;
+    void setTitle(store.projectId, store.doc.name);
+  }
+});
 store.subscribe(() => {
   // 지워진 도형을 선택하고 있으면 해제
   if (ui.sel && !store.project.views[ui.sel.view].some((s) => s.id === ui.sel!.id)) ui.sel = null;

@@ -7,7 +7,8 @@
  * 이름은 겹쳐도 되고, 참조는 id로 한다 (Blender의 ID·Onshape의 탭 참조처럼).
  * 예전 프로젝트 JSON(부품 1개)은 부품 1개 + 도면 1장 문서로 자동 변환된다.
  */
-import { normalizeDims, type SheetDim } from "./sheetDims";
+import { normalizeDims } from "./dimsNormalize";
+import type { SheetDim } from "./sheetDims";
 import type { DimEdits } from "./sheet";
 import { normalizeProject } from "./project";
 import { emptyProject, type Project, type SheetInfo } from "./types";

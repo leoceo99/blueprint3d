@@ -5,6 +5,7 @@
 import { activeDrawing, addDrawing, drawingsOf, geometryKey, partOf, removeDrawing, type Drawing } from "../core/document";
 import type { DimEdits, Sheet } from "../core/sheet";
 import { sheetEdit, type DimKind, type EditorHost } from "./sheetState";
+import { applyZoom, wireZoom, zoomBy, zoomFit } from "./sheetZoom";
 import type { SheetInfo } from "../core/types";
 import { safeName, saveFile } from "../files";
 import { store } from "../store";
@@ -12,7 +13,8 @@ import { buildPart } from "../app/build";
 import type { Command } from "../app/commands";
 import { app, commands, on, requestRender } from "../app/context";
 import { $, $$, esc } from "../app/dom";
-import { toast } from "../app/notify";
+import { closeNotice, notice, toast } from "../app/notify";
+import { prefs } from "../app/prefs";
 import type { Workspace } from "./registry";
 
 /** 파일 이름 바탕: 문서 이름 (부품이 여럿이면 부품 이름도) */
@@ -68,9 +70,16 @@ async function renderSheet(force = false) {
     $("#sheetInfo").textContent = "";
     return;
   }
+  // 다시 그려도 확대·스크롤 그대로
+  const [sl, st] = [host.scrollLeft, host.scrollTop];
   host.innerHTML = sh.svg;
   $("#sheetInfo").textContent = `${sh.paper} · ${sh.scaleLabel}`;
   const svg = host.querySelector("svg");
+  if (svg) {
+    applyZoom(host, svg);
+    host.scrollLeft = sl;
+    host.scrollTop = st;
+  }
   if (svg) (await import("./sheetEdit")).attachEditor(svg, sh, d.edits ?? {}, editorHost);
   renderCheck(sh, d);
 }
@@ -195,6 +204,59 @@ async function printSheet() {
   if (app.workspace === "sheet") void renderSheet(true);
 }
 
+/**
+ * DWG 저장 (12.3): 설치형 앱에서 ODA File Converter로 DXF → DWG.
+ * 웹판이나 변환기가 없으면 방법을 알려 주고 DXF로 저장할 수 있게.
+ */
+async function saveDwg() {
+  const r = await sheetNow();
+  if (!r) return;
+  const native = await import("../app/native");
+  if (!native.isApp()) {
+    notice(
+      "DWG 저장은 설치형 앱(윈도우·맥)에서 돼요. 지금은 DXF로 저장해 AutoCAD에서 ‘다른 이름으로 저장 → DWG’ 하면 치수까지 그대로 남아요.",
+      [{ label: "DXF로 저장", run: () => commands.run("sheet.dxf") }],
+      "info",
+      "dwg",
+    );
+    return;
+  }
+  const s = prefs.get();
+  const exe = await native.findOda(s.odaPath);
+  if (!exe) {
+    notice(
+      "DWG로 저장하려면 무료 ‘ODA File Converter’가 필요해요 (한 번만 설치). 설치했는데 못 찾으면 실행 파일 위치를 골라 주세요.",
+      [
+        { label: "받는 곳 열기", run: () => void native.openUrl(native.ODA_URL) },
+        {
+          label: "위치 고르기",
+          run: async () => {
+            const p = await native.pickOda();
+            if (!p) return;
+            prefs.set({ odaPath: p });
+            closeNotice("dwg");
+            void saveDwg();
+          },
+        },
+        { label: "DXF로 저장", run: () => commands.run("sheet.dxf") },
+      ],
+      "warn",
+      "dwg",
+    );
+    return;
+  }
+  const { sheetToDXF } = await import("../core/sheet");
+  const label = native.DWG_VERSIONS.find(([v]) => v === s.dwgVersion)?.[1] ?? s.dwgVersion;
+  try {
+    toast("DWG로 바꾸는 중…");
+    const path = await native.saveDwg(sheetToDXF(r.sh), `${drawingBase(r.d)}.dwg`, s.dwgVersion, exe);
+    if (path) toast(`DWG로 저장했어요 (${label}): ${native.baseOf(path)}`);
+  } catch (e) {
+    const msg = String((e as Error)?.message ?? e);
+    toast(msg === "ODA_NOT_FOUND" ? "ODA File Converter를 찾지 못했어요. 설정 ▸ 일반 ▸ DWG 저장에서 위치를 골라 주세요." : `DWG로 저장하지 못했어요: ${msg}`);
+  }
+}
+
 const any = () => true;
 const cmds: Command[] = [
   {
@@ -219,6 +281,17 @@ const cmds: Command[] = [
       if (r) await saveFile(`${drawingBase(r.d)}.dxf`, (await import("../core/sheet")).sheetToDXF(r.sh), "application/dxf", "dxf");
     },
   },
+  {
+    id: "sheet.dwg",
+    title: "도면을 DWG로 저장 (AutoCAD, 설치형 앱)",
+    category: "내보내기",
+    keywords: ["dwg", "autocad", "cad", "캐드", "export", "오토캐드"],
+    when: any,
+    run: saveDwg,
+  },
+  { id: "sheet.zoomIn", title: "도면 확대", category: "도면", keywords: ["zoom in", "확대"], keys: ["="], run: () => zoomBy($("#sheetHost"), 1.25) },
+  { id: "sheet.zoomOut", title: "도면 축소", category: "도면", keywords: ["zoom out", "축소"], keys: ["-"], run: () => zoomBy($("#sheetHost"), 0.8) },
+  { id: "sheet.zoomFit", title: "도면 전체 보기 (맞춤)", category: "도면", keywords: ["fit", "맞춤", "전체"], keys: ["F"], run: () => zoomFit($("#sheetHost")) },
   { id: "sheet.select", title: "도면: 선택 (치수 고르기·옮기기)", category: "도면", keywords: ["select", "선택"], keys: ["V"], checked: () => sheetEdit.tool === "select", run: () => setTool("select") },
   { id: "sheet.dim", title: "도면: 치수 놓기 (재기)", category: "도면", keywords: ["dimension", "measure", "치수", "재기"], keys: ["D"], checked: () => sheetEdit.tool === "dim", run: () => setTool("dim") },
   ...(["auto", "h", "v", "aligned", "angle"] as DimKind[]).map((k) => ({
@@ -296,9 +369,11 @@ export const sheetWorkspace: Workspace = {
 export function initSheet() {
   $("#expSvg").dataset.cmd = "sheet.svg";
   $("#expDxf").dataset.cmd = "sheet.dxf";
+  $("#expDwg").dataset.cmd = "sheet.dwg";
   $("#printBtn").dataset.cmd = "sheet.print";
   $("#addDrawing").dataset.cmd = "doc.addDrawing";
   $("#delDrawing").dataset.cmd = "doc.deleteDrawing";
+  wireZoom($("#sheetHost"));
   const kindSel = $<HTMLSelectElement>("#dimKind");
   kindSel.onchange = () => commands.run(`sheet.dim.${kindSel.value}`);
   syncTools();

@@ -4,3 +4,6 @@ scratch/
 *.log
 .DS_Store
 e2e/out/
+# 설치형 앱 (Tauri) 빌드 결과
+src-tauri/target/
+src-tauri/gen/schemas/

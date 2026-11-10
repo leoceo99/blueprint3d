@@ -13,6 +13,8 @@ export interface PwaHooks {
 }
 
 export function setupPWA(h: PwaHooks) {
+  // 설치형 앱은 앱이 파일을 갖고 있으므로 오프라인 캐시·설치 단추가 필요 없다 (12단계)
+  if ("__TAURI_INTERNALS__" in window) return;
   window.addEventListener("beforeinstallprompt", (e: Event) => {
     e.preventDefault();
     const ev = e as Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };

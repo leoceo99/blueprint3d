@@ -1,0 +1,48 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Blueprint3D",
+  "mainBinaryName": "blueprint3d",
+  "version": "0.12.0",
+  "identifier": "io.github.leoceo99.blueprint3d",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "도면3D",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "center": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "category": "GraphicsAndDesign",
+    "shortDescription": "3면도 → 3D → 치수가 다 들어간 도면 (DXF·DWG)",
+    "longDescription": "노트북에서 쓰는 기계 부품 CAD. 3면도를 그리면 3D가 만들어지고, 다른 CAD의 STEP을 열면 치수가 다 들어간 도면을 DXF·DWG로 저장합니다.",
+    "copyright": "leoceo99",
+    "fileAssociations": [
+      {
+        "ext": ["b3d"],
+        "name": "Blueprint3D Document",
+        "description": "도면3D 문서",
+        "role": "Editor",
+        "mimeType": "application/x-blueprint3d"
+      }
+    ]
+  }
+}

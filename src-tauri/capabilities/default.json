@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "도면3D 창: 열기·저장 창, 받는 곳 링크 열기, 이벤트",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:window:allow-set-title", "dialog:default", "opener:default"]
+}

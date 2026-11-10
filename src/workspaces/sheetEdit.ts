@@ -11,6 +11,7 @@ import { renderDim, type DimDraw, type Pt, type SheetDim } from "../core/sheetDi
 import type { ViewId } from "../core/types";
 import { VIEW_IDS } from "../core/types";
 import { fmtLen } from "../core/units";
+import { panBy } from "./sheetZoom";
 
 import { sheetEdit, type EditorHost } from "./sheetState";
 
@@ -70,6 +71,8 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   let lines: { v: ViewId; a: Pt; b: Pt }[] = [];
   let hoverSnap: Pt | null = null;
   let drag: { id: string; def: SheetDim; start: Pt; moved: boolean; pointer: number } | null = null;
+  /** 빈 곳 끌기 = 화면 이동 (확대했을 때, 손가락) */
+  let pan: { x: number; y: number; pointer: number } | null = null;
   let preview: SheetDim | null = null;
 
   const reset = () => {
@@ -273,6 +276,10 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
     // 선택 도구
     const hit = dimAt(P, tol * 0.6);
     sheetEdit.selected = hit?.id ?? null;
+    if (!hit) {
+      pan = { x: e.clientX, y: e.clientY, pointer: e.pointerId };
+      svg.style.cursor = "grabbing";
+    }
     if (hit) {
       drag = { id: hit.id, def: hit.def, start: P, moved: false, pointer: e.pointerId };
       try {
@@ -286,6 +293,12 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   };
 
   const onMove = (e: PointerEvent) => {
+    if (pan && pan.pointer === e.pointerId) {
+      panBy(svg.parentElement!, e.clientX - pan.x, e.clientY - pan.y);
+      pan.x = e.clientX;
+      pan.y = e.clientY;
+      return;
+    }
     const P = paperOf(e);
     if (drag) {
       if (!drag.moved && Math.hypot(P[0] - drag.start[0], P[1] - drag.start[1]) < 0.6) return;
@@ -308,6 +321,10 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   };
 
   const onUp = (e: PointerEvent) => {
+    if (pan && pan.pointer === e.pointerId) {
+      pan = null;
+      svg.style.cursor = "";
+    }
     if (!drag || drag.pointer !== e.pointerId) return;
     const d = drag;
     drag = null;

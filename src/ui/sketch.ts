@@ -255,6 +255,23 @@ export class SketchPane {
     return had;
   }
 
+  /**
+   * 두 번째 손가락이 닿았을 때 (12.4): 첫 손가락으로 시작한 끌기·그리기를 없던 일로 — 화면 이동·확대로 바뀐다.
+   * polyLen: 첫 손가락이 닿기 전 다각형 점 수 (그 손가락이 점을 하나 찍었으면 뺀다)
+   */
+  abortGesture(polyLen: number) {
+    const d = this.drag;
+    this.drag = null;
+    if (d) {
+      if (d.moved) store.revert();
+      else store.dropCheckpoint();
+    }
+    this.creating = null;
+    while (this.polyDraft.length > polyLen) this.polyDraft.pop();
+    this.onPolyDraft();
+    this.render();
+  }
+
   undoPolyPoint() {
     this.polyDraft.pop();
     this.onPolyDraft();

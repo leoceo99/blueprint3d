@@ -1,0 +1,80 @@
+name: 설치형 앱 만들기 (윈도우·맥·리눅스)
+
+# 손으로 돌리거나(Actions ▸ 이 워크플로 ▸ Run workflow), 버전 태그(v0.12.0 등)를 올리면 만든다.
+# 맥 빌드는 GitHub Actions 사용 시간이 많이 들어서 main에 올릴 때마다 돌리지는 않는다.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 리눅스 라이브러리
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - run: npm ci
+
+      - name: Rust 시험 (파일·DWG 변환)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: 앱 만들기
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+          # 태그로 돌릴 때만 GitHub Releases에 초안으로 올림
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: "도면3D ${{ github.ref_name }}"
+          releaseBody: "설치 파일: 윈도우(.msi·.exe), 맥(.dmg), 리눅스(.deb·.AppImage). 서명 전이라 처음 열 때 경고가 나올 수 있어요 — README ‘설치형 앱’ 참고."
+          releaseDraft: true
+
+      - name: 설치 파일 올리기 (이 실행의 Artifacts에서 내려받기)
+        uses: actions/upload-artifact@v4
+        with:
+          name: blueprint3d-${{ matrix.platform }}
+          path: |
+            src-tauri/target/**/release/bundle/msi/*.msi
+            src-tauri/target/**/release/bundle/nsis/*.exe
+            src-tauri/target/**/release/bundle/dmg/*.dmg
+            src-tauri/target/**/release/bundle/deb/*.deb
+            src-tauri/target/**/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
+          retention-days: 14

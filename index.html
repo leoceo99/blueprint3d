@@ -23,7 +23,9 @@
           <button data-act="snapshot" data-cmd="file.snapshot" title="지금 상태에 이름을 붙여 버전으로 남기기">지금 버전 저장… <kbd></kbd></button>
           <hr />
           <button data-act="open" data-cmd="file.open" title="문서 파일(.b3d) 또는 예전 프로젝트(.json)를 새 문서로 열기">파일 열기… <kbd></kbd></button>
-          <button data-act="save" data-cmd="file.save" title="문서를 파일(.b3d)로 — 부품·도면·3D 파일·밑그림을 한 파일에 (다른 컴퓨터로 옮길 때)">파일로 저장 (.b3d)… <kbd></kbd></button>
+          <button data-act="save" data-cmd="file.save" title="문서를 파일(.b3d)로 — 부품·도면·3D 파일·밑그림을 한 파일에. 설치형 앱은 연 파일에 바로 저장">파일로 저장 (.b3d)… <kbd></kbd></button>
+          <button data-act="saveAs" data-cmd="file.saveAs" title="다른 파일 이름·위치로 저장">다른 이름으로 저장… <kbd></kbd></button>
+          <div id="recentFiles" hidden><div class="dd-label">최근 파일</div><div id="recentList"></div></div>
           <hr />
           <button data-act="import3d" data-cmd="file.import3d" title="다른 CAD에서 만든 STEP·STL 파일로 3면도 만들기">3D 파일 가져오기 (STEP·STL)…</button>
           <button data-act="import3dPart" data-cmd="file.import3dAsPart" title="STEP·STL 파일을 지금 문서의 새 부품으로">3D 파일을 부품으로 가져오기…</button>
@@ -222,9 +224,16 @@
           </select>
           <button class="small ghost" data-cmd="sheet.dimDelete">치수 지우기</button>
         </div>
+        <div class="dim-tools zoom-tools" role="group" aria-label="확대">
+          <button class="small ghost" data-cmd="sheet.zoomOut" aria-label="축소">−</button>
+          <span id="sheetZoomLabel" class="muted small zoom-label">100%</span>
+          <button class="small ghost" data-cmd="sheet.zoomIn" aria-label="확대">＋</button>
+          <button class="small ghost" data-cmd="sheet.zoomFit">맞춤</button>
+        </div>
         <div class="spacer"></div>
         <button id="expSvg">SVG 저장</button>
-        <button id="expDxf" title="실제 크기(1:1) — 선·원호·중심선·치수 레이어">DXF 저장 (AutoCAD)</button>
+        <button id="expDxf" title="실제 크기(1:1) — 선·원호·중심선, 치수는 AutoCAD 진짜 치수">DXF 저장</button>
+        <button id="expDwg" title="AutoCAD DWG — 설치형 앱에서 ODA File Converter로 바꿈">DWG 저장</button>
         <button id="expStl" data-cmd="export.stl">STL 저장 (3D 프린팅)</button>
         <button id="expStep" data-cmd="export.step">STEP 저장 (CAD)</button>
         <button id="printBtn" class="primary" title="용지 크기 그대로 인쇄하거나 PDF로 저장">인쇄 / PDF</button>
@@ -313,6 +322,12 @@
             </div>
             <div class="set-row"><span class="set-k">길이 단위</span>
               <span class="set-v"><select id="setUnits"><option value="mm">mm</option><option value="inch">inch</option></select> <span class="muted small">새 문서에 써요. 지금 문서는 아래 상태 표시줄의 <b>mm/inch</b> 단추로 바꿔요 (모양은 그대로). 식 안에 <code>10 mm</code>, <code>0.5 in</code>처럼 단위를 붙일 수도 있어요.</span></span>
+            </div>
+            <div class="set-row"><span class="set-k">DWG 저장</span>
+              <span class="set-v set-dwg"><select id="setDwgVer" title="DWG 버전"></select>
+                <span id="odaState" class="muted small"></span>
+                <span class="inline-btns"><button class="small" id="odaPick">변환기 위치 고르기</button><button class="small ghost" id="odaAuto">자동으로 찾기</button><button class="small ghost" id="odaGet">ODA File Converter 받기 (무료)</button></span>
+              </span>
             </div>
             <div class="set-row"><span class="set-k">처음 격자</span>
               <span class="set-v"><select id="setGrid"></select> <span class="muted small">리본에서 바꾸면 여기도 따라 바뀌어요</span></span>

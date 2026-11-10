@@ -1,6 +1,6 @@
 {
   "name": "blueprint3d",
-  "version": "0.1.0",
+  "version": "0.12.0",
   "private": true,
   "type": "module",
   "description": "2D 기계 도면을 그리면 3D 모델이 자동으로 만들어지고, AI가 설계 오류를 찾아 주는 노트북용 CAD 웹 앱",
@@ -10,10 +10,16 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "e2e": "node e2e/run.cjs"
+    "e2e": "node e2e/run.cjs",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.4.0",
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-dialog": "^2.8.4",
+    "@tauri-apps/plugin-opener": "^2.7.2",
     "fflate": "^0.8.3",
     "pdfjs-dist": "6.4.299",
     "replicad": "^1.2.0",
@@ -22,6 +28,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "@types/three": "^0.187.0",
     "fake-indexeddb": "^6.2.7",
     "typescript": "^7.0.2",

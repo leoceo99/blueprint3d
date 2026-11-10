@@ -16,11 +16,12 @@ import type { ReviewDialog } from "../ui/reviewDialog";
 import { loadUnderlay, putUnderlay } from "../underlay";
 import { showWorkspace } from "../workspaces/registry";
 import type { Command } from "./commands";
-import { commands, onPanels } from "./context";
+import { commands, on, onPanels } from "./context";
 import { $, $$, isTyping } from "./dom";
 import { toast } from "./notify";
-import { needExp } from "./prefs";
+import { needExp, prefs } from "./prefs";
 import { blankProject, openNew, session } from "./projects";
+import { docPath, initNative, isApp, nativeSave, pathOf, readAsFile, setDocPath } from "./native";
 
 let importDlg: ImportDialog | null = null;
 let reviewDlg: ReviewDialog | null = null;
@@ -84,6 +85,10 @@ export function initFileMenu() {
     if (all.length > 1 && all.every(isImage)) return void (needExp() && expDialogs().then((d) => d.reviewDlg.open(all)));
     openFile(f);
   });
+  // 설치형 앱(12단계): 탐색기에서 두 번 누른 파일, 이미 켜진 앱으로 연 파일, 최근 파일
+  void initNative(openFile);
+  renderRecent();
+  on("settings", renderRecent);
   // 설치한 앱으로 파일을 열면 (파일 탐색기 → 연결 프로그램) 여기로 들어온다
   const lq = (window as unknown as { launchQueue?: { setConsumer(fn: (p: { files: { getFile(): Promise<File> }[] }) => void): void } }).launchQueue;
   lq?.setConsumer(async (params) => {
@@ -103,6 +108,28 @@ export function initFileMenu() {
   $$<HTMLButtonElement>("[data-turn]").forEach((b) => (b.dataset.cmd = `source.turn${"XYZ"[Number(b.dataset.turn)]}`));
   $("#sourceClose").dataset.cmd = "source.close";
   onPanels(renderSourceBar);
+}
+
+/** 최근 파일 (설치형 앱) */
+function renderRecent() {
+  const list = isApp() ? prefs.get().recentFiles : [];
+  $("#recentFiles").hidden = !list.length;
+  const box = $("#recentList");
+  box.innerHTML = "";
+  for (const p of list) {
+    const b = document.createElement("button");
+    b.textContent = p.split(/[\\/]/).pop() ?? p;
+    b.title = p;
+    b.onclick = async () => {
+      try {
+        openFile(await readAsFile(p));
+      } catch {
+        toast(`파일을 찾을 수 없어요: ${p}`);
+        prefs.set({ recentFiles: prefs.get().recentFiles.filter((x) => x !== p) });
+      }
+    };
+    box.appendChild(b);
+  }
 }
 
 /** 파일 하나를 종류에 맞게 열기 (끌어다 놓기·설치한 앱으로 열기) */
@@ -168,13 +195,19 @@ async function openDocFile(f: File | Blob) {
       else await putFile(key, data);
     }
     openNew(doc);
+    // 앱에서 연 .b3d는 그 파일에 바로 저장 (Ctrl+S)
+    const p = pathOf(f);
+    if (p) setDocPath(store.projectId, p);
   } catch (e) {
     toast((e as Error).message || "문서 파일을 읽을 수 없습니다.");
   }
 }
 
-/** 문서를 파일(.b3d)로 — 3D 파일·밑그림 이미지·썸네일까지 한 파일에 (다른 컴퓨터로 옮길 때) */
-export async function saveProjectFile() {
+/**
+ * 문서를 파일(.b3d)로 — 3D 파일·밑그림 이미지·썸네일까지 한 파일에.
+ * 설치형 앱은 연결된 파일이 있으면 묻지 않고 그 파일에 저장 (saveAs면 늘 저장 창)
+ */
+export async function saveProjectFile(saveAs = false) {
   await session.flush();
   const doc = store.doc;
   const files: Record<string, FileData> = {};
@@ -188,6 +221,19 @@ export async function saveProjectFile() {
   }
   const thumb = session.thumb ? parseDataUrl(session.thumb)?.bytes : undefined;
   const bytes = writeB3d({ doc, files, thumbnail: thumb });
+  const id = store.projectId;
+  if (isApp()) {
+    const known = saveAs ? undefined : docPath(id);
+    try {
+      const path = await nativeSave(`${safeName(doc.name)}.b3d`, bytes, "b3d", known);
+      if (!path) return;
+      setDocPath(id, path);
+      toast(`저장했어요: ${path.split(/[\\/]/).pop()}`);
+    } catch (e) {
+      toast(`저장하지 못했어요: ${(e as Error).message ?? e}`);
+    }
+    return;
+  }
   await saveFile(`${safeName(doc.name)}.b3d`, bytes.slice().buffer, B3D_MIME, "b3d");
 }
 
@@ -211,7 +257,8 @@ export function fileCommands(): Command[] {
   return [
     { id: "file.new", title: "새 문서", category: "파일", keywords: ["new", "새 부품", "새로 만들기", "새 프로젝트"], keys: ["Ctrl+Alt+N"], global: true, run: () => openNew(blankProject()) },
     { id: "file.open", title: "파일 열기 (.b3d · 예전 .json)", category: "파일", keywords: ["open", "load", "불러오기", "b3d"], keys: ["Ctrl+O"], global: true, run: pickDocFile },
-    { id: "file.save", title: "파일로 저장 (.b3d)", category: "파일", keywords: ["save", "export", "내보내기", "b3d"], keys: ["Ctrl+S"], global: true, run: saveProjectFile },
+    { id: "file.save", title: "파일로 저장 (.b3d)", category: "파일", keywords: ["save", "export", "내보내기", "b3d"], keys: ["Ctrl+S"], global: true, run: () => saveProjectFile() },
+    { id: "file.saveAs", title: "다른 이름으로 저장 (.b3d)", category: "파일", keywords: ["save as", "다른 이름", "b3d"], keys: ["Ctrl+Alt+S"], global: true, run: () => saveProjectFile(true) },
     { id: "file.import3d", title: "3D 파일 가져오기 (STEP·STL) — 새 문서로", category: "파일", keywords: ["import", "step", "stl", "stp", "불러오기"], run: () => pick3D(false) },
     { id: "file.import3dAsPart", title: "3D 파일을 이 문서의 부품으로 가져오기", category: "문서", keywords: ["import part", "step", "stl", "부품"], run: () => pick3D(true) },
     {

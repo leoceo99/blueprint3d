@@ -215,10 +215,48 @@ export class DraftBoard {
     this.pan = { sx: x, sy: y, cx: ui.camera.x, cy: ui.camera.y };
   }
 
+  /** 손가락들 (12.4: 두 손가락 = 화면 이동·확대) */
+  private touches = new Map<number, [number, number]>();
+  private pinch: { d0: number; s0: number; w0: [number, number] } | null = null;
+  private touchPoly = 0;
+
+  private startPinch() {
+    const [a, b] = [...this.touches.values()];
+    const m: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    this.pinch = { d0: Math.max(10, Math.hypot(b[0] - a[0], b[1] - a[1])), s0: ui.camera.scale, w0: this.screenToSheet(m[0], m[1]) };
+  }
+
+  private updatePinch() {
+    if (!this.pinch || this.touches.size < 2) return;
+    const [a, b] = [...this.touches.values()];
+    const m: [number, number] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const d = Math.max(10, Math.hypot(b[0] - a[0], b[1] - a[1]));
+    ui.camera.scale = Math.min(Math.max((this.pinch.s0 * d) / this.pinch.d0, 0.05), 400);
+    // 두 손가락 가운데 아래의 도면 점이 손가락을 따라오게 (이동 + 확대)
+    const now = this.screenToSheet(m[0], m[1]);
+    ui.camera.x += this.pinch.w0[0] - now[0];
+    ui.camera.y += this.pinch.w0[1] - now[1];
+    ui.emit();
+  }
+
   private down(e: PointerEvent) {
     this.canvas.setPointerCapture(e.pointerId);
     this.canvas.focus();
     const [x, y] = this.local(e);
+    if (e.pointerType === "touch") {
+      this.touches.set(e.pointerId, [x, y]);
+      if (this.touches.size === 1) this.touchPoly = this.panes[ui.activeView].polyDraft.length;
+      if (this.touches.size >= 2) {
+        // 두 번째 손가락: 첫 손가락으로 시작한 것은 취소하고 이동·확대로
+        if (this.touches.size === 2) {
+          this.lockPane?.abortGesture(this.touchPoly);
+          this.lockPane = null;
+          this.pan = null;
+          this.startPinch();
+        }
+        return;
+      }
+    }
     if (e.button === 1 || e.button === 2 || this.spaceDown) {
       this.startPan(x, y);
       return;
@@ -235,6 +273,10 @@ export class DraftBoard {
 
   private move(e: PointerEvent) {
     const [x, y] = this.local(e);
+    if (e.pointerType === "touch" && this.touches.has(e.pointerId)) {
+      this.touches.set(e.pointerId, [x, y]);
+      if (this.pinch) return this.updatePinch();
+    }
     if (this.pan) {
       const { scale } = ui.camera;
       ui.camera.x = this.pan.cx - (x - this.pan.sx) / scale;
@@ -253,6 +295,14 @@ export class DraftBoard {
   }
 
   private up(e: PointerEvent) {
+    if (e.pointerType === "touch") {
+      this.touches.delete(e.pointerId);
+      if (this.pinch) {
+        // 손가락을 다 뗄 때까지는 그리지 않음
+        if (!this.touches.size) this.pinch = null;
+        return;
+      }
+    }
     if (this.pan) {
       this.pan = null;
       this.lockPane?.up(e);

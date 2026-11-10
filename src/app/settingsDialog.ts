@@ -5,6 +5,7 @@
 import { AI_MODEL, getApiKey, setApiKey } from "../aiKey";
 import { formatCombo, keyOf } from "../core/keys";
 import { gridLabel, gridsFor, type Theme } from "../core/settings";
+import { DWG_VERSIONS, findOda, isApp, ODA_URL, openUrl, pickOda } from "./native";
 import { h } from "../ui/modal";
 import type { Command } from "./commands";
 import { commands, on } from "./context";
@@ -28,6 +29,18 @@ export function openSettings(section?: string) {
 
 export const settingsOpen = () => dlg().open;
 
+/** DWG 변환기 상태 */
+async function showOda() {
+  const el = $("#odaState");
+  if (!isApp()) {
+    el.textContent = "설치형 앱에서만 — 웹판은 DXF로 저장해 AutoCAD에서 DWG로";
+    return;
+  }
+  const custom = prefs.get().odaPath;
+  const found = await findOda(custom);
+  el.textContent = found ? `✓ 변환기: ${found}` : custom ? `⚠ 고른 위치에 변환기가 없어요: ${custom}` : "⚠ ODA File Converter를 찾지 못했어요 — 받아서 설치하거나 위치를 골라 주세요";
+}
+
 function sync() {
   const s = prefs.get();
   $$<HTMLInputElement>('input[name="theme"]').forEach((r) => (r.checked = r.value === s.theme));
@@ -36,6 +49,8 @@ function sync() {
   grid.innerHTML = gridsFor(s.units).map((g) => `<option value="${g}">${gridLabel(g)}</option>`).join("");
   grid.value = String(s.grid);
   $<HTMLInputElement>("#showExp").checked = s.showExperimental;
+  $<HTMLSelectElement>("#setDwgVer").value = s.dwgVersion;
+  void showOda();
   $<HTMLInputElement>("#devExample").checked = s.devExample;
 }
 
@@ -44,6 +59,20 @@ export function initSettings() {
   $("#settingsBtn").dataset.cmd = "app.settings";
   const grid = $<HTMLSelectElement>("#setGrid");
   const units = $<HTMLSelectElement>("#setUnits");
+  const dwgVer = $<HTMLSelectElement>("#setDwgVer");
+  dwgVer.innerHTML = DWG_VERSIONS.map(([v, l]) => `<option value="${v}">${l}</option>`).join("");
+  dwgVer.onchange = () => prefs.set({ dwgVersion: dwgVer.value });
+  $("#odaPick").onclick = async () => {
+    const p = await pickOda();
+    if (p) prefs.set({ odaPath: p });
+    void showOda();
+  };
+  $("#odaAuto").onclick = () => {
+    prefs.set({ odaPath: "" });
+    void showOda();
+  };
+  $("#odaGet").onclick = () => void openUrl(ODA_URL);
+  for (const id of ["#odaPick", "#odaAuto"]) ($(id) as HTMLButtonElement).disabled = !isApp();
   units.onchange = () => prefs.set({ units: units.value === "inch" ? "inch" : "mm" });
   $$<HTMLInputElement>('input[name="theme"]').forEach((r) => (r.onchange = () => r.checked && prefs.set({ theme: r.value as Theme })));
   grid.onchange = () => prefs.set({ grid: parseFloat(grid.value) });

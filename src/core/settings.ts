@@ -30,7 +30,15 @@ export interface Settings {
   layout: PanelLayout;
   /** 최근 쓴 명령 (명령 찾기에서 위로) */
   recent: string[];
+  /** 설치형 앱: DWG 변환기(ODA File Converter) 위치 — 비우면 자동으로 찾음 */
+  odaPath: string;
+  /** DWG 버전 (ACAD2018 …) */
+  dwgVersion: string;
+  /** 설치형 앱: 최근 연·저장한 파일 경로 */
+  recentFiles: string[];
 }
+
+export const DWG_VERSION_IDS = ["ACAD2018", "ACAD2013", "ACAD2010", "ACAD2007", "ACAD2004", "ACAD2000"];
 
 export const PANEL_MIN = 170;
 export const PANEL_MAX = 560;
@@ -57,6 +65,9 @@ export function defaultSettings(): Settings {
     devExample: false,
     layout: { left: 230, right: 340, leftOpen: true, rightOpen: true, swapped: false },
     recent: [],
+    odaPath: "",
+    dwgVersion: "ACAD2018",
+    recentFiles: [],
   };
 }
 
@@ -89,6 +100,9 @@ export function normalizeSettings(raw: unknown): Settings {
       swapped: l.swapped === true,
     },
     recent: Array.isArray(raw.recent) ? raw.recent.filter((x): x is string => typeof x === "string").slice(0, 20) : [],
+    odaPath: typeof raw.odaPath === "string" ? raw.odaPath : "",
+    dwgVersion: DWG_VERSION_IDS.includes(raw.dwgVersion as string) ? (raw.dwgVersion as string) : "ACAD2018",
+    recentFiles: Array.isArray(raw.recentFiles) ? raw.recentFiles.filter((x): x is string => typeof x === "string").slice(0, 10) : [],
   };
 }
 
