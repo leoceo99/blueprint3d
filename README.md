@@ -1,6 +1,6 @@
 # 도면3D (blueprint3d)
 
-노트북에서 쓰는 기계 부품 CAD입니다. 지금은 브라우저에서 돌고, **설치형 앱(윈도우·맥)은 12단계**, iPad·안드로이드는 그 뒤(23단계)에 같은 코드로 나옵니다.
+노트북에서 쓰는 기계 부품 CAD입니다. **설치형 앱(윈도우·맥·리눅스)**과 웹판이 같은 코드이고, iPad·안드로이드는 23단계에 같은 코드로 나옵니다 → [설치형 앱](#설치형-앱-윈도우--맥--리눅스).
 **2D 3면도를 그리면 3D 모델이 자동으로 만들어지고**, 3D는 다시 **2D 도면(SVG·DXF)**으로 뽑을 수 있습니다.
 설계 오류는 그리는 즉시 **규칙 기반 검사**가 잡아 줍니다.
 
@@ -166,13 +166,26 @@ AI를 어떻게 쓸지(클라우드 AI·로컬 모델·규칙 확장)는 아직 
 | AI | Claude API (`@anthropic-ai/sdk`) | 이미지와 데이터를 함께 이해하고, 구조화된 결과를 반환 |
 | UI 참고 | Fusion 360, Onshape, AutoCAD, SolidWorks | 리본 도구 모음, 왼쪽 모델 트리, 오른쪽 속성 패널, 상태 표시줄 스냅 토글, 3각법 제도판 화면, 치수 직접 입력 |
 
-## 실행
+## 설치형 앱 (윈도우 · 맥 · 리눅스)
+
+- **설치 파일 받기**: GitHub 저장소 ▸ **Actions** ▸ “설치형 앱 만들기 (윈도우·맥·리눅스)” ▸ **Run workflow** → 끝나면(20분쯤) 그 실행의 **Artifacts**에서
+  윈도우(`.msi`·`.exe`), 맥(`.dmg`, 인텔·애플 실리콘 둘 다), 리눅스(`.deb`·`.AppImage`)를 내려받습니다. 버전 태그(예: `v0.12.0`)를 올리면 Releases에 초안으로도 올라갑니다.
+- **처음 열 때 경고** (아직 코드 서명 전): 윈도우 “Windows의 PC 보호” → **추가 정보 → 실행**.
+  맥 → Finder에서 앱을 **Control+클릭 → 열기** (또는 시스템 설정 ▸ 개인정보 보호 및 보안 ▸ “그래도 열기”). “손상되었기 때문에 열 수 없습니다”가 나오면 터미널에서 `xattr -cr /Applications/Blueprint3D.app`
+- **앱에서만 되는 것**: 운영체제 열기·저장 창, **Ctrl+S로 연 파일에 바로 저장**(다른 이름으로 저장 Ctrl+Alt+S), `.b3d`를 두 번 눌러 열기(앱이 켜져 있으면 그 창에서), 파일 ▸ 최근 파일, 창 제목에 파일 이름, **DWG 저장**
+- **DWG 저장**: 무료 [ODA File Converter](https://www.opendesign.com/guestfiles/oda_file_converter)를 한 번 설치 → 도면 출력 ▸ **DWG 저장**. 버전(AutoCAD 2018 형식 권장 ~ 2000)과 변환기 위치는 설정 ▸ 일반 ▸ DWG 저장.
+  웹판에서는 DXF로 저장해 AutoCAD에서 “다른 이름으로 저장 → DWG” 하면 치수까지 그대로 남습니다
+- **패드·터치 화면**: 한 손가락 = 그리기·고르기, **두 손가락 = 화면 이동·확대**(그리던 것은 취소), 도면 출력은 두 손가락·＋/−/맞춤으로 확대하고 빈 곳을 끌어 이동. iPad·안드로이드 앱은 23단계
+
+## 실행 (개발)
 
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm test         # 단위 시험 (엔진·검사·문서·파일 형식·명령·AI 요청)
-npm run e2e      # 브라우저 시험 6모음 (빌드 → 미리 보기 서버 → 실행 → 요약). Playwright 필요: npx playwright install chromium
+npm test         # 단위 시험 (엔진·검사·문서·파일 형식·명령·치수·DXF)
+npm run e2e      # 브라우저 시험 10모음 (빌드 → 미리 보기 서버 → 실행 → 요약). Playwright 필요: npx playwright install chromium
+npm run app:dev  # 설치형 앱으로 실행 (Rust 필요, 리눅스는 webkit2gtk-4.1 등 — Tauri 안내 참고)
+npm run app:build  # 이 컴퓨터용 설치 파일 (src-tauri/target/release/bundle)
 npm run build    # dist/ 생성 (오프라인용 sw.js 포함)
 npm run preview  # 빌드 결과 실행 — 앱 설치·오프라인은 이걸로 확인 (개발 서버에서는 꺼 둠)
 ```
@@ -189,14 +202,16 @@ npm run preview  # 빌드 결과 실행 — 앱 설치·오프라인은 이걸�
 | Delete | 삭제 | Ctrl+D | 복제 |
 | Ctrl+Z / Ctrl+Shift+Z | 실행 취소 / 다시 실행 | Ctrl+Alt+N | 새 부품 (새 프로젝트) |
 | Ctrl+Shift+O | 내 프로젝트 | Ctrl+Shift+S | 지금 버전 저장 |
-| Ctrl+S / Ctrl+O | 파일로 저장 / 파일 열기 (.b3d) | Ctrl+I / Ctrl+V | 도면 이미지 가져오기 / 캡처 붙여넣기 (실험) |
+| Ctrl+S / Ctrl+O | 파일로 저장 (앱: 연 파일에 바로) / 파일 열기 (.b3d) | Ctrl+I / Ctrl+V | 도면 이미지 가져오기 / 캡처 붙여넣기 (실험) |
+| Ctrl+Alt+S | 다른 이름으로 저장 | | |
 | **Ctrl+K** / F1 | **명령 찾기** | Ctrl+, | 설정 (단축키 바꾸기) |
 | Ctrl+Alt+Z | 실행 취소 기록 | Ctrl+P | 도면 인쇄 / PDF |
 | Ctrl+B / Ctrl+Alt+B | 왼쪽 / 오른쪽 패널 접기 | Ctrl+Alt+] / [ | 다음 / 이전 부품 |
 | Esc | 그리기 취소 → 선택 해제 | Enter / 더블클릭 | 다각형 닫기 |
-| 휠 / 핀치 | 확대 | 휠 클릭·스페이스+끌기·빈 곳 끌기 | 화면 이동 |
+| 휠 / 핀치(두 손가락) | 확대 | 휠 클릭·스페이스+끌기·빈 곳 끌기·두 손가락 끌기 | 화면 이동 |
 | 1 / 2 / 3 | 2D 설계 / 3D 보기 / 도면 출력 | K | 거리 치수 구속 (구속 도구는 리본·명령 찾기) |
 | D / V (도면 출력) | 치수 놓기 / 선택(끌어 옮기기) | Delete (도면 출력) | 고른 치수 지우기 (자동 치수는 숨김) |
+| = / - / F (도면 출력) | 확대 / 축소 / 맞춤 (Ctrl+휠·두 손가락도) | | |
 
 단축키는 설정 ▸ 단축키에서 바꿀 수 있고, 바꾸면 메뉴·리본·명령 찾기의 표시도 따라 바뀝니다.
 
@@ -261,6 +276,8 @@ src/
   panels/          docTree.ts(문서: 부품·도면) · tree.ts · params.ts · props.ts(+consPanel 구속 목록) · findings.ts (트리, 변수, 속성, 설계 검사·AI 검토)
   consActions.ts   구속 더하기(중복 거절)·지우기·값 바꾸기
   workspaces/      작업 공간 모듈 — registry.ts(탭·숫자 키·붙이기/떼기), design.ts(+designRibbon), view3d.ts, sheet.ts(+sheetEdit 치수 편집, sheetState), example.ts(새 모듈 본보기)
+  app/native.ts    설치형 앱에서만: 운영체제 열기·저장 창, 같은 파일에 저장, 연 파일 받기, 최근 파일, DWG 변환 (Tauri 코드는 앱에서만 내려받음)
+  workspaces/sheetZoom.ts  도면 출력 확대·이동 (바퀴·두 손가락·단추)
   aiKey.ts         AI 모델 이름·API 키 (가벼움 — AI SDK는 쓸 때만 내려받음)
   ai.ts            Claude AI 설계 검토
   worker.ts        CAD 연산 (백그라운드 스레드)
@@ -285,8 +302,10 @@ src/
   ui/modal.ts      가운데 뜨는 창 틀
 public/            앱 아이콘, manifest.webmanifest (설치 정보)
 vite.config.ts     빌드 설정 + 오프라인용 sw.js 만들기
+src-tauri/         설치형 앱 (Tauri 2, Rust): lib.rs(창·연 파일·한 번만 실행) · files.rs(파일 읽기·쓰기) · dwg.rs(ODA 변환기로 DWG)
+                   tauri.conf.json(이름·아이콘·.b3d 파일 연결) — 설치 파일은 .github/workflows/desktop.yml
 tests/             vitest 단위 시험
-e2e/               브라우저 시험 (run.cjs가 한 번에: core · app · library · document · import3d · legacy · constraints · units · dims)
+e2e/               브라우저 시험 (run.cjs가 한 번에: core · app · library · document · import3d · legacy · constraints · units · dims · tablet)
 scripts/check_dxf.py  DXF 검사 (ezdxf로 읽기·검사, 치수 요약) — 단위 시험이 씀
 ```
 
