@@ -2,6 +2,7 @@
  * 규칙 기반 설계 검사 (즉시 실행, 비용 없음).
  * AI 검토는 이 결과를 함께 받아서 중복 없이 더 깊은 문제를 찾는다.
  */
+import { isViewSlot } from "./featureModel";
 import { boundsOf, distToBoundary, flatten, isDegenerate, normRect, pointInShape, rectPoints, shapeCenter } from "./geometry2d";
 import { analyzeView, KIND_LABEL } from "./constraints";
 import { applyExpressions, projUnit } from "./params";
@@ -103,14 +104,16 @@ export function runChecks(p: Project, build?: Pick<BuildResult, "bbox" | "solidC
   // 변수·치수 식 오류
   for (const prob of applyExpressions(structuredClone(p)).problems) {
     const isParam = prob.key.startsWith("param:");
+    const feat = prob.featureId ? p.features?.find((f) => f.id === prob.featureId) : undefined;
+    const where = prob.view === undefined ? "" : isViewSlot(prob.view) ? VIEW_LABEL[prob.view] : (p.features?.find((f) => f.id === prob.view)?.name ?? "스케치");
     add({
-      id: `expr:${prob.view ?? ""}:${prob.shapeId ?? ""}:${prob.key}`,
+      id: `expr:${prob.featureId ?? prob.view ?? ""}:${prob.shapeId ?? ""}:${prob.key}`,
       severity: "error",
       category: "변수",
-      title: isParam ? `변수 ${prob.key.slice(6)} 식 오류` : prob.key === "thickness" ? "두께 식 오류" : "치수 식 오류",
-      detail: prob.message + (isParam || prob.key === "thickness" ? "" : ` (${VIEW_LABEL[prob.view!]}, ${prob.key})`),
+      title: isParam ? `변수 ${prob.key.slice(6)} 식 오류` : prob.key === "thickness" ? "두께 식 오류" : feat ? `${feat.name} 식 오류` : "치수 식 오류",
+      detail: prob.message + (isParam || prob.key === "thickness" ? "" : feat ? ` (${prob.key})` : ` (${where}, ${prob.key})`),
       suggestion: "식이나 변수 이름을 확인하세요. 오류가 난 치수는 마지막으로 계산된 값을 그대로 씁니다.",
-      refs: prob.view && prob.shapeId ? [{ view: prob.view, shapeId: prob.shapeId }] : [],
+      refs: prob.view && isViewSlot(prob.view) && prob.shapeId ? [{ view: prob.view, shapeId: prob.shapeId }] : [],
     });
   }
 

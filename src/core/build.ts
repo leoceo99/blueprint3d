@@ -3,6 +3,7 @@
  * replicad(OpenCascade) 위에서 동작하며, 호출 전에 setOC()가 되어 있어야 한다.
  */
 import { analyzeShape } from "./features3d";
+import { topoOf } from "./topo";
 import {
   addHolesInFace,
   basicFaceExtrusion,
@@ -11,6 +12,7 @@ import {
   drawRectangle,
   drawProjection,
   makeCompound,
+  makeProjectedEdges,
   Plane,
   ProjectionCamera,
   type Drawing,
@@ -22,7 +24,7 @@ import { VIEW_IDS, VIEW_LABEL } from "./types";
 
 export class BuildError extends Error {}
 
-function shapeToDrawing(s: Shape2D): Drawing {
+export function shapeToDrawing(s: Shape2D): Drawing {
   if (s.kind === "circle") return drawCircle(s.r).translate(s.cx, s.cy);
   if (s.kind === "rect" && !s.corners?.some(Boolean)) {
     const r = normRect(s);
@@ -215,6 +217,22 @@ export function roundHoleTool(
   const P: [number, number, number] = view === "top" ? [cu, cv, face] : view === "front" ? [cu, face, cv] : [face, cu, cv];
   const D: [number, number, number] = view === "top" ? [0, 0, -1] : view === "front" ? [0, 1, 0] : [-1, 0, 0];
   const X: [number, number, number] = view === "side" ? [0, 1, 0] : [1, 0, 0];
+  return revolvedHole(P, D, X, r, depth, spec, big);
+}
+
+/**
+ * 구멍 도구 (아무 방향): P는 바깥 면 위의 구멍 중심, D는 재료 안쪽 방향, X는 D에 수직인 아무 방향.
+ * 머리 자리(카운터보어/카운터싱크) + 몸통 + (막힌 구멍이면) 드릴 끝을 단면 회전으로 (13단계 구멍 피처도 씀)
+ */
+export function revolvedHole(
+  P: [number, number, number],
+  D: [number, number, number],
+  X: [number, number, number],
+  r: number,
+  depth: number | null,
+  spec: HoleSpec | undefined,
+  big: number,
+): Shape3D {
   const N: [number, number, number] = [X[1] * D[2] - X[2] * D[1], X[2] * D[0] - X[0] * D[2], X[0] * D[1] - X[1] * D[0]];
   const plane = new Plane(P, X, N);
 
@@ -341,8 +359,81 @@ function flatPaths(paths: string[] | string[][]): string[] {
   return (paths as (string | string[])[]).flat();
 }
 
+/**
+ * 투영한 모서리 → SVG 경로 (y 아래). drawProjection이 숨은선이 하나도 없는 뷰에서 실패할 때 쓴다
+ * (로프트·구처럼 매끈한 모양 — replicad가 빈 목록을 처리하지 못함). 직선은 L, 원호는 A, 나머지는 잘게 나눈 선
+ */
+function edgesToPaths(edges: any[]): string[] {
+  const f = (n: number) => +n.toFixed(6);
+  const P = (e: any, t: number): [number, number] => {
+    const q = e.pointAt(t);
+    return [f(q.x), f(-q.y)];
+  };
+  const out: string[] = [];
+  for (const e of edges) {
+    try {
+      const a = P(e, 0);
+      const z = P(e, 1);
+      if (e.geomType === "LINE") {
+        out.push(`M ${a[0]} ${a[1]} L ${z[0]} ${z[1]}`);
+        continue;
+      }
+      if (e.geomType === "CIRCLE") {
+        const m = P(e, 0.5);
+        const q1 = P(e, 0.25);
+        const q3 = P(e, 0.75);
+        const cr = (o: number[], u: number[], v: number[]) => (u[0] - o[0]) * (v[1] - o[1]) - (u[1] - o[1]) * (v[0] - o[0]);
+        const sweep = cr(a, q1, m) > 0 ? 1 : 0;
+        const r = Math.hypot(...circleR(a, q1, m));
+        out.push(`M ${a[0]} ${a[1]} A ${f(r)} ${f(r)} 0 0 ${sweep} ${m[0]} ${m[1]} A ${f(r)} ${f(r)} 0 0 ${cr(m, q3, z) > 0 ? 1 : 0} ${z[0]} ${z[1]}`);
+        continue;
+      }
+      const n = 24;
+      const pts = Array.from({ length: n + 1 }, (_, k) => P(e, k / n));
+      out.push(`M ${pts[0][0]} ${pts[0][1]} ` + pts.slice(1).map((q) => `L ${q[0]} ${q[1]}`).join(" "));
+    } catch {
+      /* 그 모서리는 건너뜀 */
+    }
+  }
+  return out;
+}
+
+/** 세 점을 지나는 원의 (중심 → 첫 점) 벡터 */
+function circleR(a: number[], b: number[], c: number[]): [number, number] {
+  const d = 2 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+  if (Math.abs(d) < 1e-12) return [0, 0];
+  const s = (p: number[]) => p[0] * p[0] + p[1] * p[1];
+  const ux = (s(a) * (b[1] - c[1]) + s(b) * (c[1] - a[1]) + s(c) * (a[1] - b[1])) / d;
+  const uy = (s(a) * (c[0] - b[0]) + s(b) * (a[0] - c[0]) + s(c) * (b[0] - a[0])) / d;
+  return [a[0] - ux, a[1] - uy];
+}
+
+function projectFallback(shape: Shape3D, view: ViewId): ProjectedView {
+  const { visible, hidden } = makeProjectedEdges(shape, cameraFor(view));
+  let lo = [Infinity, Infinity];
+  let hi = [-Infinity, -Infinity];
+  for (const e of visible as any[]) {
+    for (let k = 0; k <= 8; k++) {
+      const q = e.pointAt(k / 8);
+      lo = [Math.min(lo[0], q.x), Math.min(lo[1], q.y)];
+      hi = [Math.max(hi[0], q.x), Math.max(hi[1], q.y)];
+    }
+  }
+  return {
+    visible: edgesToPaths(visible),
+    hidden: edgesToPaths(hidden),
+    bounds: Number.isFinite(lo[0]) ? [[lo[0], lo[1]], [hi[0], hi[1]]] : null,
+  };
+}
+
 export function project(shape: Shape3D, view: ViewId): ProjectedView {
-  const { visible, hidden } = drawProjection(shape, cameraFor(view));
+  let res: ReturnType<typeof drawProjection>;
+  try {
+    res = drawProjection(shape, cameraFor(view));
+  } catch {
+    return projectFallback(shape, view);
+  }
+  const { visible, hidden } = res;
   const bb = visible.boundingBox;
   return {
     visible: flatPaths(visible.toSVGPaths()),
@@ -383,13 +474,37 @@ export function resultFor(shape: Shape3D, notes: string[]): BuildResult {
   } catch {
     features = undefined; // 형상 읽기는 도면 치수용 — 실패해도 3D는 그대로
   }
+  // 3D 화면에서 면·모서리 고르기 (13단계): 메쉬 묶음을 shape.faces / shape.edges 순서로
+  let topo: BuildResult["topo"];
+  let faceGroups: [number, number][] | undefined;
+  let edgeGroups: [number, number][] | undefined;
+  try {
+    const fi = new Map(shape.faces.map((f, i) => [f.hashCode, i]));
+    const ei = new Map(shape.edges.map((x, i) => [x.hashCode, i]));
+    faceGroups = shape.faces.map(() => [0, 0] as [number, number]);
+    for (const g of m.faceGroups ?? []) {
+      const i = fi.get(g.faceId);
+      if (i !== undefined) faceGroups[i] = [g.start, g.count];
+    }
+    edgeGroups = shape.edges.map(() => [0, 0] as [number, number]);
+    for (const g of e.edgeGroups ?? []) {
+      const i = ei.get(g.edgeId);
+      if (i !== undefined) edgeGroups[i] = [g.start, g.count];
+    }
+    topo = topoOf(shape);
+  } catch {
+    topo = undefined;
+    faceGroups = edgeGroups = undefined;
+  }
   return {
     features,
+    topo,
     mesh: {
       vertices: Array.from(m.vertices),
       normals: Array.from(m.normals),
       triangles: Array.from(m.triangles),
       edges: Array.from(e.lines),
+      ...(faceGroups ? { faceGroups, edgeGroups } : {}),
     },
     projections,
     bbox: bbox.bounds as BuildResult["bbox"],

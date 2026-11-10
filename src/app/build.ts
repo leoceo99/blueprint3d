@@ -54,11 +54,12 @@ async function runBuild() {
   buildStats.runs++;
   const key = keyOfActive();
   const source = store.project.source;
-  const hasAny = !!source || VIEW_IDS.some((v) => store.project.views[v].some((s) => !s.hole));
+  const hasAny = !!source || !!store.project.features?.length || VIEW_IDS.some((v) => store.project.views[v].some((s) => !s.hole));
   if (!hasAny) {
     builtKey = key;
     app.lastBuild = null;
     app.buildError = undefined;
+    app.featureLog = [];
     ui.result = null;
     app.viewer.setMesh(null);
     setBuildStatus("도형을 그리면 3D가 자동으로 만들어져요", "");
@@ -73,6 +74,7 @@ async function runBuild() {
     builtKey = key;
     app.lastBuild = res;
     app.buildError = undefined;
+    app.featureLog = res.featureLog ?? [];
     app.viewer.setMesh(res.mesh);
     ui.result = Object.fromEntries(
       VIEW_IDS.map((v) => [
@@ -92,6 +94,7 @@ async function runBuild() {
     builtKey = key;
     app.lastBuild = null;
     app.buildError = e.message;
+    app.featureLog = e.featureLog ?? [];
     setBuildStatus("⚠ 3D 생성 실패", "err");
   }
   finishBuild();

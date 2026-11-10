@@ -288,7 +288,7 @@ export function docDiff(a: Doc, b: Doc): string {
 
 /** 3D 모양을 정하는 것만 모은 열쇠 — 같으면 3D를 다시 만들 필요가 없다 (이름·표제란·제조 방식은 빠짐) */
 export function geometryKey(p: Project): string {
-  return JSON.stringify([p.views, p.mode, p.thickness, p.thicknessExpr ?? null, p.params ?? null, p.source ?? null]);
+  return JSON.stringify([p.views, p.mode, p.thickness, p.thicknessExpr ?? null, p.params ?? null, p.source ?? null, p.features ?? null, p.rollback ?? null]);
 }
 
 /** 저장된 치수 고침 정리 (깨진 것은 버림) */

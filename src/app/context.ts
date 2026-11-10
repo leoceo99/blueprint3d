@@ -24,6 +24,8 @@ export const app = {
   /** 마지막 3D 결과 (없으면 null) */
   lastBuild: null as BuildResult | null,
   buildError: undefined as string | undefined,
+  /** 피처마다 계산 결과 (13단계) — 3D가 실패해도 남음 */
+  featureLog: [] as import("../core/featureModel").FeatureStatus[],
   /** 3D가 새로 만들어질 때마다 1씩 */
   buildStamp: 0,
   lastSheet: null as Sheet | null,

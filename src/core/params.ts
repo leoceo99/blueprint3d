@@ -5,8 +5,8 @@
  *   그래서 화면·3D·검사 코드는 계속 숫자만 보면 된다.
  */
 import { convertExprUnit, evalExpr, ExprError, plainNumber, referencedNames, renameInExpr, type Site, type Val } from "./expr";
-import type { Project, Shape2D, ViewId } from "./types";
-import { VIEW_IDS } from "./types";
+import type { Project, Shape2D } from "./types";
+import { allSlots, FEATURE_VALUES, setFeatureValue, slotCons, slotShapes, type SlotId } from "./featureModel";
 import { fromDisplay, toDisplay, type Unit } from "./units";
 
 export interface ParamResult {
@@ -113,7 +113,10 @@ export function getDim(s: Shape2D, key: string): number {
 }
 
 export interface ExprProblem {
-  view?: ViewId;
+  /** 3면도 뷰 또는 스케치 피처 id */
+  view?: SlotId;
+  /** 피처 값의 식이면 그 피처 id */
+  featureId?: string;
   shapeId?: string;
   key: string;
   message: string;
@@ -136,8 +139,8 @@ export function applyExpressions(p: Project): { problems: ExprProblem[]; values:
       problems.push({ key: "thickness", message: (e as Error).message });
     }
   }
-  for (const view of VIEW_IDS)
-    for (const s of p.views[view]) {
+  for (const view of allSlots(p))
+    for (const s of slotShapes(p, view)) {
       if (!s.exprs) continue;
       for (const [key, expr] of Object.entries(s.exprs)) {
         const acc = accessor(s, key);
@@ -149,6 +152,21 @@ export function applyExpressions(p: Project): { problems: ExprProblem[]; values:
         }
       }
     }
+  // 피처 값 (거리·각도·개수 …, 13단계)
+  for (const f of p.features ?? []) {
+    if (!f.exprs) continue;
+    for (const [key, expr] of Object.entries(f.exprs)) {
+      const spec = FEATURE_VALUES[f.kind]?.[key];
+      if (!spec) continue;
+      try {
+        const v = spec.site === "count" ? evalExpr(expr, paramLookup(pr), projUnit(p), "none").value : evalSite(p, expr, spec.site, pr);
+        if (!Number.isFinite(v)) throw new ExprError("숫자가 아님");
+        setFeatureValue(f, key, v);
+      } catch (e) {
+        problems.push({ featureId: f.id, key, message: (e as Error).message });
+      }
+    }
+  }
   return { problems, values };
 }
 
@@ -195,11 +213,12 @@ export function renameParam(p: Project, from: string, to: string) {
     prm.expr = renameInExpr(prm.expr, from, to);
   }
   if (p.thicknessExpr) p.thicknessExpr = renameInExpr(p.thicknessExpr, from, to);
-  for (const v of VIEW_IDS) {
-    for (const s of p.views[v])
+  for (const v of allSlots(p)) {
+    for (const s of slotShapes(p, v))
       if (s.exprs) for (const k of Object.keys(s.exprs)) s.exprs[k] = renameInExpr(s.exprs[k], from, to);
-    for (const c of p.constraints?.[v] ?? []) if (c.expr) c.expr = renameInExpr(c.expr, from, to);
+    for (const c of slotCons(p, v) ?? []) if (c.expr) c.expr = renameInExpr(c.expr, from, to);
   }
+  for (const f of p.features ?? []) if (f.exprs) for (const k of Object.keys(f.exprs)) f.exprs[k] = renameInExpr(f.exprs[k], from, to);
 }
 
 /** 이 변수를 쓰는 곳의 수 (지우기 전에 알려 주기용) */
@@ -208,10 +227,11 @@ export function paramUsage(p: Project, name: string): number {
   const uses = (e?: string) => (e && referencedNames(e).includes(name) ? 1 : 0);
   for (const prm of p.params ?? []) if (prm.name !== name) n += uses(prm.expr);
   n += uses(p.thicknessExpr);
-  for (const v of VIEW_IDS) {
-    for (const s of p.views[v]) for (const e of Object.values(s.exprs ?? {})) n += uses(e);
-    for (const c of p.constraints?.[v] ?? []) n += uses(c.expr);
+  for (const v of allSlots(p)) {
+    for (const s of slotShapes(p, v)) for (const e of Object.values(s.exprs ?? {})) n += uses(e);
+    for (const c of slotCons(p, v) ?? []) n += uses(c.expr);
   }
+  for (const f of p.features ?? []) for (const e of Object.values(f.exprs ?? {})) n += uses(e);
   return n;
 }
 
@@ -238,9 +258,14 @@ export function convertProjectUnit(p: Project, to: Unit): number {
   const look = paramLookup(after);
   // 2) 길이 칸 (두께, 도형 치수, 거리 구속)
   if (p.thicknessExpr) p.thicknessExpr = conv(p.thicknessExpr, "len", look);
-  for (const v of VIEW_IDS) {
-    for (const s of p.views[v]) if (s.exprs) for (const k of Object.keys(s.exprs)) s.exprs[k] = conv(s.exprs[k], "len", look);
-    for (const c of p.constraints?.[v] ?? []) if (c.expr) c.expr = conv(c.expr, c.kind === "angle" ? "angle" : "len", look);
+  for (const v of allSlots(p)) {
+    for (const s of slotShapes(p, v)) if (s.exprs) for (const k of Object.keys(s.exprs)) s.exprs[k] = conv(s.exprs[k], "len", look);
+    for (const c of slotCons(p, v) ?? []) if (c.expr) c.expr = conv(c.expr, c.kind === "angle" ? "angle" : "len", look);
   }
+  for (const f of p.features ?? [])
+    for (const k of Object.keys(f.exprs ?? {})) {
+      const site = FEATURE_VALUES[f.kind]?.[k]?.site;
+      if (site === "len" || site === "angle") f.exprs![k] = conv(f.exprs![k], site, look);
+    }
   return lost;
 }

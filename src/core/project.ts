@@ -5,17 +5,14 @@
 import { VIEW_IDS, type Constraint, type ConsKind, type Corner, type Param, type Project, type Shape2D, type SheetInfo, type ViewId } from "./types";
 
 import { pruneConstraints } from "./constraints";
+import { normalizeFeatures } from "./featureModel";
 
 const KINDS: ConsKind[] = ["coincident", "horizontal", "vertical", "parallel", "perpendicular", "equal", "concentric", "tangent", "symmetric", "onLine", "midpoint", "fix", "distance", "distanceX", "distanceY", "angle"];
 
-/** 저장된 구속 검사 (모양만 — 대상이 실제로 있는지는 constraints.pruneConstraints가) */
-function normalizeConstraints(raw: unknown): Project["constraints"] | undefined {
-  if (!obj(raw)) return undefined;
-  const out: Partial<Record<ViewId, Constraint[]>> = {};
-  for (const v of VIEW_IDS) {
-    const list = raw[v];
-    if (!Array.isArray(list)) continue;
-    const ok = list
+/** 구속 목록 하나 검사 */
+function normalizeConsList(list: unknown): Constraint[] | undefined {
+  if (!Array.isArray(list)) return undefined;
+  const ok = list
       .filter((c): c is Record<string, unknown> => obj(c) && typeof c.id === "string" && KINDS.includes(c.kind as ConsKind) && Array.isArray(c.refs))
       .filter((c) => (c.refs as unknown[]).every((r) => obj(r) && typeof r.s === "string" && typeof r.k === "string"))
       .map((c) => {
@@ -26,7 +23,16 @@ function normalizeConstraints(raw: unknown): Project["constraints"] | undefined 
         if (pt(c.at)) k.at = c.at;
         return k;
       });
-    if (ok.length) out[v] = ok;
+  return ok.length ? ok : undefined;
+}
+
+/** 저장된 구속 검사 (모양만 — 대상이 실제로 있는지는 constraints.pruneConstraints가) */
+function normalizeConstraints(raw: unknown): Project["constraints"] | undefined {
+  if (!obj(raw)) return undefined;
+  const out: Partial<Record<ViewId, Constraint[]>> = {};
+  for (const v of VIEW_IDS) {
+    const ok = normalizeConsList(raw[v]);
+    if (ok) out[v] = ok;
   }
   return Object.keys(out).length ? out : undefined;
 }
@@ -87,6 +93,8 @@ export function normalizeShape(raw: unknown): Shape2D | null {
     else delete out.bulges;
   }
   if ("spec" in out && !obj(out.spec)) delete out.spec;
+  if (out.construction !== true) delete out.construction;
+  if (!(raw.kind === "poly" && out.open === true)) delete out.open;
   return out as unknown as Shape2D;
 }
 
@@ -132,6 +140,11 @@ export function normalizeProject(raw: unknown): Project | null {
   else delete out.constraints;
   if (raw.units === "inch") out.units = "inch";
   else delete out.units;
+  const feats = normalizeFeatures(raw.features, normalizeShape, normalizeConsList);
+  if (feats) out.features = feats;
+  else delete out.features;
+  if (feats && num(raw.rollback) && raw.rollback >= 0 && raw.rollback < feats.length) out.rollback = Math.floor(raw.rollback);
+  else delete out.rollback;
   const u = raw.underlay;
   if (!(obj(u) && typeof u.key === "string" && num(u.w) && num(u.h) && num(u.mmPerPx) && u.mmPerPx > 0 && obj(u.views))) delete out.underlay;
   // 지운 도형을 가리키는 구속 등은 뺀다

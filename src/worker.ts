@@ -2,7 +2,8 @@
 import opencascade from "replicad-opencascadejs";
 import wasmUrl from "replicad-opencascadejs/wasm?url";
 import { setOC, type Shape3D } from "replicad";
-import { buildAll, BuildError } from "./core/build";
+import { BuildError } from "./core/build";
+import { buildAllPart, FeatureBuildError } from "./core/featureBuild";
 import { orientShape, readStep, readStl, stepResult, stlResult } from "./core/importModel";
 import { meshToSTL, rotateQuarter, type Mesh } from "./core/mesh";
 import type { ModelSource, Project } from "./core/types";
@@ -17,7 +18,7 @@ export type WorkerRequest =
 export type WorkerResponse =
   | { id: number; ok: true; type: "build"; result: import("./core/types").BuildResult }
   | { id: number; ok: true; type: "export"; data: ArrayBuffer }
-  | { id: number; ok: false; error: string; userError: boolean; needData?: boolean };
+  | { id: number; ok: false; error: string; userError: boolean; needData?: boolean; featureLog?: import("./core/featureModel").FeatureStatus[] };
 
 const ready = (async () => {
   const oc = await (opencascade as any)({ locateFile: () => wasmUrl });
@@ -35,7 +36,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
   try {
     await ready;
     if (msg.type === "build") {
-      const { shape, result } = buildAll(msg.project);
+      const { shape, result } = buildAllPart(msg.project);
       if (msg.keep === false) shape?.delete?.();
       else setCurrent(shape, null);
       post({ id: msg.id, ok: true, type: "build", result });
@@ -78,7 +79,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     let error = userError ? e.message : String(e?.message ?? e);
     if (!userError && msg.type === "import") error = `3D 파일을 읽을 수 없습니다. (${error})`;
     else if (!userError) error = "형상을 만들 수 없습니다. 선이 서로 꼬였거나 뷰끼리 맞지 않는지 확인하세요. (" + error + ")";
-    post({ id: msg.id, ok: false, error, userError: userError || msg.type === "import" });
+    post({ id: msg.id, ok: false, error, userError: userError || msg.type === "import", ...(e instanceof FeatureBuildError ? { featureLog: e.log } : {}) });
   }
 };
 

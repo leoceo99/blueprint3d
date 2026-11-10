@@ -26,7 +26,7 @@ class Engine {
   /** keep: false면 내보내기용 모델(지금 편집 중인 부품)은 그대로 두고 결과만 */
   async build(project: Project, keep = true): Promise<BuildResult> {
     const r = await this.call({ type: "build", project, keep } as any);
-    if (!r.ok) throw new Error(r.error);
+    if (!r.ok) throw Object.assign(new Error(r.error), r.featureLog ? { featureLog: r.featureLog } : {});
     if (r.type !== "build") throw new Error("unexpected");
     return r.result;
   }

@@ -31,6 +31,8 @@ interface ShapeBase {
    * 키는 도형마다 다르다: 사각형 x y w h / 원 cx cy d / 장공 ax ay bx by w / 구멍 depth
    */
   exprs?: Record<string, string>;
+  /** 참조선(구성선): 그리기·구속에만 쓰고 3D에는 쓰지 않음 (13단계) */
+  construction?: boolean;
 }
 
 /** 출력 도면 설정 */
@@ -132,6 +134,8 @@ export interface PolyShape extends ShapeBase {
   bulges?: number[];
   /** 꼭짓점 i의 모서리 처리 (양쪽 변이 직선일 때만 적용) */
   corners?: (Corner | null)[];
+  /** 열린 선 (마지막 점에서 첫 점으로 닫지 않음) — 스윕 경로 등 (13단계). 3면도 몸체·구멍에는 쓰지 않음 */
+  open?: boolean;
 }
 
 /** 장공(긴 구멍): 두 중심점 a, b와 폭 w, 양끝은 반원 */
@@ -224,6 +228,10 @@ export interface Project {
   constraints?: Partial<Record<ViewId, Constraint[]>>;
   /** 길이 단위 (없으면 mm). 값은 늘 mm로 저장하고 표시·입력·식의 맨 숫자만 이 단위 (10단계) */
   units?: "inch";
+  /** 피처 목록 (13단계): 3면도 몸체(있으면) 다음에 위에서부터 차례로 계산 */
+  features?: import("./featureModel").Feature[];
+  /** 되감기: 앞에서부터 이 개수의 피처만 계산 (없으면 전부) */
+  rollback?: number;
 }
 
 export function emptyProject(): Project {
@@ -264,6 +272,10 @@ export interface MeshData {
   normals: number[];
   triangles: number[];
   edges: number[];
+  /** 면마다 삼각형 범위 [시작, 개수] (triangles 배열의 인덱스 기준, topo.faces와 같은 순서) */
+  faceGroups?: [number, number][];
+  /** 모서리마다 선 범위 [시작, 개수] (edges 배열의 인덱스 기준, topo.edges와 같은 순서) */
+  edgeGroups?: [number, number][];
 }
 
 export interface ProjectedView {
@@ -286,4 +298,8 @@ export interface BuildResult {
   holes?: Record<ViewId, Shape2D[]>;
   /** 형상 특징 (높이·필렛·모따기·보스·원뿔) — 도면 자동 치수에 쓴다 (11단계) */
   features?: import("./featureTypes").Features3D;
+  /** 피처마다 계산 결과 (13단계) */
+  featureLog?: import("./featureModel").FeatureStatus[];
+  /** 면·모서리 지문 (3D 화면에서 고르기 — mesh.faceGroups·edgeGroups의 순서와 같음, 13단계) */
+  topo?: { faces: import("./featureModel").FaceSig[]; edges: import("./featureModel").EdgeSig[] };
 }
