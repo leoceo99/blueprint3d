@@ -7,7 +7,7 @@
  * 이름은 겹쳐도 되고, 참조는 id로 한다 (Blender의 ID·Onshape의 탭 참조처럼).
  * 예전 프로젝트 JSON(부품 1개)은 부품 1개 + 도면 1장 문서로 자동 변환된다.
  */
-import { normalizeDims } from "./dimsNormalize";
+import { cleanTol, normalizeDims } from "./dimsNormalize";
 import type { SheetDim } from "./sheetDims";
 import type { DimEdits } from "./sheet";
 import { normalizeProject } from "./project";
@@ -125,8 +125,14 @@ export function normalizeDoc(raw: unknown): Doc | null {
   for (const d of Array.isArray(raw.drawings) ? raw.drawings : []) {
     if (!obj(d) || typeof d.partId !== "string" || !partIds.has(d.partId)) continue;
     const s = cleanSheet(d.sheet);
-    const e = cleanEdits(d.edits);
     const xv = normalizeViews(d.views);
+    const e = cleanEdits(d.edits);
+    // 없는 뷰(지운 단면 등)에 놓인 치수는 버림
+    if (e?.dims) {
+      const known = new Set<string>([...VIEW_IDS, ...(xv ?? []).map((v) => v.id)]);
+      e.dims = e.dims.filter((x) => known.has(x.view));
+      if (!e.dims.length) delete e.dims;
+    }
     const hide = Array.isArray(d.hide) ? VIEW_IDS.filter((v) => (d.hide as unknown[]).includes(v)) : [];
     drawings.push({
       id: uniq(d.id, "drawing"),
@@ -326,6 +332,7 @@ export function cleanEdits(raw: unknown): DimEdits | undefined {
         if (["off", "line", "jog", "ang", "len", "rad"].includes(f) && typeof x === "number" && Number.isFinite(x)) m[f] = x;
         else if (f === "knee" && Array.isArray(x) && x.length === 2 && x.every((n) => typeof n === "number" && Number.isFinite(n))) m[f] = x;
         else if ((f === "text" || f === "suffix") && typeof x === "string") m[f] = x;
+        else if (f === "tol" && cleanTol(x)) m[f] = cleanTol(x);
       }
       if (Object.keys(m).length) moved[k] = m as Partial<SheetDim>;
     }

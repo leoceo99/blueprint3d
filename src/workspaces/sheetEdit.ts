@@ -14,7 +14,7 @@ type ViewId = string;
 import { fmtLen } from "../core/units";
 import { panBy } from "./sheetZoom";
 
-import { sheetEdit, type EditorHost } from "./sheetState";
+import { isSymbolTool, sheetEdit, type EditorHost } from "./sheetState";
 import { nextLabel, type DrawingView } from "../core/sheetViews";
 
 const isStdView = (v: string) => v === "front" || v === "top" || v === "side";
@@ -87,8 +87,11 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   let vhover: Pt | null = null;
   /** 추가 뷰 옮기기 */
   let vdrag: { id: string; start: Pt; now: Pt; pointer: number } | null = null;
+  /** 기호 도구: 면 위의 점 (뷰 좌표) */
+  let spick: { v: ViewId; q: Pt } | null = null;
 
   const reset = () => {
+    spick = null;
     vpick = null;
     vhover = null;
     picks = [];
@@ -225,6 +228,48 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
     return { id, view: p1.v, kind: "linear", dir, a: p1.q, b: p2.q, off };
   };
 
+  // ---- 기호 (14.5): 면 위의 점 → 놓을 곳 ----
+  /** 누른 곳에서 가장 가까운 외형선·원 위의 점 (없으면 그 점) */
+  const onEdge = (P: Pt, tol: number): Pt => {
+    const l = nearestLine(P, tol * 1.5);
+    if (l) {
+      const dx = l.b[0] - l.a[0];
+      const dy = l.b[1] - l.a[1];
+      const t = Math.max(0, Math.min(1, ((P[0] - l.a[0]) * dx + (P[1] - l.a[1]) * dy) / (dx * dx + dy * dy || 1)));
+      return [l.a[0] + t * dx, l.a[1] + t * dy];
+    }
+    const c = nearestCircle(P, tol * 1.5);
+    if (c) {
+      const a = Math.atan2(P[1] - c.c[1], P[0] - c.c[0]);
+      return [c.c[0] + c.r * Math.cos(a), c.c[1] + c.r * Math.sin(a)];
+    }
+    return P;
+  };
+  const datumLabels = () => sh.dims.filter((d) => d.def.kind === "datum").map((d) => (d.def as Extract<SheetDim, { kind: "datum" }>).label);
+  const nextDatum = () => {
+    const used = new Set(datumLabels());
+    for (const c of "ABCDEFGHJKLMNPRSTUVWXYZ") if (!used.has(c)) return c;
+    return "A";
+  };
+  const buildSymbol = (P: Pt): SheetDim | null => {
+    if (!spick) return null;
+    const id = `m${Date.now().toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
+    const T = toPaper(spick.v, spick.q);
+    let knee: Pt = [P[0] - T[0], P[1] - T[1]];
+    const base = { id, view: spick.v, tip: spick.q };
+    if (sheetEdit.tool === "rough") {
+      // 면 바로 위를 누르면 지시선 없이 면 위에
+      if (Math.hypot(knee[0], knee[1]) < 2) knee = [0, 0];
+      return { ...base, kind: "rough", knee, ra: sheetEdit.rough.ra, ...(sheetEdit.rough.mode !== "any" ? { mode: sheetEdit.rough.mode } : {}) };
+    }
+    if (Math.hypot(knee[0], knee[1]) < 4) knee = [0, 8];
+    if (sheetEdit.tool === "gdt") {
+      const g = sheetEdit.gdt;
+      return { ...base, kind: "gdt", knee, sym: g.sym, value: g.value, ...(g.dia ? { dia: true } : {}), ...(g.datums.length ? { datums: [...g.datums] } : {}) };
+    }
+    return { ...base, kind: "datum", knee, label: nextDatum() };
+  };
+
   // ---- 끌어서 옮기기 ----
   const dragged = (def: SheetDim, P0: Pt, P1: Pt): Partial<SheetDim> => {
     const dx = P1[0] - P0[0];
@@ -246,7 +291,7 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
       const O = toPaper(def.view, def.o);
       return { rad: Math.max(3, Math.hypot(P1[0] - O[0], P1[1] - O[1])) };
     }
-    if (def.kind === "leader") return { knee: [def.knee[0] + dx, def.knee[1] + dy] };
+    if (def.kind === "leader" || def.kind === "rough" || def.kind === "gdt" || def.kind === "datum") return { knee: [def.knee[0] + dx, def.knee[1] + dy] };
     return {};
   };
 
@@ -310,6 +355,27 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
       vhover = null;
       sheetEdit.tool = "select";
       sheetEdit.selectedView = view.id;
+      host.changed();
+      return;
+    }
+    if (isSymbolTool(sheetEdit.tool)) {
+      e.preventDefault();
+      if (!spick) {
+        const T = onEdge(P, tol);
+        const v = viewAt(T);
+        if (!v) return host.toast("기호를 붙일 면(선)을 누르세요.");
+        spick = { v, q: toView(v, T) };
+        preview = buildSymbol(P);
+        paint();
+        return;
+      }
+      const d = buildSymbol(P);
+      spick = null;
+      preview = null;
+      if (d) {
+        host.edit((x) => (x.dims = [...(x.dims ?? []), d]), d.kind === "rough" ? "표면 거칠기" : d.kind === "gdt" ? "기하공차" : `데이텀 ${(d as { label: string }).label}`);
+        sheetEdit.selected = d.id;
+      }
       host.changed();
       return;
     }
@@ -410,6 +476,12 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
       paint();
       return;
     }
+    if (isSymbolTool(sheetEdit.tool)) {
+      hoverSnap = spick ? null : onEdge(P, tolOf(e));
+      preview = spick ? buildSymbol(P) : null;
+      paint();
+      return;
+    }
     if (sheetEdit.tool !== "dim") {
       const hit = dimAt(P, tolOf(e) * 0.6);
       svg.style.cursor = hit ? "move" : "";
@@ -451,10 +523,17 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
   };
 
   const onDbl = (e: MouseEvent) => {
-    if (sheetEdit.tool === "dim") return;
+    if (sheetEdit.tool !== "select") return;
     const hit = dimAt(paperOf(e), tolOf(e) * 0.6);
     if (!hit) return;
     const def = hit.def;
+    if (def.kind === "rough" || def.kind === "gdt" || def.kind === "datum") {
+      const f = def.kind === "rough" ? "ra" : def.kind === "gdt" ? "value" : "label";
+      const cur = def.kind === "rough" ? def.ra : def.kind === "gdt" ? def.value : def.label;
+      const label = def.kind === "rough" ? "Ra 값 (µm)" : def.kind === "gdt" ? "공차 값 (mm)" : "데이텀 문자";
+      editText(svg, hit, cur, label, (val) => val.trim() && commitPatch(hit.id, { [f]: val.trim() } as Partial<SheetDim>, "기호 값 고치기"));
+      return;
+    }
     const isLeader = def.kind === "leader";
     const cur = isLeader ? def.text : (def.suffix ?? "");
     const label = isLeader ? "지시 글자" : "덧붙일 글자 (예: ±0.1, H7, (참고))";
@@ -466,7 +545,7 @@ export function attachEditor(svg: SVGSVGElement, sh: Sheet, edits: DimEdits, hos
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key !== "Escape" || !svg.isConnected) return;
-    if (picks.length || circle || lines.length || preview || vpick) {
+    if (picks.length || circle || lines.length || preview || vpick || spick) {
       e.stopPropagation();
       reset();
     } else if (sheetEdit.tool !== "select" && sheetEdit.tool !== "dim") {

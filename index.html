@@ -276,6 +276,11 @@
           <button class="small" data-cmd="sheet.aux" title="보조 투상도 — 경사 모서리의 두 점 (B)">보조</button>
           <button class="small" data-cmd="sheet.iso" title="등각 그림 (I)">등각</button>
         </div>
+        <div class="dim-tools sym-tools" role="group" aria-label="기호">
+          <button class="small" data-cmd="sheet.rough" title="표면 거칠기 — 면을 누르고 기호 자리 (R)">거칠기</button>
+          <button class="small" data-cmd="sheet.gdt" title="기하공차 — 면을 누르고 틀 자리 (G)">기하공차</button>
+          <button class="small" data-cmd="sheet.datum" title="데이텀 — 기준 면을 누르고 문자 자리 (A)">데이텀</button>
+        </div>
         <div class="dim-tools zoom-tools" role="group" aria-label="확대">
           <button class="small ghost" data-cmd="sheet.zoomOut" aria-label="축소">−</button>
           <span id="sheetZoomLabel" class="muted small zoom-label">100%</span>
@@ -292,6 +297,10 @@
       </div>
       <div class="sheet-body">
         <aside class="sheet-settings" id="sheetSettings">
+          <div id="dimPropsWrap" hidden>
+            <div class="panel-head" id="dimPropsHead">고른 치수</div>
+            <div id="dimProps" class="sheet-form dim-props"></div>
+          </div>
           <div class="panel-head">치수 검사</div>
           <div id="dimCheck" class="dim-check"></div>
           <div class="panel-head">도면 설정</div>

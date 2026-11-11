@@ -97,7 +97,7 @@ describe("자동 치수 2.0", () => {
     const ok = normalizeDims([
       { id: "a", view: "front", kind: "linear", dir: "h", a: [0, 0], b: [10, 0], off: -8 },
       { id: "b", view: "top", kind: "radius", c: [0, 0], r: 3, ang: 30, len: 5, suffix: " 참고" },
-      { id: "c", view: "nope", kind: "linear", dir: "h", a: [0, 0], b: [1, 0], off: 1 },
+      { id: "c", view: 5, kind: "linear", dir: "h", a: [0, 0], b: [1, 0], off: 1 },
       { id: "d", view: "side", kind: "radius", c: [0, 0], r: -1, ang: 0, len: 5 },
       { id: "e", view: "side", kind: "leader", tip: [1, 2], knee: [5, 5], text: "메모" },
       null,

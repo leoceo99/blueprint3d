@@ -701,3 +701,10 @@ body.sketch-mode .ribbon .g-3d { display: none; }
 .view-row button { padding: 0 5px; min-height: 20px; }
 .view-std input[type="checkbox"] { width: auto; height: auto; margin: 0 2px 0 0; }
 .view-std label.check { display: inline-flex; align-items: center; gap: 2px; }
+/* 14.4·14.5: 고른 치수 · 기호 */
+.dim-props { margin-bottom: 6px; }
+.dim-props .row2 { display: flex; gap: 6px; align-items: flex-end; }
+.dim-props .row2 > label { flex: 1; min-width: 0; }
+.dim-props .row2 > label.check { flex: 0 0 auto; padding-bottom: 4px; }
+.dim-props .fit-dev { font-size: 12px; padding: 3px 6px; border-radius: 5px; background: var(--accent-soft); font-variant-numeric: tabular-nums; }
+.dim-props .fit-dev.bad { background: transparent; color: var(--danger, #c0392b); }

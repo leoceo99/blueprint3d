@@ -4,6 +4,7 @@
  * renderDim은 화면·SVG에 그릴 선·화살표·글자(용지 좌표)와, DXF의 진짜 치수(DIMENSION)에 넣을 정의점을 함께 만든다.
  */
 import type { ViewId } from "./types";
+import { fitDeviation } from "./fits";
 
 export type Pt = [number, number];
 export type Layer = "VISIBLE" | "HIDDEN" | "CENTER" | "DIM" | "FRAME" | "HATCH";
@@ -32,7 +33,12 @@ interface DimBase {
   text?: string;
   /** 글자 뒤에 붙이기 (공차·“관통” 등) */
   suffix?: string;
+  /** 치수 공차 (14.4): ± · 위·아래 허용차 · 끼워맞춤(H7 …) */
+  tol?: DimTol;
 }
+
+/** 치수 공차 — 허용차는 mm */
+export type DimTol = { kind: "sym"; v: number } | { kind: "dev"; up: number; lo: number } | { kind: "fit"; code: string };
 /** 가로(h)·세로(v)·평행(aligned) 치수 */
 export interface LinearDim extends DimBase {
   kind: "linear";
@@ -83,7 +89,78 @@ export interface LeaderDim extends DimBase {
   knee: Pt;
   text: string;
 }
-export type SheetDim = LinearDim | OrdinateDim | RadialDim | AngleDim | LeaderDim;
+/** 표면 거칠기 기호 (14.5, ISO 1302): 면 위의 점 tip에 √, 값 Ra */
+export interface RoughDim extends DimBase {
+  kind: "rough";
+  tip: Pt;
+  /** 기호를 놓을 곳 (tip의 용지 위치에서 용지 mm, [0,0]이면 tip 바로 위) */
+  knee: Pt;
+  ra: string;
+  /** any: 가공 방법 상관없음 · remove: 제거 가공 필요(막대) · keep: 제거 가공 안 함(원) */
+  mode?: "any" | "remove" | "keep";
+}
+
+/** 기하공차 기호 (ISO 1101) */
+export type GdtSym = "straight" | "flat" | "round" | "cyl" | "profLine" | "profSurf" | "perp" | "angular" | "parallel" | "position" | "concentric" | "symmetry" | "runout" | "totalRunout";
+
+export const GDT_LABEL: Record<GdtSym, string> = {
+  straight: "진직도",
+  flat: "평면도",
+  round: "진원도",
+  cyl: "원통도",
+  profLine: "선의 윤곽도",
+  profSurf: "면의 윤곽도",
+  perp: "직각도",
+  angular: "경사도",
+  parallel: "평행도",
+  position: "위치도",
+  concentric: "동심도",
+  symmetry: "대칭도",
+  runout: "원주 흔들림",
+  totalRunout: "온 흔들림",
+};
+
+/** 기하공차 틀 (14.5): 지시선 + [기호 | 공차 | 데이텀…] */
+export interface GdtDim extends DimBase {
+  kind: "gdt";
+  tip: Pt;
+  knee: Pt;
+  sym: GdtSym;
+  /** 공차 값 글자 (예: 0.05) */
+  value: string;
+  /** 공차 앞에 Ø (원통형 공차역) */
+  dia?: boolean;
+  datums?: string[];
+}
+
+/** 데이텀 (14.5): 면 위 삼각형 + 네모 안 문자 */
+export interface DatumDim extends DimBase {
+  kind: "datum";
+  tip: Pt;
+  knee: Pt;
+  label: string;
+}
+
+export type SheetDim = LinearDim | OrdinateDim | RadialDim | AngleDim | LeaderDim | RoughDim | GdtDim | DatumDim;
+
+/** 치수가 아닌 기호 (공차·자동 치수 검사에서 빼는 것) */
+export const isAnnotation = (d: SheetDim) => d.kind === "rough" || d.kind === "gdt" || d.kind === "datum";
+
+/** 공차 글자: ±0.1 · (+0.05/−0.02) · H7 (+0.021/0) */
+export function tolText(d: SheetDim, fmt: (mm: number) => string): string {
+  const t = d.tol;
+  if (!t) return "";
+  // 허용차는 치수보다 한 자리 더 (mm 0.001 · inch 0.0001): 단위는 fmt(1000)으로 알아냄 (mm → 1000, inch → 39.37)
+  const k = Number(fmt(1000)) / 1000 || 1;
+  const dp = Math.abs(k - 1) < 1e-9 ? 3 : 4;
+  const num = (x: number) => String(Math.round(x * k * 10 ** dp) / 10 ** dp);
+  const dev = (x: number) => (Math.abs(x) < 5e-7 ? "0" : (x > 0 ? "+" : "−") + num(Math.abs(x)));
+  if (t.kind === "sym") return ` ±${num(Math.abs(t.v))}`;
+  if (t.kind === "dev") return ` (${dev(t.up)}/${dev(t.lo)})`;
+  const nominal = measureDim(d);
+  const fd = fitDeviation(nominal, t.code);
+  return ` ${t.code}${fd ? ` (${dev(fd.up)}/${dev(fd.lo)})` : ""}`;
+}
 
 /** DXF DIMENSION 정의 (용지 좌표). 종류: 0 회전(가로·세로), 1 평행, 3 지름, 4 반지름, 5 세 점 각도, 6 좌표 */
 export interface DxfDim {
@@ -168,7 +245,10 @@ export function measureDim(d: SheetDim): number {
 /** 치수 글자 */
 export function dimText(d: SheetDim, fmt: (mm: number) => string): string {
   if (d.kind === "leader") return d.text + (d.suffix ?? "");
-  if (d.text) return d.text + (d.suffix ?? "");
+  if (d.kind === "rough") return `Ra ${d.ra}`;
+  if (d.kind === "gdt") return `${GDT_LABEL[d.sym]} ${d.dia ? "Ø" : ""}${d.value}${d.datums?.length ? " " + d.datums.join(" ") : ""}`;
+  if (d.kind === "datum") return d.label;
+  if (d.text) return d.text + tolText(d, fmt) + (d.suffix ?? "");
   const v = measureDim(d);
   let t: string;
   if (d.kind === "angle") t = `${Math.round(v * 100) / 100}°`;
@@ -176,7 +256,7 @@ export function dimText(d: SheetDim, fmt: (mm: number) => string): string {
   else if (d.kind === "diameter") t = `Ø${fmt(v)}`;
   else t = fmt(v);
   if ((d.kind === "radius" || d.kind === "diameter") && d.count && d.count > 1) t = `${d.count}×${t}`;
-  return t + (d.suffix ?? "");
+  return t + tolText(d, fmt) + (d.suffix ?? "");
 }
 
 function arrowHead(out: Prim[], tip: Pt, dir: Pt) {
@@ -192,6 +272,110 @@ function arrowHead(out: Prim[], tip: Pt, dir: Pt) {
 }
 
 const line = (out: Prim[], a: Pt, b: Pt) => out.push({ layer: "DIM", t: "line", a, b });
+const rect = (out: Prim[], x0: number, y0: number, x1: number, y1: number) => {
+  line(out, [x0, y0], [x1, y0]);
+  line(out, [x1, y0], [x1, y1]);
+  line(out, [x1, y1], [x0, y1]);
+  line(out, [x0, y1], [x0, y0]);
+};
+
+/** 표면 거칠기 √ (ISO 1302): 꼭짓점이 면 위, 짧은 다리·긴 다리 60°, 제거 가공이면 막대, 안 하면 원, 위 가로선 아래에 Ra 값 */
+function roughSymbol(out: Prim[], texts: SheetText[], d: RoughDim, tip: Pt) {
+  const V: Pt = [tip[0] + d.knee[0], tip[1] + d.knee[1]];
+  if (Math.hypot(d.knee[0], d.knee[1]) > 0.5) line(out, tip, V);
+  const h1 = 3.5;
+  const h2 = 7.5;
+  const k = Math.tan(Math.PI / 6);
+  const Lp: Pt = [V[0] - h1 * k, V[1] + h1];
+  const Rp: Pt = [V[0] + h2 * k, V[1] + h2];
+  line(out, V, Lp);
+  line(out, V, Rp);
+  if (d.mode === "remove") line(out, Lp, [V[0] + h1 * k, V[1] + h1]);
+  if (d.mode === "keep") out.push({ layer: "DIM", t: "arc", c: [V[0], V[1] + h1 * 0.55], r: h1 * 0.45, start: 0, end: 360 });
+  const text = `Ra ${d.ra}`;
+  const w = textWidth(text, TXT * 0.85);
+  line(out, Rp, [Rp[0] + w + 1, Rp[1]]);
+  texts.push({ at: [Rp[0] + 0.5, Rp[1] - TXT * 0.85 - 0.6], text, size: TXT * 0.85, anchor: "start" });
+}
+
+/** 기하공차 기호를 선으로 (글꼴 없이도 보이게): 가운데 c, 크기 s(용지 mm) */
+function gdtGlyph(out: Prim[], sym: GdtSym, c: Pt, s: number) {
+  const L = (a: Pt, b: Pt) => line(out, [c[0] + a[0] * s, c[1] + a[1] * s], [c[0] + b[0] * s, c[1] + b[1] * s]);
+  const circ = (r: number, cx = 0, cy = 0) => out.push({ layer: "DIM", t: "arc", c: [c[0] + cx * s, c[1] + cy * s], r: r * s, start: 0, end: 360 });
+  const arc = (r: number, a0: number, a1: number, cy = 0) => out.push({ layer: "DIM", t: "arc", c: [c[0], c[1] + cy * s], r: r * s, start: a0, end: a1 });
+  switch (sym) {
+    case "straight":
+      return L([-0.4, 0], [0.4, 0]);
+    case "flat":
+      L([-0.4, -0.2], [0.25, -0.2]);
+      L([0.25, -0.2], [0.4, 0.2]);
+      L([0.4, 0.2], [-0.25, 0.2]);
+      return L([-0.25, 0.2], [-0.4, -0.2]);
+    case "round":
+      return circ(0.3);
+    case "cyl":
+      circ(0.25);
+      L([-0.4, -0.35], [-0.1, 0.35]);
+      return L([0.1, -0.35], [0.4, 0.35]);
+    case "profLine":
+      return arc(0.35, 0, 180, -0.15);
+    case "profSurf":
+      arc(0.35, 0, 180, -0.15);
+      return L([-0.35, -0.15], [0.35, -0.15]);
+    case "perp":
+      L([0, -0.3], [0, 0.35]);
+      return L([-0.35, -0.3], [0.35, -0.3]);
+    case "angular":
+      L([-0.35, -0.3], [0.35, -0.3]);
+      return L([-0.35, -0.3], [0.3, 0.3]);
+    case "parallel":
+      L([-0.3, -0.3], [0, 0.3]);
+      return L([0, -0.3], [0.3, 0.3]);
+    case "position":
+      circ(0.22);
+      L([-0.38, 0], [0.38, 0]);
+      return L([0, -0.38], [0, 0.38]);
+    case "concentric":
+      circ(0.15);
+      return circ(0.32);
+    case "symmetry":
+      L([-0.25, 0.2], [0.25, 0.2]);
+      L([-0.4, 0], [0.4, 0]);
+      return L([-0.25, -0.2], [0.25, -0.2]);
+    case "runout":
+    case "totalRunout": {
+      const tip: Pt = [c[0] + 0.25 * s, c[1] + 0.3 * s];
+      L([-0.2, -0.35], [0.25, 0.3]);
+      out.push({ layer: "DIM", t: "fill", pts: [tip, [tip[0] - 0.22 * s, tip[1] - 0.05 * s], [tip[0] - 0.05 * s, tip[1] - 0.22 * s]] });
+      if (sym === "totalRunout") {
+        L([0.05, -0.35], [0.45, 0.2]);
+        L([-0.4, -0.35], [0.25, -0.35]);
+      }
+      return;
+    }
+  }
+}
+
+/** 기하공차 틀: 지시선(화살표는 형상 쪽) → [기호 | (Ø)공차 | 데이텀…] */
+function gdtFrame(out: Prim[], texts: SheetText[], d: GdtDim, tip: Pt) {
+  const K: Pt = [tip[0] + d.knee[0], tip[1] + d.knee[1]];
+  line(out, tip, K);
+  arrowHead(out, tip, [tip[0] - K[0], tip[1] - K[1]]);
+  const H = 6;
+  const cells: { w: number; text?: string; sym?: GdtSym }[] = [{ w: 6, sym: d.sym }, { w: Math.max(8, textWidth(`${d.dia ? "Ø" : ""}${d.value}`, TXT) + 2.5), text: `${d.dia ? "Ø" : ""}${d.value}` }];
+  for (const dt of d.datums ?? []) if (dt.trim()) cells.push({ w: Math.max(6, textWidth(dt, TXT) + 2.5), text: dt });
+  const total = cells.reduce((a, c) => a + c.w, 0);
+  const right = d.knee[0] >= 0;
+  let x = right ? K[0] : K[0] - total;
+  const y0 = K[1] - H / 2;
+  rect(out, x, y0, x + total, y0 + H);
+  cells.forEach((c, i) => {
+    if (i) line(out, [x, y0], [x, y0 + H]);
+    if (c.sym) gdtGlyph(out, c.sym, [x + c.w / 2, y0 + H / 2], 5);
+    if (c.text) texts.push({ at: [x + c.w / 2, y0 + (H - TXT) / 2 + 0.15], text: c.text, size: TXT, anchor: "middle" });
+    x += c.w;
+  });
+}
 
 /**
  * 치수 하나를 그린다. P: 그 뷰의 뷰 좌표 → 용지 좌표, s: 척도, fmt: 길이 글자.
@@ -349,14 +533,37 @@ export function renderDim(d: SheetDim, P: (q: Pt) => Pt, s: number, fmt: (mm: nu
     line(prims, knee, [knee[0] + (right ? tw + 1 : -(tw + 1)), knee[1]]);
     arrowHead(prims, tip, [tip[0] - knee[0], tip[1] - knee[1]]);
     texts.push({ at: [knee[0] + (right ? 0.5 : -0.5), knee[1] + 0.8], text, size: TXT * 0.85, anchor: right ? "start" : "end" });
+  } else if (d.kind === "rough") {
+    roughSymbol(prims, texts, d, P(d.tip));
+  } else if (d.kind === "gdt") {
+    gdtFrame(prims, texts, d, P(d.tip));
+  } else if (d.kind === "datum") {
+    const tip = P(d.tip);
+    const K: Pt = [tip[0] + d.knee[0], tip[1] + d.knee[1]];
+    const L = Math.hypot(d.knee[0], d.knee[1]) || 1;
+    const u: Pt = [d.knee[0] / L, d.knee[1] / L];
+    const n: Pt = [-u[1], u[0]];
+    // 면에 붙은 채운 삼각형 → 선 → 네모 안 문자
+    const h = 2.2;
+    prims.push({ layer: "DIM", t: "fill", pts: [[tip[0] + n[0] * 1.6, tip[1] + n[1] * 1.6], [tip[0] - n[0] * 1.6, tip[1] - n[1] * 1.6], [tip[0] + u[0] * h, tip[1] + u[1] * h]] });
+    const B = 5.5;
+    const C: Pt = [K[0] + u[0] * (B / 2), K[1] + u[1] * (B / 2)];
+    line(prims, [tip[0] + u[0] * h, tip[1] + u[1] * h], K);
+    rect(prims, C[0] - B / 2, C[1] - B / 2, C[0] + B / 2, C[1] + B / 2);
+    texts.push({ at: [C[0], C[1] - TXT / 2 + 0.2], text: d.label, size: TXT, anchor: "middle", bold: true });
   }
 
-  // 글자 상자 (여러 글자면 합침)
+  // 글자 상자 (여러 글자면 합침). 기호(거칠기·기하공차·데이텀)는 그림까지 포함해서 누르기 쉽게
   let box: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
   for (const t of texts) {
     const b = textBox(t);
     box = [Math.min(box[0], b[0]), Math.min(box[1], b[1]), Math.max(box[2], b[2]), Math.max(box[3], b[3])];
   }
+  if (isAnnotation(d))
+    for (const pr of prims) {
+      const pts = pr.t === "line" ? [pr.a, pr.b] : pr.t === "fill" ? pr.pts : [[pr.c[0] - pr.r, pr.c[1] - pr.r], [pr.c[0] + pr.r, pr.c[1] + pr.r]];
+      for (const q of pts as Pt[]) box = [Math.min(box[0], q[0]), Math.min(box[1], q[1]), Math.max(box[2], q[0]), Math.max(box[3], q[1])];
+    }
   return { id: d.id, view: d.view, prims, texts, box, value, text, dxf, def: d };
 }
 

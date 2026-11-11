@@ -100,6 +100,29 @@ async function renderSheet(force = false) {
   }
   if (svg) (await import("./sheetEdit")).attachEditor(svg, sh, d.edits ?? {}, editorHost);
   renderCheck(sh, d);
+  void renderProps();
+}
+
+/** 고른 치수·기호 칸 (14.4·14.5) */
+async function renderProps() {
+  if (app.workspace !== "sheet") return;
+  const { renderDimProps } = await import("./sheetProps");
+  renderDimProps($("#dimProps"), $("#dimPropsHead"), $("#dimPropsWrap"), app.lastSheet, activeDrawing(store.doc)?.edits ?? {}, {
+    patch: (id, patch, label) =>
+      editorHost.edit((e) => {
+        const apply = (o: Record<string, unknown>) => {
+          for (const [k, v] of Object.entries(patch)) if (v === undefined) delete o[k];
+          else o[k] = v;
+        };
+        const m = (e.dims ?? []).find((x) => x.id === id);
+        if (m) return apply(m as unknown as Record<string, unknown>);
+        const mv = { ...(e.moved?.[id] ?? {}) } as Record<string, unknown>;
+        apply(mv);
+        e.moved = { ...(e.moved ?? {}) };
+        if (Object.keys(mv).length) e.moved[id] = mv;
+        else delete e.moved[id];
+      }, label),
+  });
 }
 
 /** 치수 편집기가 도면을 고칠 때 */
@@ -148,17 +171,20 @@ function renderCheck(sh: Sheet | null, d: Drawing | null) {
 
 function syncTools() {
   $<HTMLSelectElement>("#dimKind").value = sheetEdit.kind;
+  void renderProps();
   $("#sheetHost").classList.toggle("tool-dim", sheetEdit.tool !== "select");
   app.sheetHint =
     sheetEdit.tool === "section" || sheetEdit.tool === "aux"
       ? `${sheetEdit.tool === "section" ? "절단선" : "경사 모서리"}의 두 점을 누르세요 (점에 붙음, Shift·5° 안쪽은 수평·수직) · Esc 취소`
       : sheetEdit.tool === "detail"
         ? "자세히 볼 곳의 가운데를 누르고, 원 크기만큼 떨어진 곳을 누르세요 · Esc 취소"
+        : sheetEdit.tool === "rough" || sheetEdit.tool === "gdt" || sheetEdit.tool === "datum"
+          ? `${{ rough: "표면 거칠기를 붙일 면", gdt: "기하공차를 줄 면·구멍", datum: "기준(데이텀)이 될 면" }[sheetEdit.tool]}의 선을 누르고, 기호 자리를 누르세요 · 값은 오른쪽 칸 · Esc 끝`
         : sheetEdit.tool === "dim"
       ? sheetEdit.kind === "angle"
         ? "선 두 개를 누르고, 각도 글자 자리를 누르세요 · Esc 취소"
         : "점 두 개(선 끝·원 중심) 또는 원·원호를 누르고, 치수선 자리를 누르세요 · Esc 취소"
-      : "치수를 눌러 고르고 끌어서 옮기기 · 두 번 누르면 글자 덧붙이기 · Delete 지우기";
+      : "치수를 눌러 고르고 끌어서 옮기기 · 공차는 오른쪽 ‘고른 치수’ 칸 · 두 번 누르면 글자 · Delete 지우기";
 }
 
 function setTool(t: DimTool) {
@@ -429,6 +455,10 @@ const cmds: Command[] = [
   { id: "sheet.section", title: "도면: 단면도 (절단선 두 점)", category: "도면", keywords: ["section", "cut", "단면", "절단"], keys: ["S"], checked: () => sheetEdit.tool === "section", run: () => setTool("section") },
   { id: "sheet.aux", title: "도면: 보조 투상도 (경사 모서리 두 점)", category: "도면", keywords: ["auxiliary", "보조", "경사"], keys: ["B"], checked: () => sheetEdit.tool === "aux", run: () => setTool("aux") },
   { id: "sheet.detail", title: "도면: 상세도 (원으로 확대)", category: "도면", keywords: ["detail", "상세", "확대"], keys: ["C"], checked: () => sheetEdit.tool === "detail", run: () => setTool("detail") },
+  // ---- 기호 (14.5) ----
+  { id: "sheet.rough", title: "도면: 표면 거칠기 기호", category: "도면", keywords: ["surface roughness", "Ra", "거칠기", "표면"], keys: ["R"], checked: () => sheetEdit.tool === "rough", run: () => setTool("rough") },
+  { id: "sheet.gdt", title: "도면: 기하공차 (평면도·직각도·위치도 …)", category: "도면", keywords: ["gd&t", "geometric tolerance", "기하공차", "평면도", "직각도", "위치도"], keys: ["G"], checked: () => sheetEdit.tool === "gdt", run: () => setTool("gdt") },
+  { id: "sheet.datum", title: "도면: 데이텀 (기준면)", category: "도면", keywords: ["datum", "데이텀", "기준"], keys: ["A"], checked: () => sheetEdit.tool === "datum", run: () => setTool("datum") },
   {
     id: "sheet.iso",
     title: "도면: 등각 그림 넣기",
