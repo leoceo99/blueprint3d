@@ -8,13 +8,14 @@
  *
  * 좌표: 용지 mm, 왼쪽 아래가 원점, 위가 +y. SVG로 바꿀 때만 y를 뒤집는다.
  */
-import { materialSheet } from "./materials";
+import { densityOf, fmtMass, massOf, materialSheet } from "./materials";
 import { isDegenerate } from "./geometry2d";
 import { autoDims, checkNeeds } from "./autoDims";
-import { renderDim, type DimDraw, type Layer, type Prim, type Pt, type SheetDim, type SheetText } from "./sheetDims";
+import { renderDim, textWidth, type DimDraw, type Layer, type Prim, type Pt, type SheetDim, type SheetText } from "./sheetDims";
 import { projUnit } from "./params";
 import { fmtLen, MM_PER_INCH, type Unit } from "./units";
 import type { BuildResult, ProjectedView, Project, SheetInfo, ViewId } from "./types";
+import type { Doc } from "./document";
 import { clipToCircle, cutCamera, hatchLines, STD_CAM, viewTitle, type DrawingView } from "./sheetViews";
 import { VIEW_IDS, VIEW_LABEL } from "./types";
 
@@ -50,6 +51,37 @@ export interface SheetExtra {
   data?: Record<string, { view: ProjectedView; hatch?: [number, number][][] }>;
   /** 숨길 기본 뷰 */
   hide?: ViewId[];
+  /** 장 번호 (14.6): 문서의 도면 중 몇 번째 / 모두 몇 장 */
+  sheetNo?: { n: number; of: number };
+  /** 부품표 줄 (14.6) — info.bom이 켜져 있을 때 표제란 위에 */
+  bom?: BomRow[];
+}
+
+/**
+ * 부품표 줄 만들기 (14.6): 문서의 부품 차례대로 — 이름, 재질(도면에 적은 재질 → 부품 재질), 수량(그 부품 첫 도면의 수량, 없으면 1),
+ * 무게(부피 × 밀도, 부피를 모르거나 재질이 없으면 “—”)
+ */
+export function bomRows(doc: Doc, volumeOf: (partId: string) => number | undefined): BomRow[] {
+  return doc.parts.map((part) => {
+    const dr = doc.drawings.find((d) => d.partId === part.id);
+    const dens = densityOf(part);
+    const vol = volumeOf(part.id);
+    return {
+      name: part.name,
+      material: dr?.sheet?.material || materialSheet(part),
+      qty: dr?.sheet?.qty || "1",
+      mass: dens && vol && vol > 0 ? fmtMass(massOf(vol, dens)) : "—",
+    };
+  });
+}
+
+/** 부품표 한 줄 */
+export interface BomRow {
+  name: string;
+  material: string;
+  qty: string;
+  /** 무게 글자 (모르면 "—") */
+  mass: string;
 }
 
 /** 도면에 저장된 치수 고침 (도면마다): 직접 놓은 치수, 숨긴 자동 치수, 옮긴 자동 치수 */
@@ -223,8 +255,13 @@ interface ViewBox {
 /** 뷰 둘레에 치수용으로 비워 둘 자리 (용지 mm) */
 const PAD = { left: 24, bottom: 24, top: 10, right: 10, gap: 22 };
 const BORDER = { left: 20, right: 10, top: 10, bottom: 10 };
-const TITLE_H = 34;
 const TITLE_W = 180;
+/** 표제란 높이: 기본 3줄 34, 상세 4줄 44 */
+const titleH = (info: SheetInfo) => (info.template === "full" ? 44 : 34);
+/** 부품표 한 줄 높이 */
+const BOM_ROW = 7;
+/** 표제란 + 부품표 높이 (그림 영역 아래 띠) */
+const bandH = (info: SheetInfo, bom?: BomRow[]) => titleH(info) + (info.bom === "on" && bom?.length ? (bom.length + 1) * BOM_ROW : 0);
 
 function parseScale(s: string | undefined): number | null {
   if (!s || s === "auto") return null;
@@ -259,17 +296,17 @@ function needed(views: Record<ViewId, ViewBox>, s: number, extra?: ExtraSize): [
   return [width, height];
 }
 
-function areaOf(paper: [number, number]): [number, number] {
-  return [paper[0] - BORDER.left - BORDER.right, paper[1] - BORDER.top - BORDER.bottom - TITLE_H];
+function areaOf(paper: [number, number], band: number): [number, number] {
+  return [paper[0] - BORDER.left - BORDER.right, paper[1] - BORDER.top - BORDER.bottom - band];
 }
 
 /** 용지와 척도 고르기 */
-export function chooseLayout(views: Record<ViewId, ViewBox>, info: SheetInfo = {}, extra?: ExtraSize): { paper: keyof typeof PAPERS; scale: number } {
+export function chooseLayout(views: Record<ViewId, ViewBox>, info: SheetInfo = {}, extra?: ExtraSize, band = titleH(info)): { paper: keyof typeof PAPERS; scale: number } {
   const fixedScale = parseScale(info.scale);
   const papers = (info.paper && info.paper !== "auto" ? [info.paper] : ["A4", "A3", "A2"]) as (keyof typeof PAPERS)[];
   const fits = (paper: keyof typeof PAPERS, s: number) => {
     const [nw, nh] = needed(views, s, extra);
-    const [aw, ah] = areaOf(PAPERS[paper]);
+    const [aw, ah] = areaOf(PAPERS[paper], band);
     return nw <= aw && nh <= ah;
   };
   if (fixedScale) {
@@ -319,14 +356,15 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
         return [Math.max(...sz.map((z) => z[0])), sz.reduce((a, z) => a + z[1], 0) + (sz.length - 1) * 4];
       }
     : undefined;
-  const { paper, scale: s } = chooseLayout(views, info, extraSize);
+  const band = bandH(info, extra.bom);
+  const { paper, scale: s } = chooseLayout(views, info, extraSize, band);
   const [PW, PH] = PAPERS[paper];
 
   // 세 뷰 묶음을 그림 영역 가운데에
   const [nw, nh] = needed(views, s, extraSize);
-  const [aw, ah] = areaOf([PW, PH]);
+  const [aw, ah] = areaOf([PW, PH], band);
   const bx = BORDER.left + Math.max(0, (aw - nw) / 2);
-  const by = BORDER.bottom + TITLE_H + Math.max(0, (ah - nh) / 2);
+  const by = BORDER.bottom + band + Math.max(0, (ah - nh) / 2);
   const V = views;
   const leftColRight = Math.max(V.front.max[0] - V.front.min[0], V.top.max[0] - V.top.min[0]) * s;
   const bottomRowTop = Math.max(V.front.max[1] - V.front.min[1], V.side.max[1] - V.side.min[1]) * s;
@@ -416,14 +454,14 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
 
   // 3) 치수: 자동(형상 특징 + 구멍) → 숨기기·옮기기 → 직접 놓은 치수
   const area: [number, number, number, number] = [BORDER.left + 1.5, BORDER.bottom + 1.5, PW - BORDER.right - 1.5, PH - BORDER.top - 1.5];
-  const titleBox: [number, number, number, number] = [PW - BORDER.right - TITLE_W - 1, BORDER.bottom, PW - BORDER.right, BORDER.bottom + TITLE_H + 1];
+  const titleBox: [number, number, number, number] = [PW - BORDER.right - TITLE_W - 1, BORDER.bottom, PW - BORDER.right, BORDER.bottom + band + 1];
   const labelBoxes = shown.map((v): [number, number, number, number] => {
     const b = box(v);
     return [(b.l + b.r) / 2 - 9, b.t + 3, (b.l + b.r) / 2 + 9, b.t + 7];
   });
   // 추가 뷰 자리(+ 아래 이름)에는 자동 치수를 놓지 않는다
   const extraBoxes = Object.values(xplaced).map((x): [number, number, number, number] => [x.box[0] - 2, x.box[1] - XLABEL, x.box[2] + 2, x.box[3] + 2]);
-  const auto = autoDims({ feat, f3: res.features, V, vis, P: (v, q) => P(v, q[0], q[1]), s, fmt: fl, unit: U, area, keepOut: [titleBox, ...labelBoxes, ...extraBoxes] });
+  const auto = autoDims({ feat, f3: res.features, specHoles: res.specHoles, V, vis, P: (v, q) => P(v, q[0], q[1]), s, fmt: fl, unit: U, area, keepOut: [titleBox, ...labelBoxes, ...extraBoxes] });
   // 볼트 원 (중심선)
   for (const v of VIEW_IDS) for (const c of pcdCircles(feat, v)) prims.push({ layer: "CENTER", t: "arc", c: P(v, c.c[0], c.c[1]), r: c.r * s, start: 0, end: 360 });
   const hidden = new Set(edits.hide ?? []);
@@ -448,7 +486,9 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
   }
 
   // 5) 테두리와 표제란
-  frame(prims, texts, PW, PH, project, info, scaleLabel(s), paper);
+  const dens = densityOf(project);
+  const mass = dens && res.volume > 0 ? fmtMass(massOf(res.volume, dens)) : "";
+  frame(prims, texts, PW, PH, project, info, scaleLabel(s), paper, { sheetNo: extra.sheetNo, mass, bom: info.bom === "on" ? extra.bom : undefined });
 
   const viewsOut: Sheet["views"] = {
     ...Object.fromEntries(
@@ -663,8 +703,88 @@ function pcdCircles(p: Project, v: ViewId): { c: Pt; r: number }[] {
   return out;
 }
 
-/** 테두리, 주기, 표제란 */
-function frame(prims: Prim[], texts: SheetText[], W: number, H: number, p: Project, info: SheetInfo, scale: string, paper: string) {
+/** 표제란 칸: 너비, 이름, 값 (big = 부품명, proj = 투상법 기호) */
+type TitleCell = { w: number; label: string; value: string; big?: boolean; proj?: boolean };
+
+/** 표제란 양식 (14.6, ISO 7200·KS A ISO 7200을 따라 줄임) — 위 줄부터 */
+export function titleRows(p: Project, info: SheetInfo, scale: string, paper: string, x: { sheetNo?: { n: number; of: number }; mass?: string } = {}): TitleCell[][] {
+  const no = x.sheetNo ? `${x.sheetNo.n} / ${x.sheetNo.of}` : "1 / 1";
+  const mat = info.material || materialSheet(p);
+  const proj = `3각법 · ${U === "inch" ? "inch" : "mm"}`;
+  const tol = info.tolerance ?? "KS B ISO 2768-m";
+  const date = info.date || new Date().toISOString().slice(0, 10);
+  if (info.template === "full")
+    return [
+      [
+        { w: 60, label: "회사", value: info.company ?? "" },
+        { w: 120, label: "부품명", value: p.name, big: true },
+      ],
+      [
+        { w: 50, label: "도면 번호", value: info.dwgNo ?? "" },
+        { w: 20, label: "개정", value: info.rev ?? "" },
+        { w: 35, label: "척도 · 용지", value: `${scale} · ${paper}` },
+        { w: 20, label: "장", value: no },
+        { w: 55, label: "투상법 · 단위", value: proj, proj: true },
+      ],
+      [
+        { w: 50, label: "재질", value: mat },
+        { w: 20, label: "수량", value: info.qty ?? "1" },
+        { w: 35, label: "무게", value: x.mass ?? "" },
+        { w: 75, label: "일반 공차", value: tol },
+      ],
+      [
+        { w: 45, label: "설계", value: info.drawnBy ?? "" },
+        { w: 45, label: "검도", value: info.checkedBy ?? "" },
+        { w: 45, label: "승인", value: info.approvedBy ?? "" },
+        { w: 45, label: "날짜", value: date },
+      ],
+    ];
+  return [
+    [
+      { w: 90, label: "부품명", value: p.name, big: true },
+      { w: 40, label: "도면 번호", value: info.dwgNo ?? "" },
+      { w: 30, label: "척도 · 용지", value: `${scale} · ${paper}` },
+      { w: 20, label: "장", value: no },
+    ],
+    [
+      { w: 60, label: "재질", value: mat },
+      { w: 60, label: "수량", value: info.qty ?? "1" },
+      { w: 60, label: "투상법 · 단위", value: proj, proj: true },
+    ],
+    [
+      { w: 60, label: "일반 공차", value: tol },
+      { w: 60, label: "설계", value: info.drawnBy ?? "" },
+      { w: 60, label: "날짜", value: date },
+    ],
+  ];
+}
+
+/** 3각법 기호 (ISO 5456-2): 왼쪽 원뿔대(큰 쪽 왼쪽), 오른쪽 두 동심원 — 작은 끝 쪽에 원 */
+function projSymbol(prims: Prim[], x: number, y: number, h: number) {
+  const L = (a: Pt, b: Pt, layer: Layer = "FRAME") => prims.push({ layer, t: "line", a, b });
+  const len = h;
+  L([x, y - h / 2], [x, y + h / 2]);
+  L([x, y + h / 2], [x + len, y + h / 4]);
+  L([x + len, y + h / 4], [x + len, y - h / 4]);
+  L([x + len, y - h / 4], [x, y - h / 2]);
+  const cx = x + len + h * 0.35 + h / 2;
+  prims.push({ layer: "FRAME", t: "arc", c: [cx, y], r: h / 2, start: 0, end: 360 });
+  prims.push({ layer: "FRAME", t: "arc", c: [cx, y], r: h / 4, start: 0, end: 360 });
+  L([x - 1, y], [cx + h / 2 + 1, y], "CENTER");
+}
+
+/** 테두리, 주기, 표제란, 부품표 */
+function frame(
+  prims: Prim[],
+  texts: SheetText[],
+  W: number,
+  H: number,
+  p: Project,
+  info: SheetInfo,
+  scale: string,
+  paper: string,
+  x: { sheetNo?: { n: number; of: number }; mass?: string; bom?: BomRow[] } = {},
+) {
   const L = (a: Pt, b: Pt) => prims.push({ layer: "FRAME", t: "line", a, b });
   const rect = (x0: number, y0: number, x1: number, y1: number) => {
     L([x0, y0], [x1, y0]);
@@ -677,28 +797,56 @@ function frame(prims: Prim[], texts: SheetText[], W: number, H: number, p: Proje
   const x1 = W - BORDER.right;
   const x0 = x1 - TITLE_W;
   const y0 = BORDER.bottom;
-  const y1 = y0 + TITLE_H;
+  const th = titleH(info);
+  const y1 = y0 + th;
   rect(x0, y0, x1, y1);
-  const rowH = TITLE_H / 3;
-  L([x0, y0 + rowH], [x1, y0 + rowH]);
-  L([x0, y0 + rowH * 2], [x1, y0 + rowH * 2]);
-  const cols = [x0, x0 + 60, x0 + 120, x1];
-  for (const cx of [cols[1], cols[2]]) L([cx, y0], [cx, y0 + rowH * 2]);
-  L([x0 + 130, y0 + rowH * 2], [x0 + 130, y1]);
-  const cell = (cx0: number, cx1: number, row: number, label: string, value: string, big = false) => {
-    const cy = y0 + rowH * row;
-    texts.push({ at: [cx0 + 1.5, cy + rowH - 3], text: label, size: 2 });
-    texts.push({ at: [(cx0 + cx1) / 2, cy + 2.2], text: value || "—", size: big ? 4.5 : 3, anchor: "middle", bold: big });
-  };
-  const today = new Date().toISOString().slice(0, 10);
-  cell(x0, x0 + 130, 2, "부품명", p.name, true);
-  cell(x0 + 130, x1, 2, "척도 · 용지", `${scale} · ${paper}`);
-  cell(cols[0], cols[1], 1, "재질", info.material || materialSheet(p));
-  cell(cols[1], cols[2], 1, "수량", info.qty ?? "1");
-  cell(cols[2], cols[3], 1, "투상법 · 단위", `3각법 · ${U === "inch" ? "inch" : "mm"}`);
-  cell(cols[0], cols[1], 0, "일반 공차", info.tolerance ?? "KS B ISO 2768-m");
-  cell(cols[1], cols[2], 0, "설계", info.drawnBy ?? "");
-  cell(cols[2], cols[3], 0, "날짜", today);
+  const rows = titleRows(p, info, scale, paper, x);
+  const rowH = th / rows.length;
+  rows.forEach((row, ri) => {
+    const cy = y1 - rowH * (ri + 1);
+    if (ri) L([x0, cy + rowH], [x1, cy + rowH]);
+    let cx = x0;
+    row.forEach((c, ci) => {
+      if (ci) L([cx, cy], [cx, cy + rowH]);
+      texts.push({ at: [cx + 1.5, cy + rowH - 3], text: c.label, size: 2 });
+      let left = cx;
+      if (c.proj) {
+        projSymbol(prims, cx + 3, cy + rowH / 2 - 1, 4);
+        left = cx + 15;
+      }
+      const v = c.value || "—";
+      // 칸보다 길면 글자를 줄임
+      const want = c.big ? 4.5 : 3;
+      const size = Math.max(1.8, Math.min(want, ((cx + c.w - left - 3) / (textWidth(v, want) || 1)) * want));
+      texts.push({ at: [(left + cx + c.w) / 2, cy + 2.2], text: v, size: Math.round(size * 100) / 100, anchor: "middle", bold: c.big });
+      cx += c.w;
+    });
+  });
+  // 부품표 (표제란 바로 위): 제목 줄이 아래, 번호는 위로 올라감 (KS·ISO 7573)
+  if (x.bom?.length) {
+    const cols: [number, string, (r: BomRow, i: number) => string][] = [
+      [14, "번호", (_r, i) => String(i + 1)],
+      [70, "부품명", (r) => r.name],
+      [40, "재질", (r) => r.material || "—"],
+      [18, "수량", (r) => r.qty],
+      [38, "무게", (r) => r.mass],
+    ];
+    const by0 = y1;
+    const by1 = y1 + (x.bom.length + 1) * BOM_ROW;
+    rect(x0, by0, x1, by1);
+    for (let k = 1; k <= x.bom.length; k++) L([x0, by0 + k * BOM_ROW], [x1, by0 + k * BOM_ROW]);
+    let cx = x0;
+    cols.forEach(([w, head, get], ci) => {
+      if (ci) L([cx, by0], [cx, by1]);
+      texts.push({ at: [cx + w / 2, by0 + 2.2], text: head, size: 2.8, anchor: "middle", bold: true });
+      x.bom!.forEach((r, i) => {
+        const v = get(r, i);
+        const size = Math.max(1.8, Math.min(2.8, ((w - 2) / (textWidth(v, 2.8) || 1)) * 2.8));
+        texts.push({ at: [cx + w / 2, by0 + (i + 1) * BOM_ROW + 2.2], text: v, size: Math.round(size * 100) / 100, anchor: "middle" });
+      });
+      cx += w;
+    });
+  }
   // 주기 (왼쪽 위)
   const notes = (info.note ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
   if (notes.length) {

@@ -18,7 +18,7 @@ import {
 } from "./featureModel";
 import { arcInfo, isDegenerate } from "./geometry2d";
 import { faceSig, resolveEdges, resolveFaces } from "./topo";
-import type { Project, Shape2D } from "./types";
+import type { Project, Shape2D, SpecHole } from "./types";
 
 /** 피처 계산 결과를 함께 실어 보내는 오류 (몸체가 하나도 없을 때) */
 export class FeatureBuildError extends BuildError {
@@ -36,7 +36,28 @@ interface Ctx {
   /** 피처가 몸체에 더하거나 뺀 도구 형상 (패턴·대칭이 다시 씀) */
   tools: Map<string, { tool: Shape3D; op: BodyOp }>;
   sketches: Map<string, SketchFeature>;
+  /** 구멍 피처(와 그 패턴·대칭)가 뚫은 구멍 — 도면 구멍 지시 (14.6) */
+  holes: Map<string, SpecHole[]>;
 }
+
+/** 점·방향 옮기기 (패턴·대칭이 구멍 자리도 같이 옮김) */
+function rotAround(q: P3, deg: number, axis: P3): P3 {
+  const t = (deg * Math.PI) / 180;
+  const [x, y, z] = axis;
+  const c = Math.cos(t);
+  const s = Math.sin(t);
+  const d = x * q[0] + y * q[1] + z * q[2];
+  return [
+    q[0] * c + (y * q[2] - z * q[1]) * s + x * d * (1 - c),
+    q[1] * c + (z * q[0] - x * q[2]) * s + y * d * (1 - c),
+    q[2] * c + (x * q[1] - y * q[0]) * s + z * d * (1 - c),
+  ];
+}
+const MIRROR_N: Record<string, P3> = { XY: [0, 0, 1], XZ: [0, 1, 0], YZ: [1, 0, 0] };
+const mirrorPt = (q: P3, n: P3): P3 => {
+  const d = q[0] * n[0] + q[1] * n[1] + q[2] * n[2];
+  return [q[0] - 2 * d * n[0], q[1] - 2 * d * n[1], q[2] - 2 * d * n[2]];
+};
 
 const AXIS: Record<AxisName, P3> = { X: [1, 0, 0], Y: [0, 1, 0], Z: [0, 0, 1] };
 const scale = (a: P3, k: number): P3 => [a[0] * k, a[1] * k, a[2] * k];
@@ -210,6 +231,12 @@ function applyFeature(f: Feature, shape: Shape3D | null, ctx: Ctx, warn: string[
               : (src.tool.clone().rotate(step * k, [0, 0, 0], dir) as Shape3D);
           copies.push(c);
           out = combine(out, c, src.op);
+          const hs = ctx.holes.get(id);
+          if (hs)
+            ctx.holes.set(f.id, [
+              ...(ctx.holes.get(f.id) ?? []),
+              ...hs.map((h) => (f.mode === "linear" ? { ...h, c: add(h.c, scale(dir, f.spacing * k)) } : { ...h, c: rotAround(h.c, step * k, dir), dir: rotAround(h.dir, step * k, dir) })),
+            ]);
         }
       }
       if (copies.length) ctx.tools.set(f.id, { tool: makeCompound(copies.map((c) => c.clone())) as unknown as Shape3D, op: ctx.tools.get(f.of[0])!.op });
@@ -218,6 +245,10 @@ function applyFeature(f: Feature, shape: Shape3D | null, ctx: Ctx, warn: string[
     case "mirror": {
       if (!f.of.length) {
         const s = needShape(shape);
+        // 몸체 전체 대칭: 지금까지의 구멍도 모두
+        const n = MIRROR_N[f.plane];
+        const all = [...ctx.holes.values()].flat();
+        if (n && all.length) ctx.holes.set(f.id, all.map((h) => ({ ...h, c: mirrorPt(h.c, n), dir: mirrorPt(h.dir, n) })));
         return s.fuse(s.clone().mirror(f.plane, [0, 0, 0]) as Shape3D) as Shape3D;
       }
       let out = shape;
@@ -226,6 +257,9 @@ function applyFeature(f: Feature, shape: Shape3D | null, ctx: Ctx, warn: string[
         if (!src) throw new BuildError("대칭할 피처가 계산되지 않았어요 (꺼졌거나 오류, 또는 이 피처보다 아래)");
         const c = src.tool.clone().mirror(f.plane, [0, 0, 0]) as Shape3D;
         ctx.tools.set(f.id, { tool: c.clone(), op: src.op });
+        const hs = ctx.holes.get(id);
+        const n = MIRROR_N[f.plane];
+        if (hs && n) ctx.holes.set(f.id, [...(ctx.holes.get(f.id) ?? []), ...hs.map((h) => ({ ...h, c: mirrorPt(h.c, n), dir: mirrorPt(h.dir, n) }))]);
         out = combine(out, c, src.op);
       }
       return out;
@@ -239,6 +273,10 @@ function applyFeature(f: Feature, shape: Shape3D | null, ctx: Ctx, warn: string[
       const D = f.flip ? frame.n : scale(frame.n, -1);
       const big = bigFor(s, frame);
       const tools = centers.map((c) => revolvedHole(toWorld(frame, c.cx, c.cy), D, frame.x, f.d / 2, f.depth, f.spec, big));
+      ctx.holes.set(
+        f.id,
+        centers.map((c) => ({ c: toWorld(frame, c.cx, c.cy), dir: D, d: f.d, depth: f.depth, spec: f.spec })),
+      );
       const tool = tools.length === 1 ? tools[0] : (makeCompound(tools) as unknown as Shape3D);
       ctx.tools.set(f.id, { tool: tool.clone(), op: "cut" });
       return s.cut(tool) as Shape3D;
@@ -288,9 +326,10 @@ function applyFeature(f: Feature, shape: Shape3D | null, ctx: Ctx, warn: string[
 
 /** 부품 → 3D + 화면·도면에 필요한 것 (워커의 “build”) */
 export function buildAllPart(p: Project, opts: { proj?: boolean; cache?: BuildCache } = {}): { shape: Shape3D; result: import("./types").BuildResult } {
-  const { shape, notes, log } = buildPart(p, opts.cache);
+  const { shape, notes, log, holes } = buildPart(p, opts.cache);
   const result = resultFor(shape!, notes, opts);
   if (log.length) result.featureLog = log;
+  if (holes?.length) result.specHoles = holes;
   return { shape: shape!, result };
 }
 
@@ -298,6 +337,8 @@ export interface PartBuild {
   shape: Shape3D | null;
   notes: string[];
   log: FeatureStatus[];
+  /** 구멍 피처의 구멍 (14.6) */
+  holes?: SpecHole[];
 }
 
 /**
@@ -318,6 +359,7 @@ interface CacheStep {
   frame?: PlaneFrame;
   sketch?: SketchFeature;
   tool?: { tool: Shape3D; op: BodyOp };
+  holes?: SpecHole[];
   counted: boolean;
 }
 
@@ -379,7 +421,7 @@ export function buildPart(p: Project, cache?: BuildCache): PartBuild {
     }
     if (cache) Object.assign(cache, { baseKey, base: shape, baseNotes: [...notes], steps: [] });
   }
-  const ctx: Ctx = { frames: new Map(), tools: new Map(), sketches: new Map() };
+  const ctx: Ctx = { frames: new Map(), tools: new Map(), sketches: new Map(), holes: new Map() };
   const limit = p.rollback ?? feats.length;
   const log: FeatureStatus[] = [];
   let ok = 0;
@@ -395,6 +437,7 @@ export function buildPart(p: Project, cache?: BuildCache): PartBuild {
       if (hit.frame) ctx.frames.set(f.id, hit.frame);
       if (hit.sketch) ctx.sketches.set(f.id, hit.sketch);
       if (hit.tool) ctx.tools.set(f.id, { tool: hit.tool.tool.clone(), op: hit.tool.op });
+      if (hit.holes) ctx.holes.set(f.id, hit.holes);
       log.push(hit.status);
       if (hit.counted) ok++;
       return;
@@ -428,6 +471,7 @@ export function buildPart(p: Project, cache?: BuildCache): PartBuild {
         ...(ctx.frames.has(f.id) ? { frame: ctx.frames.get(f.id) } : {}),
         ...(ctx.sketches.has(f.id) ? { sketch: structuredClone(ctx.sketches.get(f.id)!) } : {}),
         ...(t ? { tool: { tool: t.tool.clone(), op: t.op } } : {}),
+        ...(ctx.holes.has(f.id) ? { holes: ctx.holes.get(f.id) } : {}),
       };
     }
   });
@@ -439,5 +483,8 @@ export function buildPart(p: Project, cache?: BuildCache): PartBuild {
   const errs = log.filter((x) => x.state === "error").length;
   notes.push(`피처 ${ok}개를 계산했어요${errs ? ` (오류 ${errs}개 — 피처 목록에서 확인)` : ""}.`);
   // 기억한 몸체는 기억만 갖고, 밖에는 복사본을
-  return { shape: cache ? (shape as Shape3D).clone() : shape, notes, log };
+  // 꺼진·오류난 피처의 구멍은 빼고 (그 피처는 ctx.holes에 안 들어감 — 계산 중 오류면 지움)
+  for (const st of log) if (st.state === "error" || st.state === "off" || st.state === "rolled") ctx.holes.delete(st.id);
+  const holes = [...ctx.holes.values()].flat();
+  return { shape: cache ? (shape as Shape3D).clone() : shape, notes, log, ...(holes.length ? { holes } : {}) };
 }

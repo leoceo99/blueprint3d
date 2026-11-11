@@ -131,6 +131,22 @@ const { out, launch, finish, fresh, waitBuild } = require('./lib.cjs');
     await page.keyboard.press('Control+z');
     await page.waitForTimeout(800);
     ok('실행 취소 두 번 → 기하공차 사라짐', !(await edits()).dims.some((d) => d.kind === 'gdt'));
+
+    // ---- 14.6 표제란 양식 · 도면 번호 · 부품표 · 장 번호 ----
+    await page.selectOption('[data-sheet="template"]', 'full');
+    await waitSheet(() => (window.blueprint3d.app.lastSheet?.texts ?? []).some((t) => t.text === '검도'));
+    await page.fill('[data-sheet="dwgNo"]', 'B3D-0001');
+    await page.press('[data-sheet="dwgNo"]', 'Tab');
+    await waitSheet(() => (window.blueprint3d.app.lastSheet?.texts ?? []).some((t) => t.text === 'B3D-0001'));
+    ok('상세 양식 + 도면 번호', await page.isVisible('[data-sheet="checkedBy"]'));
+    await page.selectOption('[data-sheet="bom"]', 'on');
+    await waitSheet(() => (window.blueprint3d.app.lastSheet?.texts ?? []).some((t) => t.text === '번호'));
+    const tx = await B(() => window.blueprint3d.app.lastSheet.texts.map((t) => t.text));
+    // 표제란에도 ‘부품명·재질·수량·무게’가 있으므로 부품표까지 두 번씩
+    ok('부품표 (번호·부품명·재질·수량·무게)', tx.includes('번호') && ['부품명', '재질', '수량', '무게'].every((h) => tx.filter((t) => t === h).length >= 2));
+    await run('doc.addDrawing');
+    await waitSheet(() => (window.blueprint3d.app.lastSheet?.texts ?? []).some((t) => t.text === '2 / 2'));
+    ok('도면을 하나 더 → 장 번호 2 / 2', true);
   } catch (err) {
     results.push('FAIL exception — ' + (err && err.stack ? err.stack.split('\n').slice(0, 3).join(' | ') : err));
     await page.screenshot({ path: out('annot-error.png') }).catch(() => {});

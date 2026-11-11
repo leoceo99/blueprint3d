@@ -10,6 +10,7 @@ import { flatten, isDegenerate, normRect } from "./geometry2d";
 import { isFull, PERP, type Axis, type CylFeat, type Features3D, type P3 } from "./featureTypes";
 import { renderDim, textBox, overlaps, type Prim, type Pt, type SheetDim, type SheetText } from "./sheetDims";
 import { holeLabel } from "./standards";
+import type { SpecHole } from "./types";
 import type { Project, Shape2D, ViewId } from "./types";
 import { VIEW_LABEL } from "./types";
 import type { Unit } from "./units";
@@ -47,6 +48,8 @@ export interface AutoInput {
   /** 구멍·포켓 도형 (스케치 또는 가져온 모델에서 찾은 구멍) */
   feat: Project;
   f3?: Features3D;
+  /** 구멍 피처의 구멍 (규격 지시, 14.6) */
+  specHoles?: SpecHole[];
   V: Record<ViewId, ViewBox>;
   /** 보이는 투영선 (뷰 좌표) — 높이를 어느 뷰에 잴지 */
   vis: Record<ViewId, Prim[]>;
@@ -193,8 +196,32 @@ export function autoDims(inp: AutoInput): { dims: SheetDim[]; needs: Need[] } {
       return `Ø${fmt(c.r * 2)} 구멍${c.t0 <= lo + 1e-3 && c.t1 >= hi - 1e-3 ? " 관통" : ` 깊이 ${fmt(c.t1 - c.t0)}`}`;
     };
     const featHoleAt = (v: ViewId, p: Pt) => feat.views[v].some((h) => h.hole && h.kind === "circle" && near([h.cx, h.cy], p));
+    // 구멍 피처의 규격 (14.6): 그 자리의 오목 원통(카운터보어 포함)을 “M6 관통구멍 … · 카운터보어 …” 한 지시로
+    const specUsed = new Set<CylFeat>();
+    const specGroups = new Map<string, { v: ViewId; label: string; list: CylFeat[] }>();
+    for (const h of inp.specHoles ?? []) {
+      const ki = h.dir.findIndex((x) => Math.abs(Math.abs(x) - 1) < 1e-6);
+      if (ki < 0) continue; // 기울어진 구멍은 3D 모양에서 읽은 대로
+      const k = ki as Axis;
+      const [i, j] = PERP[k];
+      const p: Pt = [h.c[i], h.c[j]];
+      const main = f3.cyl.find((c) => c.axis === k && c.concave && isFull(c) && near(c.p, p) && Math.abs(c.r * 2 - h.d) < 1e-3);
+      if (!main || specUsed.has(main)) continue;
+      for (const c of f3.cyl) if (c.axis === k && c.concave && near(c.p, p)) specUsed.add(c);
+      const v = AXIS_VIEW[k];
+      const label = holeLabel(h.d, h.spec, h.depth ?? undefined, false, inp.unit);
+      const g = specGroups.get(`${v}:${label}`) ?? { v, label, list: [] };
+      g.list.push(main);
+      specGroups.set(`${v}:${label}`, g);
+    }
+    for (const g of specGroups.values()) {
+      for (const c of g.list) pushPos(g.v, c.p, g.label.split(" ")[0]);
+      const full = (g.list.length > 1 ? `${g.list.length}×` : "") + g.label;
+      needs.push({ kind: "size", text: full, label: `${g.label} (${VIEW_LABEL[g.v]})` });
+      callouts.push(radialCallout(`f:${g.v}:${g.label}`, g.v, g.list, "leader", full));
+    }
     // 3D에만 있는 구멍 (회전체의 가운데 구멍 등 — 스케치 구멍과 같은 중심이면 이미 지시함)
-    const extraHoles = f3.cyl.filter((c) => c.concave && isFull(c) && !featHoleAt(AXIS_VIEW[c.axis], c.p) && !sketchSlots.some((q) => near(q, c.p)));
+    const extraHoles = f3.cyl.filter((c) => c.concave && isFull(c) && !specUsed.has(c) && !featHoleAt(AXIS_VIEW[c.axis], c.p) && !sketchSlots.some((q) => near(q, c.p)));
     for (const [, list] of groupBy(extraHoles, (c) => `${c.axis}:${holeText(c)}`)) {
       const v = AXIS_VIEW[list[0].axis];
       const text = holeText(list[0]);
@@ -244,7 +271,7 @@ export function autoDims(inp: AutoInput): { dims: SheetDim[]; needs: Need[] } {
       callouts.push(radialCallout(`s:${v}:${key(a.p[0])}:${key(a.p[1])}`, v, [a], "leader", text));
     }
     // 필렛·둥근 모서리 (일부 원통) — 스케치 장공 끝·구멍과 겹치는 것은 빼고
-    const fillets = partial.filter((c) => !used.has(c) && !(c.concave && (sketchSlots.some((q) => near(q, c.p)) || featHoleAt(AXIS_VIEW[c.axis], c.p))));
+    const fillets = partial.filter((c) => !used.has(c) && !specUsed.has(c) && !(c.concave && (sketchSlots.some((q) => near(q, c.p)) || featHoleAt(AXIS_VIEW[c.axis], c.p))));
     for (const [, list] of groupBy(fillets, (c) => `${c.axis}:R${fmt(c.r)}`)) {
       const v = AXIS_VIEW[list[0].axis];
       const text = `R${fmt(list[0].r)}`;

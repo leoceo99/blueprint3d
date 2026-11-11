@@ -327,10 +327,31 @@
               </select>
             </label>
             <div class="form-sep">표제란</div>
-            <label>재질 <input data-sheet="material" placeholder="예: SM45C, AL6061" /></label>
+            <label>양식
+              <select data-sheet="template">
+                <option value="auto">기본 (3줄)</option><option value="full">상세 (회사·개정·검도·승인·무게)</option>
+              </select>
+            </label>
+            <label>도면 번호 <input data-sheet="dwgNo" placeholder="예: B3D-001" spellcheck="false" /></label>
+            <label>재질 <input data-sheet="material" placeholder="예: SM45C, AL6061 (비우면 부품 재질)" /></label>
             <label>수량 <input data-sheet="qty" placeholder="1" /></label>
             <label>설계 <input data-sheet="drawnBy" placeholder="이름" /></label>
-            <label>일반 공차 <input data-sheet="tolerance" placeholder="KS B ISO 2768-m" /></label>
+            <label>일반 공차
+              <input data-sheet="tolerance" placeholder="KS B ISO 2768-m" list="genTols" />
+              <datalist id="genTols"><option value="KS B ISO 2768-f"></option><option value="KS B ISO 2768-m"></option><option value="KS B ISO 2768-c"></option><option value="KS B ISO 2768-v"></option></datalist>
+            </label>
+            <div class="tb-full">
+              <label>회사 <input data-sheet="company" /></label>
+              <label>개정 <input data-sheet="rev" placeholder="예: A" spellcheck="false" /></label>
+              <label>검도 <input data-sheet="checkedBy" placeholder="이름" /></label>
+              <label>승인 <input data-sheet="approvedBy" placeholder="이름" /></label>
+            </div>
+            <label>날짜 <input data-sheet="date" placeholder="비우면 오늘" spellcheck="false" /></label>
+            <label>부품표
+              <select data-sheet="bom">
+                <option value="auto">넣지 않음</option><option value="on">넣기 (문서의 부품: 번호·이름·재질·수량·무게)</option>
+              </select>
+            </label>
             <label>주기 (한 줄에 하나)
               <textarea data-sheet="note" rows="4" placeholder="지시 없는 모따기 C0.5&#10;날카로운 모서리 제거"></textarea>
             </label>

@@ -36,7 +36,23 @@ export async function sheetOf(d: Drawing): Promise<Sheet | null> {
   // 추가 뷰(단면·보조·등각)는 워커가 3D에서 따로 비춘다 (14단계)
   const reqs = (d.views ?? []).map(viewRequest).filter((r): r is NonNullable<typeof r> => !!r);
   const data = reqs.length ? await viewData(part, reqs) : {};
-  return buildSheet(build, { ...part, sheet: d.sheet }, d.edits ?? {}, { views: d.views, data, hide: d.hide });
+  // 장 번호: 문서의 도면 차례 (14.6)
+  const doc = store.doc;
+  const sheetNo = { n: Math.max(0, doc.drawings.findIndex((x) => x.id === d.id)) + 1, of: Math.max(1, doc.drawings.length) };
+  const bom = d.sheet?.bom === "on" ? await bomOf(doc, part.id, build.volume) : undefined;
+  return buildSheet(build, { ...part, sheet: d.sheet }, d.edits ?? {}, { views: d.views, data, hide: d.hide, sheetNo, bom });
+}
+
+/** 부품표: 부품마다 부피가 필요 — 이 도면의 부품은 방금 만든 것, 나머지는 따로 만든다 (만들어 둔 것은 다시 씀) */
+async function bomOf(doc: import("../core/document").Doc, partId: string, volume: number) {
+  const { bomRows } = await import("../core/sheet");
+  const vols = new Map<string, number>([[partId, volume]]);
+  for (const p of doc.parts) {
+    if (vols.has(p.id)) continue;
+    const r = await buildPart(p).catch(() => null);
+    if (r) vols.set(p.id, r.volume);
+  }
+  return bomRows(doc, (id) => vols.get(id));
 }
 
 /** 추가 뷰 계산 결과 기억 (같은 부품 모양·같은 뷰면 다시 계산하지 않음) */
@@ -220,6 +236,8 @@ function renderControls() {
     cb.disabled = !d;
   }
   renderViewList(d);
+  // 상세 양식일 때만 회사·개정·검도·승인 칸
+  $(".tb-full").hidden = info.template !== "full";
   for (const f of sheetFields()) {
     if (document.activeElement === f) continue;
     const key = f.dataset.sheet as keyof SheetInfo;

@@ -48,6 +48,19 @@ export interface SheetInfo {
   tolerance?: string;
   /** 주기 (여러 줄) */
   note?: string;
+  /** 표제란 양식 (14.6): basic(기본, 3줄) · full(상세: 회사·개정·검도·승인·무게, 4줄) */
+  template?: "basic" | "full";
+  /** 도면 번호 */
+  dwgNo?: string;
+  /** 개정 (예: A, 1) */
+  rev?: string;
+  company?: string;
+  checkedBy?: string;
+  approvedBy?: string;
+  /** 날짜 (없으면 오늘) */
+  date?: string;
+  /** 부품표 넣기 ("on") — 문서의 부품: 번호·이름·재질·수량·무게 */
+  bom?: string;
 }
 
 /**
@@ -289,6 +302,15 @@ export interface ProjectedView {
   bounds: [[number, number], [number, number]] | null;
 }
 
+/** 구멍 피처 하나의 구멍 하나: 입구 c, 재료 안쪽 방향 dir, 지름 d, 깊이(null = 관통), 규격 */
+export interface SpecHole {
+  c: [number, number, number];
+  dir: [number, number, number];
+  d: number;
+  depth: number | null;
+  spec: HoleSpec;
+}
+
 export interface BuildResult {
   mesh: MeshData;
   projections: Record<ViewId, ProjectedView>;
@@ -308,6 +330,8 @@ export interface BuildResult {
   com?: [number, number, number];
   /** 피처마다 계산 결과 (13단계) */
   featureLog?: import("./featureModel").FeatureStatus[];
+  /** 구멍 피처로 뚫은 구멍 (패턴·대칭 포함, 세계 좌표) — 도면 구멍 지시에 규격(M6 탭 …)을 쓴다 (14.6) */
+  specHoles?: SpecHole[];
   /** 면·모서리 지문 (3D 화면에서 고르기 — mesh.faceGroups·edgeGroups의 순서와 같음, 13단계) */
   topo?: { faces: import("./featureModel").FaceSig[]; edges: import("./featureModel").EdgeSig[]; faceEdges?: number[][] };
 }

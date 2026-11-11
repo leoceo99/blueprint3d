@@ -103,6 +103,3 @@ export function fmtDev(x: number): string {
   const s = (Math.round(Math.abs(x) * 1000) / 1000).toFixed(3).replace(/0+$/, "").replace(/\.$/, "");
   return (x > 0 ? "+" : "−") + s;
 }
-
-/** 일반 공차 (KS B ISO 2768-1) 등급 */
-export const GENERAL_TOLERANCES = ["KS B ISO 2768-f", "KS B ISO 2768-m", "KS B ISO 2768-c", "KS B ISO 2768-v"];
