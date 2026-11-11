@@ -61,12 +61,19 @@ export function initMenus() {
   const buttons = $$<HTMLButtonElement>("[data-menu]");
   const menuOf = (b: HTMLElement) => $(`#menu-${b.dataset.menu}`);
   const closeAll = () => buttons.forEach((b) => (menuOf(b).hidden = true));
+  /** 넘치면 옆으로 미는 도구 줄 안의 메뉴(dd-right)는 잘리지 않게 화면 기준으로, 단추 오른쪽 끝에 맞춰 */
+  const place = (b: HTMLElement, m: HTMLElement) => {
+    if (!m.classList.contains("dd-right")) return;
+    const r = b.getBoundingClientRect();
+    Object.assign(m.style, { position: "fixed", left: "auto", top: `${r.bottom + 4}px`, right: `${Math.max(4, window.innerWidth - r.right)}px` });
+  };
   const refill = () => {
     fill($("#menu-edit"), EDIT);
     fill($("#menu-view"), VIEW());
     refreshCommandStates($("#menu-edit"));
     refreshCommandStates($("#menu-view"));
     refreshCommandStates($("#menu-file"));
+    for (const b of buttons) if (b.dataset.menu !== "file" && b.dataset.menu !== "edit" && b.dataset.menu !== "view") refreshCommandStates(menuOf(b));
   };
   // 다른 메뉴가 열린 채로 마우스를 올려 열었으면, 바로 이어지는 클릭으로 닫히지 않게
   let hoverOpened: { b: HTMLElement; at: number } | null = null;
@@ -79,12 +86,14 @@ export function initMenus() {
       closeAll();
       if (open) refill();
       m.hidden = !open;
+      if (open) place(b, m);
     };
     b.onmouseenter = () => {
       if (buttons.some((x) => !menuOf(x).hidden) && menuOf(b).hidden) {
         closeAll();
         refill();
         menuOf(b).hidden = false;
+        place(b, menuOf(b));
         hoverOpened = { b, at: performance.now() };
       }
     };

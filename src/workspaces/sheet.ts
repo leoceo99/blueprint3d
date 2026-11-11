@@ -432,6 +432,46 @@ const cmds: Command[] = [
     when: any,
     run: saveDwg,
   },
+  {
+    id: "sheet.pdf",
+    title: "도면을 PDF로 저장 (벡터, 실제 용지 크기)",
+    category: "내보내기",
+    keywords: ["pdf", "export", "인쇄", "피디에프"],
+    when: any,
+    run: async () => {
+      const r = await sheetNow();
+      if (!r) return;
+      const { sheetsToPDF } = await import("../core/sheet");
+      const bytes = await sheetsToPDF([r.sh], `${store.doc.name} — ${r.d.name}`);
+      const ok = await saveFile(`${drawingBase(r.d)}.pdf`, bytes.slice().buffer as ArrayBuffer, "application/pdf", "pdf");
+      if (ok) toast("PDF로 저장했어요");
+    },
+  },
+  {
+    id: "sheet.pdfAll",
+    title: "모든 도면을 PDF 한 파일로 (여러 쪽)",
+    category: "내보내기",
+    keywords: ["pdf", "all drawings", "모든 도면", "묶음"],
+    when: any,
+    enabled: () => store.doc.drawings.length > 0,
+    run: async () => {
+      const list = store.doc.drawings;
+      if (!list.length) return toast("도면이 없어요.");
+      toast(`도면 ${list.length}장을 그리는 중…`);
+      const sheets: Sheet[] = [];
+      const skipped: string[] = [];
+      for (const d of list) {
+        const sh = await sheetOf(d);
+        if (sh) sheets.push(sh);
+        else skipped.push(d.name);
+      }
+      if (!sheets.length) return toast("그릴 수 있는 도면이 없어요 (부품의 3D가 아직 없음).");
+      const { sheetsToPDF } = await import("../core/sheet");
+      const bytes = await sheetsToPDF(sheets, store.doc.name);
+      const ok = await saveFile(`${safeName(store.doc.name)}_도면.pdf`, bytes.slice().buffer as ArrayBuffer, "application/pdf", "pdf");
+      if (ok) toast(`PDF로 저장했어요 (${sheets.length}쪽${skipped.length ? ` · 빠진 도면: ${skipped.join(", ")}` : ""})`);
+    },
+  },
   { id: "sheet.zoomIn", title: "도면 확대", category: "도면", keywords: ["zoom in", "확대"], keys: ["="], run: () => zoomBy($("#sheetHost"), 1.25) },
   { id: "sheet.zoomOut", title: "도면 축소", category: "도면", keywords: ["zoom out", "축소"], keys: ["-"], run: () => zoomBy($("#sheetHost"), 0.8) },
   { id: "sheet.zoomFit", title: "도면 전체 보기 (맞춤)", category: "도면", keywords: ["fit", "맞춤", "전체"], keys: ["F"], run: () => zoomFit($("#sheetHost")) },
@@ -489,7 +529,7 @@ const cmds: Command[] = [
       editorHost.editViews((l) => [...l, { id: `v${Date.now().toString(36)}`, kind: "iso", label: "ISO" }], "등각 그림");
     },
   },
-  { id: "sheet.print", title: "도면 인쇄 / PDF", category: "내보내기", keywords: ["print", "pdf", "인쇄"], keys: ["Ctrl+P"], when: any, global: true, run: printSheet },
+  { id: "sheet.print", title: "도면 인쇄", category: "내보내기", keywords: ["print", "인쇄"], keys: ["Ctrl+P"], when: any, global: true, run: printSheet },
   {
     id: "doc.addDrawing",
     title: "도면 추가 (편집 중인 부품)",

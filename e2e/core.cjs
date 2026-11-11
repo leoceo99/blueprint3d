@@ -31,6 +31,7 @@ const fs = require('fs');
   ok('empty: STL export shows toast', /먼저/.test(await toastText()), await toastText());
   await page.keyboard.press('3'); await page.waitForTimeout(300);
   ok('empty: sheet host has message', (await page.textContent('#sheetHost')).trim().length > 0, (await page.textContent('#sheetHost')).trim().slice(0, 60));
+  await page.click('[data-menu="sheetexp"]');
   await page.click('#printBtn'); await page.waitForTimeout(200);
   ok('empty: print shows toast', /먼저/.test(await toastText()));
   await page.keyboard.press('1'); await page.waitForTimeout(300);
@@ -271,8 +272,10 @@ const fs = require('fs');
   ok('bad json rejected', /읽을 수 없/.test(await toastText()), await toastText());
 
   // ---- 내보내기 ----
-  for (const [btn, ws, ext] of [['#expStl3d', '2', 'stl'], ['#expStep3d', '2', 'step'], ['#expSvg', '3', 'svg'], ['#expDxf', '3', 'dxf']]) {
+  for (const [btn, ws, ext] of [['#expStl3d', '2', 'stl'], ['#expStep3d', '2', 'step'], ['#expPdf', '3', 'pdf'], ['#expSvg', '3', 'svg'], ['#expDxf', '3', 'dxf'], ['#expPdfAll', '3', 'pdf']]) {
     await page.keyboard.press(ws); await page.waitForTimeout(500);
+    // 도면의 SVG·DXF 등은 ‘내보내기 ▾’ 메뉴 안
+    if (['#expSvg', '#expDxf', '#expPdfAll'].includes(btn)) await page.click('[data-menu="sheetexp"]');
     const [d] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click(btn)]);
     const buf = fs.readFileSync(await d.path());
     const head = buf.slice(0, 60).toString('latin1').replace(/\s+/g, ' ');

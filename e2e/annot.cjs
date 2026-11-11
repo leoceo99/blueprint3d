@@ -3,6 +3,8 @@ const { out, launch, finish, fresh, waitBuild } = require('./lib.cjs');
 (async () => {
   const browser = await launch();
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  // 저장 위치 고르기 창 대신 내려받기로 (헤드리스에서는 창이 닫히지 않음)
+  await ctx.addInitScript(() => { delete window.showSaveFilePicker; });
   const page = await ctx.newPage();
   const errs = [];
   const results = [];
@@ -147,6 +149,13 @@ const { out, launch, finish, fresh, waitBuild } = require('./lib.cjs');
     await run('doc.addDrawing');
     await waitSheet(() => (window.blueprint3d.app.lastSheet?.texts ?? []).some((t) => t.text === '2 / 2'));
     ok('도면을 하나 더 → 장 번호 2 / 2', true);
+
+    // ---- 14.7 모든 도면 → PDF 한 파일 (2쪽) ----
+    await page.click('[data-menu="sheetexp"]');
+    const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 60000 }), page.click('#expPdfAll')]);
+    const pdf = require('fs').readFileSync(await dl.path()).toString('latin1');
+    const pages = (pdf.match(/\/Type \/Page\b/g) || []).length;
+    ok('모든 도면 PDF: 두 쪽 · 한글 글꼴(Adobe-Korea1) · 레이어', pages === 2 && /\/Count 2/.test(pdf) && /HYGoThic-Medium/.test(pdf) && /Korea1/.test(pdf) && /\/OCProperties/.test(pdf), `${dl.suggestedFilename()} ${pdf.length}B pages=${pages}`);
   } catch (err) {
     results.push('FAIL exception — ' + (err && err.stack ? err.stack.split('\n').slice(0, 3).join(' | ') : err));
     await page.screenshot({ path: out('annot-error.png') }).catch(() => {});

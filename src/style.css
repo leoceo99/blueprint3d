@@ -708,3 +708,5 @@ body.sketch-mode .ribbon .g-3d { display: none; }
 .dim-props .row2 > label.check { flex: 0 0 auto; padding-bottom: 4px; }
 .dim-props .fit-dev { font-size: 12px; padding: 3px 6px; border-radius: 5px; background: var(--accent-soft); font-variant-numeric: tabular-nums; }
 .dim-props .fit-dev.bad { background: transparent; color: var(--danger, #c0392b); }
+/* 14.7: 도면 도구 줄의 내보내기 메뉴 (화면 기준 위치는 menus.ts) */
+.dropdown.dd-right { min-width: 230px; }

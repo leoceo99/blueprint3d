@@ -937,6 +937,16 @@ export function fragmentSVG(prims: Prim[], texts: SheetText[], H: number, color 
 /** 도면의 모든 글자 (치수 포함) */
 export const sheetTexts = (sh: Sheet): SheetText[] => [...sh.texts, ...sh.dims.flatMap((d) => d.texts)];
 
+/** 도면 여러 장 → PDF 한 파일 (14.7, 쪽마다 그 용지 크기) */
+export async function sheetsToPDF(sheets: Sheet[], title: string): Promise<Uint8Array> {
+  const { makePDF } = await import("./pdf");
+  return makePDF(
+    sheets.map((sh) => ({ width: sh.width, height: sh.height, prims: [...sh.prims, ...sh.dims.flatMap((d) => d.prims)], texts: sheetTexts(sh) })),
+    STYLE,
+    { title },
+  );
+}
+
 function toSVG(sh: Sheet): string {
   // 치수는 하나씩 묶음(data-dim)으로 — 화면에서 고르고 옮길 수 있게
   const dims = sh.dims.map((d) => `<g class="dim" data-dim="${esc(d.id)}">${fragmentSVG(d.prims, d.texts, sh.height)}</g>`).join("");

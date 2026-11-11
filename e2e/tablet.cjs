@@ -84,6 +84,7 @@ const { out, launch, finish, fresh, waitBuild } = require('./lib.cjs');
 
     // ---- 웹판 DWG: 설치형 앱 안내 + DXF로 저장 ----
     await page.waitForTimeout(600);
+    await page.tap('[data-menu="sheetexp"]'); await page.waitForTimeout(200);
     await page.tap('#expDwg'); await page.waitForTimeout(300);
     const nt = await page.textContent('#notices');
     ok('웹판 DWG 단추: 설치형 앱 안내와 DXF 저장', /설치형 앱/.test(nt) && /DXF로 저장/.test(nt), nt.slice(0, 80));

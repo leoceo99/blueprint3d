@@ -288,12 +288,21 @@
           <button class="small ghost" data-cmd="sheet.zoomFit">맞춤</button>
         </div>
         <div class="spacer"></div>
-        <button id="expSvg">SVG 저장</button>
-        <button id="expDxf" title="실제 크기(1:1) — 선·원호·중심선, 치수는 AutoCAD 진짜 치수">DXF 저장</button>
-        <button id="expDwg" title="AutoCAD DWG — 설치형 앱에서 ODA File Converter로 바꿈">DWG 저장</button>
-        <button id="expStl" data-cmd="export.stl">STL 저장 (3D 프린팅)</button>
-        <button id="expStep" data-cmd="export.step">STEP 저장 (CAD)</button>
-        <button id="printBtn" class="primary" title="용지 크기 그대로 인쇄하거나 PDF로 저장">인쇄 / PDF</button>
+        <button id="expPdf" class="primary" data-cmd="sheet.pdf" title="이 도면을 PDF로 — 실제 용지 크기, 선·글자 벡터 그대로">PDF 저장</button>
+        <div class="menu-wrap">
+          <button data-menu="sheetexp" title="다른 형식으로 저장·인쇄">내보내기 ▾</button>
+          <div class="dropdown dd-right" id="menu-sheetexp" hidden>
+            <button id="expPdfAll" data-cmd="sheet.pdfAll" title="문서의 모든 도면을 PDF 한 파일(여러 쪽)로">모든 도면 PDF (한 파일)</button>
+            <hr />
+            <button id="expDxf" title="실제 크기(1:1) — 선·원호·중심선, 치수는 AutoCAD 진짜 치수">DXF (AutoCAD)</button>
+            <button id="expDwg" title="AutoCAD DWG — 설치형 앱에서 ODA File Converter로 바꿈">DWG (AutoCAD)</button>
+            <button id="expSvg">SVG (그림)</button>
+            <button id="printBtn" title="용지 크기 그대로 인쇄">인쇄… <kbd></kbd></button>
+            <hr />
+            <button id="expStl" data-cmd="export.stl">3D: STL (3D 프린팅)</button>
+            <button id="expStep" data-cmd="export.step">3D: STEP (CAD)</button>
+          </div>
+        </div>
       </div>
       <div class="sheet-body">
         <aside class="sheet-settings" id="sheetSettings">
