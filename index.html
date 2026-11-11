@@ -260,15 +260,15 @@
       <div class="sheet-toolbar">
         <select id="drawingSel" class="drawing-pick" aria-label="볼 도면" title="볼 도면"></select>
         <button id="addDrawing" class="small" title="편집 중인 부품의 도면을 하나 더">＋ 도면</button>
-        <button id="delDrawing" class="small ghost" title="보고 있는 도면 지우기 (실행 취소 가능)">지우기</button>
+        <button id="delDrawing" class="small ghost" title="보고 있는 도면 지우기 (실행 취소 가능)" aria-label="도면 지우기">✕</button>
         <span id="sheetInfo" class="sheet-badge"></span>
         <div class="dim-tools" role="group" aria-label="치수">
           <button class="small" data-cmd="sheet.select">선택</button>
           <button class="small" data-cmd="sheet.dim">치수</button>
-          <select id="dimKind" title="치수 종류">
-            <option value="auto">자동 (가로·세로)</option><option value="h">가로</option><option value="v">세로</option><option value="aligned">평행</option><option value="angle">각도</option>
+          <select id="dimKind" title="치수 종류 — 자동: 커서 쪽으로 가로·세로">
+            <option value="auto">자동</option><option value="h">가로</option><option value="v">세로</option><option value="aligned">평행</option><option value="angle">각도</option>
           </select>
-          <button class="small ghost" data-cmd="sheet.dimDelete">치수 지우기</button>
+          <button class="small ghost" data-cmd="sheet.dimDelete" title="고른 치수·기호·뷰 지우기 (자동 치수는 숨기기)">지우기</button>
         </div>
         <div class="dim-tools view-tools" role="group" aria-label="뷰 더하기">
           <button class="small" data-cmd="sheet.section" title="단면도 — 기본 뷰 위에 절단선 두 점 (S)">단면</button>

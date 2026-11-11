@@ -8,13 +8,24 @@ const MAX = 8;
 
 export const sheetZoom = () => zoom;
 
+/** 호스트 크기 (크기가 바뀔 때만 다시 잼 — 도면을 다시 그릴 때 레이아웃을 강제로 계산하지 않게, 14.8) */
+let hostSize: [number, number] | null = null;
+
 /** 맞춤 크기(1배)일 때 도면 너비 (화면 px) */
 function fitWidth(host: HTMLElement, svg: SVGSVGElement): number {
   const vb = svg.viewBox.baseVal;
   const aspect = vb.width / (vb.height || 1);
-  const w = host.clientWidth - 48;
-  const h = host.clientHeight - 48;
-  return Math.max(200, Math.min(w, h * aspect));
+  const [cw, ch] = hostSize ?? [host.clientWidth, host.clientHeight];
+  return Math.max(200, Math.min(cw - 48, (ch - 48) * aspect));
+}
+
+/** 새로 그린 도면에 지금 배율 크기만 입힘 (읽기 없음 — 스크롤 자리는 부르는 쪽이 그대로 둠) */
+export function sizeSvg(host: HTMLElement, svg: SVGSVGElement) {
+  svg.style.width = `${fitWidth(host, svg) * zoom}px`;
+  svg.style.height = "auto";
+  svg.style.maxWidth = "none";
+  svg.style.maxHeight = "none";
+  document.querySelector("#sheetZoomLabel")!.textContent = `${Math.round(zoom * 100)}%`;
 }
 
 /** 지금 배율로 도면 크기 맞추기. at: 이 화면 점(호스트 기준) 아래가 그대로 있게 */
@@ -63,6 +74,15 @@ let wired = false;
 export function wireZoom(host: HTMLElement) {
   if (wired) return;
   wired = true;
+  // 창·패널 크기가 바뀌면 크기를 기억하고 도면도 맞춤
+  if (typeof ResizeObserver === "function")
+    new ResizeObserver(() => {
+      // 숨겨져 있으면(다른 작업 공간) 0 — 기억하지 않음
+      if (!host.clientWidth) return;
+      hostSize = [host.clientWidth, host.clientHeight];
+      const svg = host.querySelector("svg");
+      if (svg) sizeSvg(host, svg);
+    }).observe(host);
   host.addEventListener(
     "wheel",
     (e) => {

@@ -430,8 +430,9 @@ function place(c: Callout, inp: AutoInput, textObs: number[][], viewObs: number[
   const box = [P(v, V[v].min), P(v, V[v].max)];
   const mid: Pt = [(box[0][0] + box[1][0]) / 2, (box[0][1] + box[1][1]) / 2];
   const angles = [...(c.dirs ?? []), ...Array.from({ length: 16 }, (_, i) => (i * Math.PI) / 8)];
-  let best: { dim: SheetDim; boxes: number[][]; score: number } | null = null;
-  let fallback: { dim: SheetDim; boxes: number[][]; score: number } | null = null;
+  // 후보 (방향 × 끝 × 길이)의 점수는 그려 보기 전에 정해짐 → 점수 순으로 그려 보고 처음 깨끗한 것에서 멈춤 (14.8).
+  // 같은 점수면 원래 차례 그대로 (sort는 안정) — 예전에 모두 그려 보고 고르던 것과 결과가 같다.
+  const cands: { tip: Pt; dir: Pt; len: number; score: number; i: number }[] = [];
   for (const a of angles) {
     const dir: Pt = [Math.cos(a), Math.sin(a)];
     for (const tip of c.tips(dir)) {
@@ -440,33 +441,37 @@ function place(c: Callout, inp: AutoInput, textObs: number[][], viewObs: number[
       const exit = exitLen(T, dir, box);
       for (const extra of [3, 7, 12, 18]) {
         const len = exit + extra;
-        const knee: Pt = [dir[0] * len, dir[1] * len];
-        const dim = c.make(tip, knee);
-        const dr = renderDim(dim, (q) => P(v, q), s, fmt);
-        const boxes = dr.texts.map(textBox);
-        // 지시선 가로 어깨까지 포함
-        const inArea = boxes.every((b) => b[0] >= area[0] && b[1] >= area[1] && b[2] <= area[2] && b[3] <= area[3]);
-        let hits = boxes.reduce((n, b) => n + textObs.filter((o) => overlaps(b, o, 0.4)).length + viewObs.filter((o) => overlaps(b, o, 0.4)).length, 0);
-        for (const pr of dr.prims) if (pr.t === "line") hits += textObs.filter((o) => segHitsBox(pr.a, pr.b, o)).length;
         // 바깥쪽(뷰 가운데에서 멀어지는 쪽)을 조금 더 좋게
         const outward = (T[0] - mid[0]) * dir[0] + (T[1] - mid[1]) * dir[1] >= 0 ? 0 : 6;
-        const score = len + outward;
-        if (inArea && !hits) {
-          if (!best || score < best.score) best = { dim, boxes, score };
-        } else {
-          const bad = score + hits * 50 + (inArea ? 0 : 100);
-          if (!fallback || bad < fallback.score) fallback = { dim, boxes, score: bad };
-        }
+        cands.push({ tip, dir, len, score: len + outward, i: cands.length });
       }
     }
   }
-  return best ?? fallback;
+  cands.sort((x, y) => x.score - y.score);
+  let fallback: { dim: SheetDim; boxes: number[][]; score: number; i: number } | null = null;
+  for (const k of cands) {
+    const knee: Pt = [k.dir[0] * k.len, k.dir[1] * k.len];
+    const dim = c.make(k.tip, knee);
+    const dr = renderDim(dim, (q) => P(v, q), s, fmt);
+    const boxes = dr.texts.map(textBox);
+    // 지시선 가로 어깨까지 포함
+    const inArea = boxes.every((b) => b[0] >= area[0] && b[1] >= area[1] && b[2] <= area[2] && b[3] <= area[3]);
+    let hits = boxes.reduce((n, b) => n + textObs.filter((o) => overlaps(b, o, 0.4)).length + viewObs.filter((o) => overlaps(b, o, 0.4)).length, 0);
+    for (const pr of dr.prims) if (pr.t === "line") hits += textObs.filter((o) => segHitsBox(pr.a, pr.b, o)).length;
+    if (inArea && !hits) return { dim, boxes };
+    const bad = k.score + hits * 50 + (inArea ? 0 : 100);
+    if (!fallback || bad < fallback.score || (bad === fallback.score && k.i < fallback.i)) fallback = { dim, boxes, score: bad, i: k.i };
+  }
+  return fallback && { dim: fallback.dim, boxes: fallback.boxes };
 }
 
+
 /** 선분이 상자를 지나는지 (상자를 조금 줄여서 — 스치는 것은 봐줌) */
-function segHitsBox(a: Pt, b: Pt, o: number[]): boolean {
+export function segHitsBox(a: Pt, b: Pt, o: number[]): boolean {
   const x0 = o[0] + 0.2, y0 = o[1] + 0.2, x1 = o[2] - 0.2, y1 = o[3] - 0.2;
   if (x0 >= x1 || y0 >= y1) return false;
+  // 둘레 상자가 안 겹치면 바로 아님
+  if (Math.max(a[0], b[0]) < x0 || Math.min(a[0], b[0]) > x1 || Math.max(a[1], b[1]) < y0 || Math.min(a[1], b[1]) > y1) return false;
   // Liang–Barsky
   let t0 = 0, t1 = 1;
   const dx = b[0] - a[0], dy = b[1] - a[1];

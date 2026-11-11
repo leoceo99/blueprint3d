@@ -5,7 +5,7 @@
 import { activeDrawing, addDrawing, drawingsOf, geometryKey, partOf, removeDrawing, type Drawing } from "../core/document";
 import type { DimEdits, Sheet } from "../core/sheet";
 import { sheetEdit, type DimKind, type DimTool, type EditorHost } from "./sheetState";
-import { applyZoom, wireZoom, zoomBy, zoomFit } from "./sheetZoom";
+import { sizeSvg, wireZoom, zoomBy, zoomFit } from "./sheetZoom";
 import type { SheetInfo, ViewId } from "../core/types";
 import { safeName, saveFile } from "../files";
 import { store } from "../store";
@@ -104,15 +104,17 @@ async function renderSheet(force = false) {
     $("#sheetInfo").textContent = "";
     return;
   }
-  // 다시 그려도 확대·스크롤 그대로
+  // 다시 그려도 확대·스크롤 그대로. 크기는 읽지 않고 입히기만 (레이아웃 강제 계산 없음 — 14.8)
   const [sl, st] = [host.scrollLeft, host.scrollTop];
   host.innerHTML = sh.svg;
   $("#sheetInfo").textContent = `${sh.paper} · ${sh.scaleLabel}`;
   const svg = host.querySelector("svg");
   if (svg) {
-    applyZoom(host, svg);
-    host.scrollLeft = sl;
-    host.scrollTop = st;
+    sizeSvg(host, svg);
+    if (sl || st) {
+      host.scrollLeft = sl;
+      host.scrollTop = st;
+    }
   }
   if (svg) (await import("./sheetEdit")).attachEditor(svg, sh, d.edits ?? {}, editorHost);
   renderCheck(sh, d);

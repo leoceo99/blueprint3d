@@ -7,7 +7,7 @@
  */
 import type { P3 } from "./featureModel";
 import type { Prim, Pt } from "./sheetDims";
-import { VIEW_IDS, type ViewId } from "./types";
+import type { ViewId } from "./types";
 
 export type DrawingView =
   /** 단면도: 부모 뷰 위의 절단선 a→b (부모 뷰 좌표). 화살표 쪽을 보고, 그 반대쪽(보는 사람 쪽)을 잘라 냄 */
@@ -101,13 +101,6 @@ export function viewRequest(v: DrawingView): ViewRequest | null {
   return null; // 상세도는 부모 뷰의 선을 잘라 씀
 }
 
-/** 다음 뷰 문자 (A, B, C … — 이미 쓴 것은 건너뜀, I·O 빼고) */
-export function nextLabel(views: DrawingView[] = []): string {
-  const used = new Set(views.map((v) => v.label));
-  for (const c of "ABCDEFGHJKLMNPQRSTUVWXYZ") if (!used.has(c)) return c;
-  return `Z${views.length}`;
-}
-
 /** 뷰 이름 (도면에 쓰는 글자) */
 export function viewTitle(v: DrawingView): string {
   if (v.kind === "section") return `단면 ${v.label}-${v.label}`;
@@ -117,34 +110,8 @@ export function viewTitle(v: DrawingView): string {
 }
 const fmtK = (k: number) => String(Math.round(k * 100) / 100);
 
-// ---------------- 저장 값 검사 ----------------
-
-const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-const pt = (v: unknown): v is Pt => Array.isArray(v) && v.length === 2 && v.every(num);
-const obj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const isView = (v: unknown): v is ViewId => (VIEW_IDS as unknown[]).includes(v);
-
-export function normalizeViews(raw: unknown): DrawingView[] | undefined {
-  if (!Array.isArray(raw)) return undefined;
-  const out: DrawingView[] = [];
-  const ids = new Set<string>();
-  for (const r of raw) {
-    if (!obj(r) || typeof r.id !== "string" || !r.id || ids.has(r.id)) continue;
-    const label = typeof r.label === "string" && r.label ? r.label.slice(0, 4) : nextLabel(out);
-    const at = pt(r.at) ? { at: r.at } : {};
-    let v: DrawingView | null = null;
-    if ((r.kind === "section" || r.kind === "aux") && isView(r.parent) && pt(r.a) && pt(r.b) && Math.hypot(r.b[0] - r.a[0], r.b[1] - r.a[1]) > 1e-6)
-      v = { id: r.id, kind: r.kind, parent: r.parent, a: r.a, b: r.b, label, ...(r.flip === true ? { flip: true } : {}), ...at };
-    else if (r.kind === "detail" && typeof r.parent === "string" && pt(r.c) && num(r.r) && r.r > 0)
-      v = { id: r.id, kind: "detail", parent: r.parent, c: r.c, r: r.r, k: num(r.k) && r.k > 0 ? r.k : 2, label, ...at };
-    else if (r.kind === "iso") v = { id: r.id, kind: "iso", label, ...at };
-    if (v) {
-      ids.add(v.id);
-      out.push(v);
-    }
-  }
-  return out.length ? out : undefined;
-}
+// 다음 뷰 문자·저장 값 검사는 문서를 열 때도 쓰므로 가벼운 파일로 따로 (첫 화면 코드에 이 파일이 딸려 오지 않게 — 14.8)
+export { nextLabel, normalizeViews } from "./viewsNormalize";
 
 // ---------------- 원으로 자르기 (상세도) ----------------
 

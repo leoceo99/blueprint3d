@@ -12,7 +12,8 @@ import type { SheetDim } from "./sheetDims";
 import type { DimEdits } from "./sheet";
 import { normalizeProject } from "./project";
 import { emptyProject, VIEW_IDS, type Project, type SheetInfo, type ViewId } from "./types";
-import { normalizeViews, type DrawingView } from "./sheetViews";
+import { normalizeViews } from "./viewsNormalize";
+import type { DrawingView } from "./sheetViews";
 import { diffSummary, fileKeys, summarize } from "./versions";
 
 export type Part = Project & { id: string };

@@ -625,7 +625,7 @@ label.radio { display: inline-flex; align-items: center; gap: 4px; cursor: point
 .dim-tools button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .dim-tools select { font-size: 12px; padding: 3px 4px; }
 .sheet-toolbar .sheet-badge, .sheet-toolbar button { white-space: nowrap; }
-.sheet-toolbar select.drawing-pick { max-width: 240px; }
+.sheet-toolbar select.drawing-pick { max-width: 200px; }
 .sheet-host { position: relative; }
 .sheet-host svg g.dim { cursor: pointer; }
 .sheet-host svg g.dim:hover path[stroke], .sheet-host svg g.dim.sel path[stroke] { stroke: var(--accent); }

@@ -10,8 +10,8 @@
  */
 import { densityOf, fmtMass, massOf, materialSheet } from "./materials";
 import { isDegenerate } from "./geometry2d";
-import { autoDims, checkNeeds } from "./autoDims";
-import { renderDim, textWidth, type DimDraw, type Layer, type Prim, type Pt, type SheetDim, type SheetText } from "./sheetDims";
+import { autoDims, checkNeeds, segHitsBox } from "./autoDims";
+import { renderDim, textBox, textWidth, type DimDraw, type Layer, type Prim, type Pt, type SheetDim, type SheetText } from "./sheetDims";
 import { projUnit } from "./params";
 import { fmtLen, MM_PER_INCH, type Unit } from "./units";
 import type { BuildResult, ProjectedView, Project, SheetInfo, ViewId } from "./types";
@@ -455,9 +455,27 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
   // 3) 치수: 자동(형상 특징 + 구멍) → 숨기기·옮기기 → 직접 놓은 치수
   const area: [number, number, number, number] = [BORDER.left + 1.5, BORDER.bottom + 1.5, PW - BORDER.right - 1.5, PH - BORDER.top - 1.5];
   const titleBox: [number, number, number, number] = [PW - BORDER.right - TITLE_W - 1, BORDER.bottom, PW - BORDER.right, BORDER.bottom + band + 1];
-  const labelBoxes = shown.map((v): [number, number, number, number] => {
+  // 뷰 이름 자리: 가운데 → 왼쪽 끝 → 오른쪽 끝 중 절단선·문자·중심선과 겹치지 않는 곳 (14.8)
+  const viewLabels = shown.map((v): SheetText => {
     const b = box(v);
-    return [(b.l + b.r) / 2 - 9, b.t + 3, (b.l + b.r) / 2 + 9, b.t + 7];
+    const y = b.t + 4;
+    const cands: SheetText[] = (
+      [
+        [(b.l + b.r) / 2, "middle"],
+        [b.l, "start"],
+        [b.r, "end"],
+      ] as const
+    ).map(([x, anchor]) => ({ at: [x, y], text: VIEW_LABEL[v], size: 2.5, anchor }));
+    const clear = (t: SheetText) => {
+      const tb = textBox(t);
+      const pad = [tb[0] - 0.5, tb[1] - 0.5, tb[2] + 0.5, tb[3] + 0.5];
+      return !texts.some((o) => boxesOverlap(textBox(o), pad)) && !prims.some((p) => p.t === "line" && p.layer !== "FRAME" && segHitsBox(p.a, p.b, pad));
+    };
+    return cands.find(clear) ?? cands[0];
+  });
+  const labelBoxes = viewLabels.map((t): [number, number, number, number] => {
+    const tb = textBox(t);
+    return [tb[0] - 1, tb[1] - 1, tb[2] + 1, tb[3] + 1];
   });
   // 추가 뷰 자리(+ 아래 이름)에는 자동 치수를 놓지 않는다
   const extraBoxes = Object.values(xplaced).map((x): [number, number, number, number] => [x.box[0] - 2, x.box[1] - XLABEL, x.box[2] + 2, x.box[3] + 2]);
@@ -480,10 +498,7 @@ export function buildSheet(res: BuildResult, project: Project, edits: DimEdits =
     .map((d) => renderDim(d, (q) => toPaper(d.view, q)!, s, fl));
 
   // 4) 뷰 이름 (작게)
-  for (const v of shown) {
-    const b = box(v);
-    texts.push({ at: [(b.l + b.r) / 2, b.t + 4], text: VIEW_LABEL[v], size: 2.5, anchor: "middle" });
-  }
+  texts.push(...viewLabels);
 
   // 5) 테두리와 표제란
   const dens = densityOf(project);
@@ -702,6 +717,8 @@ function pcdCircles(p: Project, v: ViewId): { c: Pt; r: number }[] {
   }
   return out;
 }
+
+const boxesOverlap = (a: number[], b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
 
 /** 표제란 칸: 너비, 이름, 값 (big = 부품명, proj = 투상법 기호) */
 type TitleCell = { w: number; label: string; value: string; big?: boolean; proj?: boolean };
